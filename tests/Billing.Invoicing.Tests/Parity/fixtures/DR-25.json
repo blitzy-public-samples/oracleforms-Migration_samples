@@ -1,0 +1,59 @@
+{
+  "id": "DR-25",
+  "class": "domain",
+  "source": [
+    { "construct": "T029 DOCIDX WHEN-VALIDATE-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:43" }
+  ],
+  "cases": [
+    {
+      "name": "review-requested",
+      "status": "derivable",
+      "input": { "doReview": "Y", "claimParam": "0", "compCode": "205", "clinicId": 3 },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "VISIT_LINE_KIND": "Review", "VISIT_LINE_SERVICEID": null } }
+    },
+    {
+      "name": "review-overrides-fixed-service",
+      "status": "derivable",
+      "input": { "doReview": "Y", "claimParam": "1", "compCode": "1059", "clinicId": 14 },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "VISIT_LINE_KIND": "Review", "VISIT_LINE_SERVICEID": null } }
+    },
+    {
+      "name": "new-consult-consultation",
+      "status": "derivable",
+      "input": { "doReview": "N", "claimParam": "1", "compCode": "205", "clinicId": 3 },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "VISIT_LINE_KIND": "Consultation", "VISIT_LINE_SERVICEID": null } }
+    },
+    {
+      "name": "independent-service-consultation",
+      "status": "derivable",
+      "input": { "doReview": "N", "claimParam": "2", "compCode": "205", "clinicId": 3 },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "VISIT_LINE_KIND": "Consultation", "VISIT_LINE_SERVICEID": null } }
+    },
+    {
+      "name": "company-1059-clinic-14-fixed-service",
+      "status": "derivable",
+      "input": { "doReview": "N", "claimParam": "1", "compCode": "1059", "clinicId": 14 },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "VISIT_LINE_KIND": "FixedService", "VISIT_LINE_SERVICEID": "2000" } },
+      "decision": "D-47"
+    },
+    {
+      "name": "company-1059-other-clinic-consultation",
+      "status": "derivable",
+      "input": { "doReview": "N", "claimParam": "1", "compCode": "1059", "clinicId": 3 },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "VISIT_LINE_KIND": "Consultation", "VISIT_LINE_SERVICEID": null } }
+    },
+    {
+      "name": "independent-claim-zero-no-line",
+      "status": "derivable",
+      "input": { "doReview": "N", "claimParam": "0", "compCode": "205", "clinicId": 3 },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "VISIT_LINE_KIND": "None", "VISIT_LINE_SERVICEID": null } }
+    },
+    {
+      "name": "existing-claim-no-line",
+      "status": "derivable",
+      "input": { "doReview": "N", "claimParam": "C-7788", "compCode": "205", "clinicId": 3 },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "VISIT_LINE_KIND": "None", "VISIT_LINE_SERVICEID": null } }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "messages", "VISIT_LINE_KIND"] }
+}
