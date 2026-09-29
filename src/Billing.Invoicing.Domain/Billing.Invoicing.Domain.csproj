@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Billing.Invoicing.Domain</RootNamespace>
+    <AssemblyName>Billing.Invoicing.Domain</AssemblyName>
+  </PropertyGroup>
+
+</Project>
