@@ -155,6 +155,33 @@ public sealed class DomainModelTests
     }
 
     [Fact]
+    public void RuleResult_Empty_HasNoMessagesOrAdjustments()
+    {
+        Assert.Empty(RuleResult.Empty.Messages);
+        Assert.Empty(RuleResult.Empty.Adjusted);
+        Assert.False(RuleResult.Empty.IsBlocking);
+        Assert.Empty(new RuleResult().Adjusted);
+    }
+
+    [Fact]
+    public void RuleResult_IsBlocking_OnlyWithABlockingMessage()
+    {
+        var warning = new ValidationMessage("DOCIDX", "You Must Select Doctor", ValidationMessage.Warning, "DR-11");
+        var blocking = new ValidationMessage("QTY", "Qty should be >=1", ValidationMessage.Blocking, "DR-12");
+
+        var warned = new RuleResult { Messages = [warning] };
+        var blocked = new RuleResult
+        {
+            Messages = [warning, blocking],
+            Adjusted = new Dictionary<string, object?> { ["AMOUNT_2"] = 5m },
+        };
+
+        Assert.False(warned.IsBlocking);
+        Assert.True(blocked.IsBlocking);
+        Assert.Equal(5m, blocked.Adjusted["AMOUNT_2"]);
+    }
+
+    [Fact]
     public void DiscountLimitChoice_HasTheTwoAlertButtons()
     {
         Assert.Equal(

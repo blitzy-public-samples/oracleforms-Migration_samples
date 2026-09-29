@@ -1,0 +1,35 @@
+{
+  "id": "DR-21",
+  "class": "domain",
+  "source": [
+    { "construct": "T011 T_INV PRE-INSERT", "locator": "05_Complex/Inv_Small_Cash.xml:363" }
+  ],
+  "cases": [
+    {
+      "name": "new-create-with-transfer-clears",
+      "status": "derivable",
+      "input": { "isReplay": false, "hasNewInvDocId": true },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "SHOULD_CLEAR": true } }
+    },
+    {
+      "name": "new-create-without-transfer-skips",
+      "status": "derivable",
+      "input": { "isReplay": false, "hasNewInvDocId": false },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "SHOULD_CLEAR": false } }
+    },
+    {
+      "name": "replay-with-transfer-skips",
+      "status": "derivable",
+      "input": { "isReplay": true, "hasNewInvDocId": true },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "SHOULD_CLEAR": false } },
+      "decision": "D-44"
+    },
+    {
+      "name": "replay-without-transfer-skips",
+      "status": "derivable",
+      "input": { "isReplay": true, "hasNewInvDocId": false },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "SHOULD_CLEAR": false } }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "messages", "SHOULD_CLEAR"] }
+}
