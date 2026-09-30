@@ -162,8 +162,8 @@ public static class OutputArrayReader
 
     /// <summary>Reads the <c>pl_*</c> OUT arrays into editable preview lines.</summary>
     /// <param name="parameters">The executed command's parameters.</param>
-    /// <returns>The first <c>min(pl_count, array length)</c> lines.</returns>
-    /// <exception cref="InvalidOperationException">An expected OUT parameter is absent.</exception>
+    /// <returns>The <c>pl_count</c> lines.</returns>
+    /// <exception cref="InvalidOperationException">An expected OUT parameter is absent, or a positive <c>pl_count</c> exceeds an OUT array's length.</exception>
     public static IReadOnlyList<EditablePreviewLine> ReadPreviewLines(OracleParameterCollection parameters)
     {
         ArgumentNullException.ThrowIfNull(parameters);
@@ -253,8 +253,8 @@ public static class OutputArrayReader
 
     /// <summary>Reads the <c>el_*</c> OUT arrays into engine lines.</summary>
     /// <param name="parameters">The executed command's parameters.</param>
-    /// <returns>The first <c>min(el_count, array length)</c> lines.</returns>
-    /// <exception cref="InvalidOperationException">An expected OUT parameter is absent.</exception>
+    /// <returns>The <c>el_count</c> lines.</returns>
+    /// <exception cref="InvalidOperationException">An expected OUT parameter is absent, or a positive <c>el_count</c> exceeds an OUT array's length.</exception>
     public static IReadOnlyList<EngineLineInput> ReadEngineLines(OracleParameterCollection parameters)
     {
         ArgumentNullException.ThrowIfNull(parameters);
@@ -629,21 +629,27 @@ public static class OutputArrayReader
     {
         private readonly Dictionary<string, Array?> arrays = new(StringComparer.Ordinal);
 
-        /// <summary>Resolves the count and every field array; the row count is the smaller of the count and the shortest array, and a null array counts as empty.</summary>
+        /// <summary>Resolves the count and every field array; the row count is the OUT count, and a null, zero or negative count reads no rows.</summary>
         /// <param name="parameters">The executed command's parameters.</param>
         /// <param name="countName">Name of the OUT count scalar.</param>
         /// <param name="fields">The table's OUT array fields.</param>
+        /// <exception cref="InvalidOperationException">A positive count exceeds a field array's length, a null array counting as length 0.</exception>
         public ArrayOutputs(OracleParameterCollection parameters, string countName, OutputField[] fields)
         {
-            int rows = Math.Max(0, ScalarInt32(parameters, countName) ?? 0);
+            int count = Math.Max(0, ScalarInt32(parameters, countName) ?? 0);
             foreach (OutputField field in fields)
             {
                 Array? values = ArrayValue(parameters, field.Name);
                 arrays[field.Name] = values;
-                rows = Math.Min(rows, values?.Length ?? 0);
+                if (count > 0 && (values is null || values.Length < count))
+                {
+                    string length = values is null ? "0 element(s) (null array)" : $"{values.Length} element(s)";
+                    throw new InvalidOperationException(
+                        $"OUT count '{countName}' reports {count} row(s), but OUT array '{field.Name}' holds {length}; the rows exceed the array returned (check Invoicing:MaxOutputLines).");
+                }
             }
 
-            RowCount = rows;
+            RowCount = count;
         }
 
         /// <summary>Number of rows to read.</summary>

@@ -150,6 +150,52 @@ public sealed class OutputArrayReaderTests
     }
 
     [Fact]
+    public void ReadPreviewLines_ArrayShorterThanCount_ThrowsInvalidOperation()
+    {
+        using OracleCommand command = new();
+        AddTable(command.Parameters, PreviewLineCount, new OracleDecimal(3), PopulatedArrays(PreviewLineFields, populatedSlots: 3));
+        Replace(command.Parameters, "pl_offer_type", new[] { new OracleDecimal(1), new OracleDecimal(2) });
+
+        InvalidOperationException error = Assert.Throws<InvalidOperationException>(
+            () => OutputArrayReader.ReadPreviewLines(command.Parameters));
+
+        Assert.Contains("OUT count 'pl_count' reports 3 row(s)", error.Message, StringComparison.Ordinal);
+        Assert.Contains("OUT array 'pl_offer_type' holds 2 element(s)", error.Message, StringComparison.Ordinal);
+        Assert.Contains("Invoicing:MaxOutputLines", error.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("db-null")]
+    [InlineData("clr-null")]
+    public void ReadPreviewLines_NullArrayUnderPositiveCount_ThrowsInvalidOperation(string representation)
+    {
+        using OracleCommand command = new();
+        AddTable(command.Parameters, PreviewLineCount, new OracleDecimal(2), PopulatedArrays(PreviewLineFields, populatedSlots: 2));
+        Replace(command.Parameters, "pl_manual_discount_type", NullArrayValue(representation));
+
+        InvalidOperationException error = Assert.Throws<InvalidOperationException>(
+            () => OutputArrayReader.ReadPreviewLines(command.Parameters));
+
+        Assert.Contains("OUT count 'pl_count' reports 2 row(s)", error.Message, StringComparison.Ordinal);
+        Assert.Contains("OUT array 'pl_manual_discount_type' holds 0 element(s) (null array)", error.Message, StringComparison.Ordinal);
+        Assert.Contains("Invoicing:MaxOutputLines", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ReadPreviewLines_CountBeyondCapacity_ThrowsInvalidOperation()
+    {
+        using OracleCommand command = new();
+        AddTable(command.Parameters, PreviewLineCount, new OracleDecimal(Capacity + 1), PopulatedArrays(PreviewLineFields, populatedSlots: 3));
+
+        InvalidOperationException error = Assert.Throws<InvalidOperationException>(
+            () => OutputArrayReader.ReadPreviewLines(command.Parameters));
+
+        Assert.Contains($"OUT count 'pl_count' reports {Capacity + 1} row(s)", error.Message, StringComparison.Ordinal);
+        Assert.Contains($"OUT array 'pl_client_id' holds {Capacity} element(s)", error.Message, StringComparison.Ordinal);
+        Assert.Contains("Invoicing:MaxOutputLines", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ReadPreviewTotals_Scalars_MapFieldByField()
     {
         using OracleCommand command = new();
@@ -275,30 +321,91 @@ public sealed class OutputArrayReaderTests
     }
 
     [Fact]
-    public void ReadEngineLines_ArrayShorterThanCount_IsBoundedByTheShortestArray()
+    public void ReadEngineLines_ArrayShorterThanCount_ThrowsInvalidOperation()
     {
         using OracleCommand command = new();
         Dictionary<string, Array> arrays = PopulatedArrays(EngineLineFields, populatedSlots: 3);
         AddTable(command.Parameters, EngineLineCount, new OracleDecimal(3), arrays);
         Replace(command.Parameters, "el_offer_type", new[] { new OracleDecimal(1), new OracleDecimal(2) });
 
-        IReadOnlyList<EngineLineInput> lines = OutputArrayReader.ReadEngineLines(command.Parameters);
+        InvalidOperationException error = Assert.Throws<InvalidOperationException>(
+            () => OutputArrayReader.ReadEngineLines(command.Parameters));
 
-        Assert.Equal(2, lines.Count);
-        Assert.Equal(ExpectedEngineLine(0) with { OfferType = 1 }, lines[0]);
-        Assert.Equal(ExpectedEngineLine(1) with { OfferType = 2 }, lines[1]);
+        Assert.Contains("OUT count 'el_count' reports 3 row(s)", error.Message, StringComparison.Ordinal);
+        Assert.Contains("OUT array 'el_offer_type' holds 2 element(s)", error.Message, StringComparison.Ordinal);
+        Assert.Contains("Invoicing:MaxOutputLines", error.Message, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void ReadEngineLines_NullArrayValue_ReturnsEmpty()
+    [Theory]
+    [InlineData("db-null")]
+    [InlineData("clr-null")]
+    public void ReadEngineLines_NullArrayUnderPositiveCount_ThrowsInvalidOperation(string representation)
     {
         using OracleCommand command = new();
         AddTable(command.Parameters, EngineLineCount, new OracleDecimal(3), PopulatedArrays(EngineLineFields, populatedSlots: 3));
-        Replace(command.Parameters, "el_teeth_no", DBNull.Value);
+        Replace(command.Parameters, "el_teeth_no", NullArrayValue(representation));
+
+        InvalidOperationException error = Assert.Throws<InvalidOperationException>(
+            () => OutputArrayReader.ReadEngineLines(command.Parameters));
+
+        Assert.Contains("OUT count 'el_count' reports 3 row(s)", error.Message, StringComparison.Ordinal);
+        Assert.Contains("OUT array 'el_teeth_no' holds 0 element(s) (null array)", error.Message, StringComparison.Ordinal);
+        Assert.Contains("Invoicing:MaxOutputLines", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ReadEngineLines_MissingArray_ThrowsInvalidOperation()
+    {
+        using OracleCommand command = new();
+        AddTable(command.Parameters, EngineLineCount, new OracleDecimal(3), PopulatedArrays(EngineLineFields, populatedSlots: 3));
+        command.Parameters.RemoveAt(command.Parameters.IndexOf("el_claim_no"));
+
+        InvalidOperationException error = Assert.Throws<InvalidOperationException>(
+            () => OutputArrayReader.ReadEngineLines(command.Parameters));
+
+        Assert.Contains("OUT parameter 'el_claim_no' is not in the parameter collection", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ReadEngineLines_CountBeyondCapacity_ThrowsInvalidOperation()
+    {
+        using OracleCommand command = new();
+        AddTable(command.Parameters, EngineLineCount, new OracleDecimal(Capacity + 1), PopulatedArrays(EngineLineFields, populatedSlots: 3));
+
+        InvalidOperationException error = Assert.Throws<InvalidOperationException>(
+            () => OutputArrayReader.ReadEngineLines(command.Parameters));
+
+        Assert.Contains($"OUT count 'el_count' reports {Capacity + 1} row(s)", error.Message, StringComparison.Ordinal);
+        Assert.Contains($"OUT array 'el_serviceid' holds {Capacity} element(s)", error.Message, StringComparison.Ordinal);
+        Assert.Contains("Invoicing:MaxOutputLines", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ReadEngineLines_ArrayLengthEqualToCount_ReadsEveryRow()
+    {
+        using OracleCommand command = new();
+        AddTable(command.Parameters, EngineLineCount, new OracleDecimal(3), PopulatedArrays(EngineLineFields, populatedSlots: 3));
+        Replace(command.Parameters, "el_offer_type", new[] { new OracleDecimal(1), new OracleDecimal(2), new OracleDecimal(3) });
 
         IReadOnlyList<EngineLineInput> lines = OutputArrayReader.ReadEngineLines(command.Parameters);
 
-        Assert.Empty(lines);
+        Assert.Equal(3, lines.Count);
+        Assert.Equal(ExpectedEngineLine(0) with { OfferType = 1 }, lines[0]);
+        Assert.Equal(ExpectedEngineLine(1) with { OfferType = 2 }, lines[1]);
+        Assert.Equal(ExpectedEngineLine(2) with { OfferType = 3 }, lines[2]);
+    }
+
+    [Fact]
+    public void ReadEngineLines_CountAtCapacity_ReadsEveryRow()
+    {
+        using OracleCommand command = new();
+        AddTable(command.Parameters, EngineLineCount, new OracleDecimal(Capacity), PopulatedArrays(EngineLineFields, populatedSlots: Capacity));
+
+        IReadOnlyList<EngineLineInput> lines = OutputArrayReader.ReadEngineLines(command.Parameters);
+
+        Assert.Equal(Capacity, lines.Count);
+        Assert.Equal(ExpectedEngineLine(0), lines[0]);
+        Assert.Equal(ExpectedEngineLine(Capacity - 1), lines[Capacity - 1]);
     }
 
     [Theory]
@@ -440,6 +547,29 @@ public sealed class OutputArrayReaderTests
         Assert.Contains("ir_message", error.Message, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("db-null")]
+    [InlineData("clr-null")]
+    public void Readers_ZeroCountWithNullArrays_ReturnEmpty(string representation)
+    {
+        using OracleCommand preview = new();
+        AddTable(preview.Parameters, PreviewLineCount, new OracleDecimal(0), PopulatedArrays(PreviewLineFields, populatedSlots: 0));
+        foreach (string field in PreviewLineFields)
+        {
+            Replace(preview.Parameters, field, NullArrayValue(representation));
+        }
+
+        using OracleCommand engine = new();
+        AddTable(engine.Parameters, EngineLineCount, new OracleDecimal(0), PopulatedArrays(EngineLineFields, populatedSlots: 0));
+        foreach (string field in EngineLineFields)
+        {
+            Replace(engine.Parameters, field, NullArrayValue(representation));
+        }
+
+        Assert.Empty(OutputArrayReader.ReadPreviewLines(preview.Parameters));
+        Assert.Empty(OutputArrayReader.ReadEngineLines(engine.Parameters));
+    }
+
     [Fact]
     public void Readers_NullCollection_ThrowArgumentNull()
     {
@@ -534,6 +664,8 @@ public sealed class OutputArrayReaderTests
         "db-null" => DBNull.Value,
         _ => null,
     };
+
+    private static object? NullArrayValue(string representation) => representation == "db-null" ? DBNull.Value : null;
 
     private static object Generated(string[] fields, string field, int slot) => TypeOf(field) switch
     {

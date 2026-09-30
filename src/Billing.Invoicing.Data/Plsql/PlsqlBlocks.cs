@@ -467,7 +467,7 @@ public static class PlsqlBlocks
         end;
         """;
 
-    /// <summary>Calls BIL_INVOICE_API.EXPAND_BUNDLED_OFFER_IG_LINES, then CREATE_FULL_INVOICE; returns the full invoice result.</summary>
+    /// <summary>Calls BIL_INVOICE_API.EXPAND_BUNDLED_OFFER_IG_LINES when lines are bound, then CREATE_FULL_INVOICE; returns the full invoice result.</summary>
     public const string Create = """
         declare
             type t_num is table of number index by pls_integer;
@@ -630,12 +630,14 @@ public static class PlsqlBlocks
                     v_client_ids(i) := l_client_id(i);
                 end loop;
 
-                bil_invoice_api.expand_bundled_offer_ig_lines(
-                    p_visible_lines => v_lines,
-                    p_visible_client_ids => v_client_ids,
-                    o_full_lines => v_full_lines,
-                    o_full_client_ids => v_full_client_ids
-                );
+                if line_count > 0 then
+                    bil_invoice_api.expand_bundled_offer_ig_lines(
+                        p_visible_lines => v_lines,
+                        p_visible_client_ids => v_client_ids,
+                        o_full_lines => v_full_lines,
+                        o_full_client_ids => v_full_client_ids
+                    );
+                end if;
 
                 bil_invoice_api.create_full_invoice(
                     p_header => v_header,

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net.Sockets;
 using System.Reflection;
 using Billing.Invoicing.Data.Errors;
+using Billing.Invoicing.Data.Oracle;
 using Oracle.ManagedDataAccess.Client;
 
 namespace Billing.Invoicing.Tests.Data;
@@ -14,6 +15,7 @@ public sealed class OracleFailureTranslatorTests
     private const string PaymentPackage = "BIL_PAYMENT";
     private const string OracleErrorMessage = "The Oracle database returned an error.";
     private const string UnavailableMessage = "Oracle database is unavailable.";
+    private const string ConfigurationFaultMessage = "The Oracle connection string is not configured or is not well-formed.";
 
     private const string RequestUnavailableText =
         "One or more requested services were already invoiced or are no longer available.";
@@ -374,14 +376,189 @@ public sealed class OracleFailureTranslatorTests
         Assert.Equal("OI-11: print URL result type unknown.", failure.Message);
     }
 
-    [Fact]
-    public void Translate_NotImplementedWithoutOpenItem_Is501WithoutOpenItemId()
+    [Theory]
+    [InlineData("blocked")]
+    [InlineData("OI-1: x")]
+    [InlineData("OI-123: x")]
+    [InlineData(" OI-11: x")]
+    [InlineData("oi-11: x")]
+    [InlineData("The method or operation is not implemented.")]
+    public void Translate_NotImplementedWithoutOpenItem_ReturnsNull(string message)
     {
-        DataFailure? failure = translator.Translate(new NotImplementedException("blocked"));
+        Assert.Null(translator.Translate(new NotImplementedException(message)));
+    }
+
+    [Fact]
+    public void Translate_NotImplementedWithBareOpenItemId_Is501()
+    {
+        DataFailure? failure = translator.Translate(new NotImplementedException("OI-56"));
 
         Assert.NotNull(failure);
         Assert.Equal(501, failure.Status);
+        Assert.Equal("OI-56", failure.OpenItemId);
+        Assert.Equal("OI-56", failure.Message);
+    }
+
+    [Fact]
+    public void Translate_WrappedOpenItem_Is501WithTheInnerIdAndMessage()
+    {
+        const string message = "OI-31: package consumption registration is not available.";
+        var blocked = new NotImplementedException(message);
+
+        foreach (Exception exception in new Exception[]
+        {
+            new InvalidOperationException("workflow failed", blocked),
+            new InvalidOperationException("request failed", new AggregateException("step failed", blocked)),
+            new NotImplementedException("blocked", blocked),
+        })
+        {
+            DataFailure? failure = translator.Translate(exception);
+
+            Assert.NotNull(failure);
+            Assert.Equal(501, failure.Status);
+            Assert.Equal(DataFailure.OpenItemType, failure.Type);
+            Assert.Equal("OI-31", failure.OpenItemId);
+            Assert.Equal(message, failure.Message);
+        }
+    }
+
+    [Fact]
+    public void Translate_WrappedOpenItems_TakesTheOutermostOpenItem()
+    {
+        var inner = new NotImplementedException("OI-24: price plan is not available.");
+        var outer = new NotImplementedException("OI-23: paid-before check is not available.", inner);
+
+        DataFailure? failure = translator.Translate(new InvalidOperationException("workflow failed", outer));
+
+        Assert.NotNull(failure);
+        Assert.Equal("OI-23", failure.OpenItemId);
+        Assert.Equal(outer.Message, failure.Message);
+    }
+
+    [Fact]
+    public void Translate_WrapperWithoutOpenItem_ReturnsNull()
+    {
+        Assert.Null(translator.Translate(new InvalidOperationException("workflow failed", new ArgumentException("x"))));
+        Assert.Null(translator.Translate(new InvalidOperationException("workflow failed", new NotImplementedException("blocked"))));
+    }
+
+    [Fact]
+    public void Translate_OracleErrorAndOpenItemInChain_IsTheOracleFailure()
+    {
+        OracleException driver = Driver(20931, "ORA-20931: " + RequestUnavailableText + "\n" + EngineFrame);
+        driver.Data[OracleErrorParser.OperationKey] = "CreateFullInvoice";
+
+        foreach (Exception exception in new Exception[]
+        {
+            new NotImplementedException("OI-31: package consumption registration is not available.", driver),
+            new InvalidOperationException("workflow failed", new NotImplementedException("OI-31: blocked", driver)),
+        })
+        {
+            DataFailure? failure = translator.Translate(exception);
+
+            Assert.NotNull(failure);
+            Assert.Equal(422, failure.Status);
+            Assert.Equal(DataFailure.OracleBusinessErrorType, failure.Type);
+            Assert.Equal(-20931, failure.Number);
+            Assert.Null(failure.OpenItemId);
+        }
+    }
+
+    [Fact]
+    public void Translate_OpenItemWrappingSocketFailure_Is501()
+    {
+        DataFailure? failure = translator.Translate(new NotImplementedException("OI-12: SMS gateway is not available.", new SocketException(10061)));
+
+        Assert.NotNull(failure);
+        Assert.Equal(501, failure.Status);
+        Assert.Equal("OI-12", failure.OpenItemId);
+    }
+
+    [Fact]
+    public void Translate_NotImplementedWithoutOpenItemWrappingSocketFailure_Is503()
+    {
+        DataFailure? failure = translator.Translate(new NotImplementedException("blocked", new SocketException(10061)));
+
+        Assert.NotNull(failure);
+        Assert.Equal(503, failure.Status);
+        Assert.Equal(DataFailure.OracleUnavailableType, failure.Type);
+        Assert.Null(failure.Number);
         Assert.Null(failure.OpenItemId);
+        Assert.Equal(UnavailableMessage, failure.Message);
+    }
+
+    [Fact]
+    public void Translate_TransportFailureAndWrappedOpenItemInChain_Is503()
+    {
+        foreach (Exception exception in new Exception[]
+        {
+            new TimeoutException("driver timed out", new NotImplementedException("OI-31: blocked")),
+            new InvalidOperationException("workflow step", new NotImplementedException("OI-31: blocked", new SocketException(10061))),
+            new InvalidOperationException("workflow step", new SocketException(10061)),
+        })
+        {
+            DataFailure? failure = translator.Translate(exception);
+
+            Assert.NotNull(failure);
+            Assert.Equal(503, failure.Status);
+            Assert.Equal(DataFailure.OracleUnavailableType, failure.Type);
+            Assert.Null(failure.Number);
+            Assert.Null(failure.OpenItemId);
+            Assert.Equal(UnavailableMessage, failure.Message);
+        }
+    }
+
+    [Fact]
+    public void Translate_ConfigurationFault_Is500WithFixedMessage()
+    {
+        const string connectionString = "Data Source=HISDB;User Id=his;Password=secret;Pooling=maybe";
+        var invalid = new InvalidOperationException("ORA-50029: OracleConnection.ConnectionString is invalid");
+        invalid.Data[OracleFailureTranslator.ConfigurationFaultKey] = true;
+        var malformed = new ArgumentException("ORA-50007: " + connectionString);
+        malformed.Data[OracleFailureTranslator.ConfigurationFaultKey] = true;
+        var wrappedMalformed = new ArgumentException("ORA-50008: " + connectionString);
+        wrappedMalformed.Data[OracleFailureTranslator.ConfigurationFaultKey] = true;
+
+        foreach (Exception exception in new Exception[]
+        {
+            invalid,
+            malformed,
+            new InvalidOperationException("open failed", wrappedMalformed),
+        })
+        {
+            AssertConfigurationFault(translator.Translate(exception), connectionString);
+        }
+    }
+
+    [Fact]
+    public void Translate_UnmarkedOrFalseMarkedArgumentException_ReturnsNull()
+    {
+        var falseMarked = new ArgumentException("x");
+        falseMarked.Data[OracleFailureTranslator.ConfigurationFaultKey] = false;
+        var stringMarked = new ArgumentException("x");
+        stringMarked.Data[OracleFailureTranslator.ConfigurationFaultKey] = "true";
+
+        Assert.Null(translator.Translate(new ArgumentException("x")));
+        Assert.Null(translator.Translate(falseMarked));
+        Assert.Null(translator.Translate(stringMarked));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("\t\r\n")]
+    [InlineData(";")]
+    [InlineData(" ; ;")]
+    [InlineData(null)]
+    public async Task Translate_BlankConnectionStringFromFactory_Is500WithFixedMessage(string? connectionString)
+    {
+        var factory = new OracleSessionFactory(new InvoicingDataOptions { ConnectionString = connectionString! });
+
+        InvalidOperationException thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => factory.Open());
+
+        Assert.True(thrown.Data[OracleFailureTranslator.ConfigurationFaultKey] is true);
+        Assert.Null(thrown.InnerException);
+        AssertConfigurationFault(translator.Translate(thrown), connectionString: null);
     }
 
     [Fact]
@@ -631,6 +808,27 @@ public sealed class OracleFailureTranslatorTests
         string first = string.Create(CultureInfo.InvariantCulture, $"ORA-{number:D5}: {text}");
         string message = string.Join("\n", new[] { first }.Concat(stackLines));
         return OracleErrorParser.FromParts(number, message, duringOpen, operation);
+    }
+
+    /// <summary>Asserts a 500 oracle-error failure with no number or package and the fixed connection-string message.</summary>
+    /// <param name="failure">The translated failure.</param>
+    /// <param name="connectionString">Connection string the message must not contain, or null.</param>
+    private static void AssertConfigurationFault(DataFailure? failure, string? connectionString)
+    {
+        Assert.NotNull(failure);
+        Assert.Equal(500, failure.Status);
+        Assert.Equal(DataFailure.OracleErrorType, failure.Type);
+        Assert.Null(failure.Number);
+        Assert.Null(failure.Package);
+        Assert.Null(failure.Kind);
+        Assert.Null(failure.OpenItemId);
+        Assert.Equal(ConfigurationFaultMessage, failure.Message);
+        Assert.DoesNotContain("ORA-", failure.Message, StringComparison.Ordinal);
+        if (connectionString is not null)
+        {
+            Assert.DoesNotContain(connectionString, failure.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain("secret", failure.Message, StringComparison.Ordinal);
+        }
     }
 
     /// <summary>Returns an ORA-06512 line for a quoted name and line number.</summary>

@@ -6,7 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Billing.Invoicing.Api.Context;
 
-/// <summary>Builds the <see cref="OperatorContext"/> of each <c>/api</c> request from its <c>X-His-*</c> headers, answering 422 when any is missing.</summary>
+/// <summary>Builds the <see cref="OperatorContext"/> of each <c>/api</c> request from its <c>X-His-*</c> headers, answering 422 when any is missing or invalid.</summary>
 public sealed class OperatorContextMiddleware
 {
     /// <summary><see cref="HttpContext.Items"/> key holding the request's <see cref="OperatorContext"/>.</summary>
@@ -22,6 +22,8 @@ public sealed class OperatorContextMiddleware
 
     private const int HeaderCount = 5;
 
+    private const int MaxInfoCenterIdLength = 10;
+
     private readonly RequestDelegate _next;
 
     /// <summary>Creates the middleware ahead of the given pipeline step.</summary>
@@ -32,7 +34,7 @@ public sealed class OperatorContextMiddleware
         _next = next;
     }
 
-    /// <summary>Stores the operator context of an <c>/api</c> request and continues, or writes the 422 naming the missing headers; other paths pass through unchecked.</summary>
+    /// <summary>Stores the operator context of an <c>/api</c> request and continues, or writes the 422 naming the missing or invalid headers; other paths pass through unchecked.</summary>
     /// <param name="context">The current request.</param>
     /// <returns>A task that completes when the request has been handled.</returns>
     public async Task InvokeAsync(HttpContext context)
@@ -57,6 +59,11 @@ public sealed class OperatorContextMiddleware
 
         string userName = ReadHeader(context.Request, UserNameHeader, missing);
         string infoCenterId = ReadHeader(context.Request, InfoCenterIdHeader, missing);
+        if (infoCenterId.Length > MaxInfoCenterIdLength)
+        {
+            missing.Add(InfoCenterIdHeader);
+        }
+
         string machineName = ReadHeader(context.Request, MachineHeader, missing);
         string sessionId = ReadHeader(context.Request, SessionIdHeader, missing);
 

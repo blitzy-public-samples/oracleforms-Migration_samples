@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -13,7 +14,7 @@ namespace Billing.Invoicing.Api.Errors;
 /// <summary>Writes failures and validation results as <c>application/problem+json</c> bodies, carrying the <c>MESSAG</c> texts with field, severity and rule.</summary>
 public sealed class ProblemDetailsWriter
 {
-    /// <summary>Exception data key holding the <see cref="IReadOnlyList{T}"/> of <see cref="MessageDto"/> written with an open-item failure.</summary>
+    /// <summary>Exception data key holding the <see cref="IReadOnlyList{T}"/> of <see cref="MessageDto"/> written with an open-item or request-validation failure.</summary>
     public const string MessagesDataKey = "Billing.Invoicing.Api.Messages";
 
     /// <summary>Exception data key holding the <see cref="IReadOnlyList{T}"/> of open-item ids written with an open-item failure.</summary>
@@ -44,7 +45,7 @@ public sealed class ProblemDetailsWriter
         _translator = translator;
     }
 
-    /// <summary>Writes the exception held by the request's <see cref="IExceptionHandlerFeature"/> as its error-contract body, or a bare 500 when it is not translated.</summary>
+    /// <summary>Writes the exception held by the request's <see cref="IExceptionHandlerFeature"/> as its error-contract body: a 422 <c>field-validation</c> for an <see cref="ArgumentException"/> carrying blocking messages, a bare 500 for any other untranslated exception.</summary>
     /// <param name="context">The failed request.</param>
     /// <returns>A task that completes when the body is written, or at once when the response has started.</returns>
     public Task WriteAsync(HttpContext context)
@@ -65,7 +66,9 @@ public sealed class ProblemDetailsWriter
         DataFailure? failure = _translator.Translate(error);
         if (failure is null)
         {
-            return WriteBareServerErrorAsync(context);
+            return TryReadRequestValidation(error, out IReadOnlyList<MessageDto>? messages, out IReadOnlyList<string> openItems)
+                ? WriteAsync(context, messages, openItems)
+                : WriteBareServerErrorAsync(context);
         }
 
         Dictionary<string, object?>? body = failure.Type switch
@@ -75,6 +78,7 @@ public sealed class ProblemDetailsWriter
             DataFailure.OpenItemType => OpenItemBody(failure, error),
             DataFailure.OracleUnavailableType => Problem(failure.Type, OracleUnavailableTitle, failure.Status),
             DataFailure.OracleErrorType => OracleErrorBody(failure),
+            DataFailure.FieldValidationType => FieldValidationBody(failure),
             _ => null,
         };
 
@@ -160,7 +164,7 @@ public sealed class ProblemDetailsWriter
         return body;
     }
 
-    /// <summary>Builds the 422 body of a package error raised for missing application, session or user context.</summary>
+    /// <summary>Builds the 422 body of a package error raised for missing application, session or user context; kind only when set.</summary>
     /// <param name="failure">The translated failure.</param>
     /// <returns>The body members in contract order.</returns>
     private static Dictionary<string, object?> OperatorContextErrorBody(DataFailure failure)
@@ -169,33 +173,58 @@ public sealed class ProblemDetailsWriter
         body["oracleErrorNumber"] = failure.Number;
         body["package"] = failure.Package;
         body["message"] = failure.Message;
+        AddWhenSet(body, "kind", failure.Kind);
         return body;
     }
 
     /// <summary>Builds the 501 body of a blocked operation with the messages and open-item ids attached to the exception.</summary>
     /// <param name="failure">The translated failure.</param>
     /// <param name="error">The handled exception.</param>
-    /// <returns>The body members in contract order.</returns>
-    private static Dictionary<string, object?> OpenItemBody(DataFailure failure, Exception error)
+    /// <returns>The body members in contract order, or null when the failure names no open item.</returns>
+    private static Dictionary<string, object?>? OpenItemBody(DataFailure failure, Exception error)
     {
-        IReadOnlyList<MessageDto>? attachedMessages = ReadData<IReadOnlyList<MessageDto>>(error, MessagesDataKey);
-        IReadOnlyList<string>? attachedOpenItems = ReadData<IReadOnlyList<string>>(error, OpenItemsDataKey);
+        if (failure.OpenItemId is not { } openItemId)
+        {
+            return null;
+        }
+
+        IReadOnlyList<MessageDto>? attachedMessages = ReadData<IReadOnlyList<MessageDto>>(error, openItemId, MessagesDataKey);
+        IReadOnlyList<string>? attachedOpenItems = ReadData<IReadOnlyList<string>>(error, openItemId, OpenItemsDataKey);
 
         Dictionary<string, object?> body = Problem(failure.Type, OpenItemTitle, failure.Status);
-        body["openItemId"] = failure.OpenItemId;
+        body["openItemId"] = openItemId;
         body["message"] = failure.Message;
         body["messages"] = attachedMessages is null ? new List<MessageDto>() : NonNull(attachedMessages);
-        body["openItems"] = OpenItems(failure.OpenItemId, attachedOpenItems);
+        body["openItems"] = OpenItems(openItemId, attachedOpenItems);
         return body;
     }
 
-    /// <summary>Builds the 500 body of an unclassified Oracle error, carrying its number only.</summary>
+    /// <summary>Builds the 500 body of an unclassified Oracle error, carrying its number only, or the fixed message when it has no number.</summary>
     /// <param name="failure">The translated failure.</param>
     /// <returns>The body members in contract order.</returns>
     private static Dictionary<string, object?> OracleErrorBody(DataFailure failure)
     {
         Dictionary<string, object?> body = Problem(failure.Type, OracleErrorTitle, failure.Status);
         body["oracleErrorNumber"] = failure.Number;
+        if (failure.Number is null)
+        {
+            body["message"] = failure.Message;
+        }
+
+        return body;
+    }
+
+    /// <summary>Builds the 422 <c>field-validation</c> body of a request value the Data layer refused, as one blocking message.</summary>
+    /// <param name="failure">The translated failure.</param>
+    /// <returns>The body members in contract order.</returns>
+    private static Dictionary<string, object?> FieldValidationBody(DataFailure failure)
+    {
+        Dictionary<string, object?> body = Problem(FieldValidationType, FieldValidationTitle, failure.Status);
+        body["messages"] = new List<MessageDto>
+        {
+            new() { Field = failure.Field, Text = failure.Message, Severity = ValidationMessage.Blocking },
+        };
+        body["openItems"] = new List<string>();
         return body;
     }
 
@@ -214,12 +243,13 @@ public sealed class ProblemDetailsWriter
         return ids;
     }
 
-    /// <summary>Reads a data value of the expected type from the exception, else from the first <see cref="NotImplementedException"/> among its inner exceptions.</summary>
+    /// <summary>Reads a data value of the expected type from the exception, else from the first <see cref="NotImplementedException"/> in its chain whose message names the open item.</summary>
     /// <typeparam name="T">Expected type of the value.</typeparam>
     /// <param name="error">The handled exception.</param>
+    /// <param name="openItemId">Open-item id of the failure.</param>
     /// <param name="key">Data key to read.</param>
     /// <returns>The value, or null when absent or of another type.</returns>
-    private static T? ReadData<T>(Exception error, string key)
+    private static T? ReadData<T>(Exception error, string openItemId, string key)
         where T : class
     {
         if (TryReadData(error.Data, key, out T? value))
@@ -227,16 +257,54 @@ public sealed class ProblemDetailsWriter
             return value;
         }
 
-        for (Exception? inner = error.InnerException; inner is not null; inner = inner.InnerException)
+        for (Exception? current = error; current is not null; current = current.InnerException)
         {
-            if (inner is NotImplementedException)
+            if (current is NotImplementedException && NamesOpenItem(current.Message, openItemId))
             {
-                return TryReadData(inner.Data, key, out T? innerValue) ? innerValue : null;
+                return TryReadData(current.Data, key, out T? openItemValue) ? openItemValue : null;
             }
         }
 
         return null;
     }
+
+    /// <summary>Reads the messages and open-item ids attached to an <see cref="ArgumentException"/> raised for invalid request input.</summary>
+    /// <param name="error">The handled exception.</param>
+    /// <param name="messages">The attached messages when at least one is blocking.</param>
+    /// <param name="openItems">The attached open-item ids; empty when absent.</param>
+    /// <returns>True when the exception is an <see cref="ArgumentException"/> whose attached messages hold a blocking message.</returns>
+    private static bool TryReadRequestValidation(
+        Exception error,
+        [NotNullWhen(true)] out IReadOnlyList<MessageDto>? messages,
+        out IReadOnlyList<string> openItems)
+    {
+        messages = null;
+        openItems = Array.Empty<string>();
+        if (error is not ArgumentException
+            || !TryReadData(error.Data, MessagesDataKey, out IReadOnlyList<MessageDto>? attachedMessages)
+            || attachedMessages is null
+            || !attachedMessages.Any(message => message is not null
+                && string.Equals(message.Severity, ValidationMessage.Blocking, StringComparison.Ordinal)))
+        {
+            return false;
+        }
+
+        if (TryReadData(error.Data, OpenItemsDataKey, out IReadOnlyList<string>? attachedOpenItems) && attachedOpenItems is not null)
+        {
+            openItems = attachedOpenItems;
+        }
+
+        messages = attachedMessages;
+        return true;
+    }
+
+    /// <summary>Returns whether a message starts with the open-item id followed by its end or a non-digit.</summary>
+    /// <param name="message">Exception message.</param>
+    /// <param name="openItemId">Open-item id such as OI-11.</param>
+    /// <returns>True when the message names the open item.</returns>
+    private static bool NamesOpenItem(string message, string openItemId) =>
+        message.StartsWith(openItemId, StringComparison.Ordinal)
+        && (message.Length == openItemId.Length || !char.IsAsciiDigit(message[openItemId.Length]));
 
     /// <summary>Reads a data value of the expected type.</summary>
     /// <typeparam name="T">Expected type of the value.</typeparam>

@@ -1,17 +1,25 @@
 using System.Data;
+using System.Text.Json;
+using Billing.Invoicing.Api.Errors;
+using Billing.Invoicing.Data.Errors;
 using Billing.Invoicing.Data.Plsql;
 using Billing.Invoicing.Domain.Model;
+using Microsoft.AspNetCore.Diagnostics;
+using Microsoft.AspNetCore.Http;
 using Oracle.ManagedDataAccess.Client;
 using Oracle.ManagedDataAccess.Types;
 
 namespace Billing.Invoicing.Tests.Data;
 
-/// <summary>Associative-array binding tests for <see cref="LineInputBinder"/> and <see cref="ClientIdBinder"/>.</summary>
+/// <summary>Associative-array binding tests for <see cref="LineInputBinder"/> and <see cref="ClientIdBinder"/>, and how their rejections are translated and written.</summary>
 [Trait("Category", "DataUnit")]
 public sealed class LineInputBinderTests
 {
     private const string LineCountName = "line_count";
     private const string ClientIdName = "l_client_id";
+
+    /// <summary>U+00E9, two bytes in UTF-8.</summary>
+    private const char TwoByteCharacter = '\u00E9';
 
     private static readonly (string Name, OracleDbType Type)[] ExpectedArrays =
     [
@@ -273,6 +281,74 @@ public sealed class LineInputBinderTests
         Assert.Equal(OracleParameterStatus.NullInsert, clientIds.ArrayBindStatus[1]);
     }
 
+    [Fact]
+    public void ClientIdBinder_ClientIdOf4000Characters_IsBoundWholeWithItsLengthAsBindSize()
+    {
+        string clientId = new('x', 4000);
+
+        OracleParameter clientIds = ClientIdBinder.Bind([Line("S1", clientId)]);
+
+        Assert.Equal(clientId, Assert.Single(Plain(clientIds)));
+        Assert.Equal(4000, Assert.Single(clientIds.ArrayBindSize));
+        Assert.Equal(OracleParameterStatus.Success, Assert.Single(clientIds.ArrayBindStatus));
+    }
+
+    [Fact]
+    public void ClientIdBinder_ClientIdLongerThan4000Characters_ThrowsNamingTheLine()
+    {
+        IReadOnlyList<InvoiceLineDraft> lines = [Line("S1", "c-1"), Line("S2", "c-2"), Line("S3", new string('x', 4001))];
+
+        ArgumentException error = Assert.Throws<ArgumentException>(() => ClientIdBinder.Bind(lines));
+
+        Assert.Contains("index 2", error.Message);
+        Assert.Contains(ClientIdName, error.Message);
+        Assert.Contains("4001", error.Message);
+        Assert.Contains("4000", error.Message);
+        Assert.Equal("lines", error.ParamName);
+    }
+
+    [Fact]
+    public void ClientIdBinder_MixedLengthClientIds_KeepEachFullValueAndBindSizeAtItsIndex()
+    {
+        string longest = new('y', 4000);
+        IReadOnlyList<InvoiceLineDraft> lines = [Line("S1", "c-1"), Line("S2", longest), new InvoiceLineDraft { ServiceId = "S3" }];
+
+        OracleParameter clientIds = ClientIdBinder.Bind(lines);
+
+        Assert.Equal(3, clientIds.Size);
+        Assert.Equal(new object?[] { "c-1", longest, null }, Plain(clientIds));
+        Assert.Equal(new[] { 3, 4000, 1 }, clientIds.ArrayBindSize);
+        Assert.Equal(
+            new[] { OracleParameterStatus.Success, OracleParameterStatus.Success, OracleParameterStatus.NullInsert },
+            clientIds.ArrayBindStatus);
+    }
+
+    [Fact]
+    public void ClientIdBinder_ClientIdOf4000Utf8Bytes_IsBoundWholeWithItsCharacterLengthAsBindSize()
+    {
+        string clientId = new(TwoByteCharacter, 2000);
+
+        OracleParameter clientIds = ClientIdBinder.Bind([Line("S1", clientId)]);
+
+        Assert.Equal(clientId, Assert.Single(Plain(clientIds)));
+        Assert.Equal(2000, Assert.Single(clientIds.ArrayBindSize));
+        Assert.Equal(OracleParameterStatus.Success, Assert.Single(clientIds.ArrayBindStatus));
+    }
+
+    [Fact]
+    public void ClientIdBinder_ClientIdOver4000Utf8Bytes_ThrowsNamingTheLine()
+    {
+        IReadOnlyList<InvoiceLineDraft> lines = [Line("S1", "c-1"), Line("S2", new string(TwoByteCharacter, 2001))];
+
+        ArgumentException error = Assert.Throws<ArgumentException>(() => ClientIdBinder.Bind(lines));
+
+        Assert.Contains("index 1", error.Message);
+        Assert.Contains(ClientIdName, error.Message);
+        Assert.Contains("4002", error.Message);
+        Assert.Contains("UTF-8", error.Message);
+        Assert.Equal("lines", error.ParamName);
+    }
+
     [Theory]
     [InlineData("direct-without-override", null, "N")]
     [InlineData("direct-flagged-without-override", null, "N")]
@@ -400,6 +476,38 @@ public sealed class LineInputBinderTests
     }
 
     [Fact]
+    public void Bind_TextOf4000Utf8Bytes_IsBoundWithItsCharacterLengthAsBindSize()
+    {
+        string snapshot = new(TwoByteCharacter, 2000);
+
+        OracleParameter parameter = Find(
+            LineInputBinder.Bind([Line("S1", "c-1") with { OfferNameSnapshot = snapshot }]),
+            "l_offer_name_snapshot");
+
+        Assert.Equal(snapshot, Assert.Single(Plain(parameter)));
+        Assert.Equal(2000, Assert.Single(parameter.ArrayBindSize));
+        Assert.Equal(OracleParameterStatus.Success, Assert.Single(parameter.ArrayBindStatus));
+    }
+
+    [Fact]
+    public void Bind_TextOver4000Utf8Bytes_ThrowsNamingTheLineAndArray()
+    {
+        IReadOnlyList<InvoiceLineDraft> lines =
+        [
+            Line("S1", "c-1"),
+            Line("S2", "c-2") with { OfferNameSnapshot = new string(TwoByteCharacter, 2001) },
+        ];
+
+        ArgumentException error = Assert.Throws<ArgumentException>(() => LineInputBinder.Bind(lines));
+
+        Assert.Contains("index 1", error.Message);
+        Assert.Contains("l_offer_name_snapshot", error.Message);
+        Assert.Contains("4002", error.Message);
+        Assert.Contains("UTF-8", error.Message);
+        Assert.Equal("lines", error.ParamName);
+    }
+
+    [Fact]
     public void Bind_NullLineList_Throws()
     {
         Assert.Throws<ArgumentNullException>(() => LineInputBinder.Bind(null!));
@@ -421,6 +529,75 @@ public sealed class LineInputBinderTests
     public void ClientIdBinder_NullLine_Throws()
     {
         Assert.Throws<ArgumentException>(() => ClientIdBinder.Bind([Line("S1", "c-1"), null!]));
+    }
+
+    [Theory]
+    [InlineData("client-id-characters", "Invoice line at index 1: l_client_id has 4001 characters; at most 4000 can be bound.")]
+    [InlineData("client-id-bytes", "Invoice line at index 1: l_client_id has 4002 bytes in UTF-8; at most 4000 can be bound.")]
+    [InlineData("text-characters", "Invoice line at index 1: l_offer_name_snapshot has 4001 characters; at most 4000 can be bound.")]
+    [InlineData("text-bytes", "Invoice line at index 1: l_offer_name_snapshot has 4002 bytes in UTF-8; at most 4000 can be bound.")]
+    public void BindingRejection_CarriesItsTextAndTranslatesToFormLevelFieldValidation(string rejectionCase, string expectedText)
+    {
+        ArgumentException error = BindingRejection(rejectionCase);
+
+        Assert.Equal("lines", error.ParamName);
+        Assert.Equal(expectedText, error.Data[OracleFailureTranslator.BindingRejectionKey]);
+
+        DataFailure? failure = new OracleFailureTranslator().Translate(error);
+
+        Assert.NotNull(failure);
+        Assert.Equal(422, failure.Status);
+        Assert.Equal("field-validation", failure.Type);
+        Assert.Equal(expectedText, failure.Message);
+        Assert.Null(failure.Field);
+        Assert.Null(failure.Number);
+        Assert.Null(failure.Package);
+        Assert.Null(failure.Kind);
+    }
+
+    [Fact]
+    public void BindingRejection_KeyAbsentOrOnAnotherExceptionType_IsNotTranslated()
+    {
+        var translator = new OracleFailureTranslator();
+        ArgumentException clientIdNullLine = Assert.Throws<ArgumentException>(() => ClientIdBinder.Bind([Line("S1", "c-1"), null!]));
+        ArgumentException lineNullLine = Assert.Throws<ArgumentException>(() => LineInputBinder.Bind([Line("S1", "c-1"), null!]));
+        var otherType = new InvalidOperationException("Not a binding rejection.");
+        otherType.Data[OracleFailureTranslator.BindingRejectionKey] = "Not a binding rejection.";
+
+        Assert.False(clientIdNullLine.Data.Contains(OracleFailureTranslator.BindingRejectionKey));
+        Assert.False(lineNullLine.Data.Contains(OracleFailureTranslator.BindingRejectionKey));
+        Assert.Null(translator.Translate(clientIdNullLine));
+        Assert.Null(translator.Translate(lineNullLine));
+        Assert.Null(translator.Translate(otherType));
+    }
+
+    [Fact]
+    public async Task BindingRejection_IsWrittenAsFieldValidationProblem()
+    {
+        const string expectedText = "Invoice line at index 1: l_client_id has 4001 characters; at most 4000 can be bound.";
+        var context = new DefaultHttpContext();
+        context.Response.Body = new MemoryStream();
+        context.Features.Set<IExceptionHandlerFeature>(new ExceptionHandlerFeature
+        {
+            Error = BindingRejection("client-id-characters"),
+            Path = "/api/invoices",
+        });
+
+        await new ProblemDetailsWriter(new OracleFailureTranslator()).WriteAsync(context);
+
+        Assert.Equal(422, context.Response.StatusCode);
+        Assert.Equal("application/problem+json", context.Response.ContentType);
+        context.Response.Body.Position = 0;
+        using JsonDocument document = await JsonDocument.ParseAsync(context.Response.Body);
+        JsonElement body = document.RootElement;
+        Assert.Equal("field-validation", body.GetProperty("type").GetString());
+        Assert.Equal(422, body.GetProperty("status").GetInt32());
+        JsonElement message = Assert.Single(body.GetProperty("messages").EnumerateArray());
+        Assert.Equal(expectedText, message.GetProperty("text").GetString());
+        Assert.Equal("Blocking", message.GetProperty("severity").GetString());
+        Assert.Equal(JsonValueKind.Null, message.GetProperty("field").ValueKind);
+        Assert.Equal(JsonValueKind.Array, body.GetProperty("openItems").ValueKind);
+        Assert.Empty(body.GetProperty("openItems").EnumerateArray());
     }
 
     private static InvoiceLineDraft Line(string serviceId, string clientId) =>
@@ -469,6 +646,25 @@ public sealed class LineInputBinderTests
             "offer-id-only-with-override" => withOverride with { OfferId = 61 },
             "offer-role-only-with-override" => withOverride with { OfferLineRole = "PARENT" },
             _ => throw new ArgumentOutOfRangeException(nameof(lineKind), lineKind, "Unknown price-override case."),
+        };
+    }
+
+    private static ArgumentException BindingRejection(string rejectionCase)
+    {
+        InvoiceLineDraft first = Line("S1", "c-1");
+        InvoiceLineDraft second = Line("S2", "c-2");
+
+        return rejectionCase switch
+        {
+            "client-id-characters" => Assert.Throws<ArgumentException>(
+                () => ClientIdBinder.Bind([first, second with { ClientId = new string('x', 4001) }])),
+            "client-id-bytes" => Assert.Throws<ArgumentException>(
+                () => ClientIdBinder.Bind([first, second with { ClientId = new string(TwoByteCharacter, 2001) }])),
+            "text-characters" => Assert.Throws<ArgumentException>(
+                () => LineInputBinder.Bind([first, second with { OfferNameSnapshot = new string('x', 4001) }])),
+            "text-bytes" => Assert.Throws<ArgumentException>(
+                () => LineInputBinder.Bind([first, second with { OfferNameSnapshot = new string(TwoByteCharacter, 2001) }])),
+            _ => throw new ArgumentOutOfRangeException(nameof(rejectionCase), rejectionCase, "Unknown binding-rejection case."),
         };
     }
 

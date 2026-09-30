@@ -16,24 +16,33 @@ public sealed class BilInvoiceApiGateway : IBilInvoiceApiGateway
     private const string AutoYes = "Y";
     private const string AutoNo = "N";
 
+    private const string MaxOutputLinesKey = "Invoicing:MaxOutputLines";
+    private const string CommandTimeoutSecondsKey = "Invoicing:CommandTimeoutSeconds";
+
     private readonly InvoicingDataOptions _options;
 
     /// <summary>Stores the data-layer settings; opens nothing.</summary>
     /// <param name="options">Command timeout and OUT-array capacity applied to every call.</param>
     /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
-    /// <exception cref="ArgumentOutOfRangeException"><see cref="InvoicingDataOptions.MaxOutputLines"/> is below 1 or <see cref="InvoicingDataOptions.CommandTimeoutSeconds"/> is negative.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><see cref="InvoicingDataOptions.MaxOutputLines"/> or <see cref="InvoicingDataOptions.CommandTimeoutSeconds"/> is below 1.</exception>
     public BilInvoiceApiGateway(InvoicingDataOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
 
         if (options.MaxOutputLines < 1)
         {
-            throw new ArgumentOutOfRangeException(nameof(options), options.MaxOutputLines, $"{nameof(InvoicingDataOptions.MaxOutputLines)} must be at least 1.");
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                options.MaxOutputLines,
+                $"{MaxOutputLinesKey} ({nameof(InvoicingDataOptions)}.{nameof(InvoicingDataOptions.MaxOutputLines)}) must be at least 1.");
         }
 
-        if (options.CommandTimeoutSeconds < 0)
+        if (options.CommandTimeoutSeconds < 1)
         {
-            throw new ArgumentOutOfRangeException(nameof(options), options.CommandTimeoutSeconds, $"{nameof(InvoicingDataOptions.CommandTimeoutSeconds)} must not be negative.");
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                options.CommandTimeoutSeconds,
+                $"{CommandTimeoutSecondsKey} ({nameof(InvoicingDataOptions)}.{nameof(InvoicingDataOptions.CommandTimeoutSeconds)}) must be at least 1.");
         }
 
         _options = options;
@@ -80,13 +89,15 @@ public sealed class BilInvoiceApiGateway : IBilInvoiceApiGateway
             nameof(CalculatePreview),
             cancellationToken).ConfigureAwait(false);
 
-        return (OutputArrayReader.ReadPreviewLines(command.Parameters), OutputArrayReader.ReadPreviewTotals(command.Parameters));
+        var preview = (OutputArrayReader.ReadPreviewLines(command.Parameters), OutputArrayReader.ReadPreviewTotals(command.Parameters));
+        oracleSession.EndCall();
+        return preview;
     }
 
-    /// <summary>Runs BIL_INVOICE_API.EXPAND_BUNDLED_OFFER_IG_LINES, then CREATE_FULL_INVOICE, for the draft and its request id.</summary>
+    /// <summary>Runs BIL_INVOICE_API.EXPAND_BUNDLED_OFFER_IG_LINES, then CREATE_FULL_INVOICE, for the draft and its request id; with no lines CREATE_FULL_INVOICE runs without expansion, so a recorded request id returns its existing invoice.</summary>
     /// <param name="session">Open session whose transaction the call runs in; the caller commits or rolls it back.</param>
     /// <param name="header">Invoice header draft; its amounts and sub pay types are passed to the create call.</param>
-    /// <param name="lines">Visible draft lines in bind order.</param>
+    /// <param name="lines">Visible draft lines in bind order; when empty, expansion is skipped.</param>
     /// <param name="operatorContext">Operator bound into the header.</param>
     /// <param name="requestId">Idempotency request id of the draft, passed unchanged as <c>p_request_id</c>.</param>
     /// <param name="cancellationToken">Cancels the call.</param>
@@ -167,7 +178,9 @@ public sealed class BilInvoiceApiGateway : IBilInvoiceApiGateway
             nameof(GetBundledOfferLines),
             cancellationToken).ConfigureAwait(false);
 
-        return OutputArrayReader.ReadPreviewLines(command.Parameters);
+        var offerLines = OutputArrayReader.ReadPreviewLines(command.Parameters);
+        oracleSession.EndCall();
+        return offerLines;
     }
 
     /// <summary>Runs BIL_INVOICE_API.GET_PACKAGE_LINES, then BIL_IMPORT.TO_ENGINE_LINES, for a package service on a price list.</summary>
@@ -209,7 +222,9 @@ public sealed class BilInvoiceApiGateway : IBilInvoiceApiGateway
             nameof(GetPackageLines),
             cancellationToken).ConfigureAwait(false);
 
-        return (OutputArrayReader.ReadEngineLines(command.Parameters), OutputArrayReader.ReadImportResult(command.Parameters));
+        var package = (OutputArrayReader.ReadEngineLines(command.Parameters), OutputArrayReader.ReadImportResult(command.Parameters));
+        oracleSession.EndCall();
+        return package;
     }
 
     /// <summary>Stands in for BIL_INVOICE_API.BUILD_PRINT_URL; always throws without Oracle access.</summary>
@@ -218,15 +233,19 @@ public sealed class BilInvoiceApiGateway : IBilInvoiceApiGateway
     /// <exception cref="NotImplementedException">Always, with a message starting with the print open-item id.</exception>
     public string BuildPrintUrl(long invNo) => throw new NotImplementedException(PrintUrlUnavailableMessage);
 
-    /// <summary>Returns the session as an <see cref="OracleSession"/>.</summary>
+    /// <summary>Returns the session as an active <see cref="OracleSession"/> with a gateway call marked as started.</summary>
     /// <exception cref="ArgumentNullException"><paramref name="session"/> is null.</exception>
     /// <exception cref="ArgumentException"><paramref name="session"/> is another implementation.</exception>
+    /// <exception cref="ObjectDisposedException">The session is disposed.</exception>
+    /// <exception cref="InvalidOperationException">The session is already committed or rolled back.</exception>
     private static OracleSession AsOracleSession(IOracleSession session)
     {
         ArgumentNullException.ThrowIfNull(session);
 
-        return session as OracleSession
+        var oracleSession = session as OracleSession
             ?? throw new ArgumentException($"Expected an {nameof(OracleSession)}, got {session.GetType().Name}.", nameof(session));
+        oracleSession.BeginCall();
+        return oracleSession;
     }
 
     /// <summary>Header, line and client-id inputs shared by the preview and create blocks.</summary>
@@ -256,6 +275,7 @@ public sealed class BilInvoiceApiGateway : IBilInvoiceApiGateway
     {
         var command = new OracleCommand(block.Replace("\r\n", "\n", StringComparison.Ordinal), session.Connection)
         {
+            Transaction = session.Transaction,
             CommandType = CommandType.Text,
             BindByName = true,
             CommandTimeout = _options.CommandTimeoutSeconds,
@@ -278,6 +298,7 @@ public sealed class BilInvoiceApiGateway : IBilInvoiceApiGateway
         catch (OracleException exception)
         {
             exception.Data[OracleErrorParser.OperationKey] = operation;
+            session.RecordFailure(exception);
             throw;
         }
         finally

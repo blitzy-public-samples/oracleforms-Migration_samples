@@ -28,13 +28,19 @@ public sealed class PaymentAllocationRulesTests
     private const string Amount2Input = "amount2";
     private const string AllocationInputName = "allocation";
     private const string LegacyInput = "legacy";
+    private const string PackageInput = "package";
 
     private const string PassOutcome = "Pass";
     private const int T039RoundingDecimals = 2;
+    private const int CreditPayType = 2;
+    private const decimal RoundForCashCreditVatDefault = 2m;
 
     private const string T042Locator = "05_Complex/Inv_Small_Cash.xml:81";
     private const string Pu30Locator = "05_Complex/Inv_Small_Cash.xml:989";
     private const string CashCollectedFormulaLocator = "05_Complex/Inv_Small_Cash.xml:97";
+    private const string RoundForCashLocator = "05_Complex/Inv_Small_Cash.xml:979";
+    private const string NetFormulaLocator = "05_Complex/Inv_Small_Cash.xml:416";
+    private const string PackageCashCollectedLocator = "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:3058";
 
     /// <summary>Each DR-07 case yields its expected AMOUNT_1 / AMOUNT_2 from the method it names, a Pass outcome and no messages.</summary>
     /// <param name="caseName">Fixture case name.</param>
@@ -138,6 +144,60 @@ public sealed class PaymentAllocationRulesTests
             fixtureCase => fixtureCase.Input.TryGetProperty(LegacyInput, out var legacy) && legacy.ValueKind == JsonValueKind.Object);
     }
 
+    /// <summary>Each DR-07 legacy case records the legacy credit-branch NET and defaults AMOUNT_1 to the package amount due, which differs from it.</summary>
+    [Fact]
+    [Trait("Rule", AllocationRuleId)]
+    public void Credit_null_patient_vat_case_records_the_legacy_net_and_allocates_the_package_amount_due()
+    {
+        var fixture = ParityFixture.Load(AllocationRuleId);
+        foreach (var locator in new[] { RoundForCashLocator, NetFormulaLocator, PackageCashCollectedLocator })
+        {
+            Assert.Contains(fixture.Source, source => string.Equals(source.Locator, locator, StringComparison.Ordinal));
+        }
+
+        var legacyCases = fixture.Cases.Where(fixtureCase => fixtureCase.Input.TryGetProperty(LegacyInput, out _)).ToList();
+        Assert.NotEmpty(legacyCases);
+
+        foreach (var fixtureCase in legacyCases)
+        {
+            RequireInputProperties(AllocationRuleId, fixtureCase, MethodInput, AmountDueInput, PackageInput);
+            var input = ReadInput<AllocationInput>(AllocationRuleId, fixtureCase);
+            var legacy = ReadInputProperty<LegacyAmountDueTerms>(AllocationRuleId, fixtureCase, LegacyInput);
+            var package = ReadInputProperty<PackageAmountDueTerms>(AllocationRuleId, fixtureCase, PackageInput);
+
+            Assert.Equal(CreditPayType, legacy.PayType);
+            Assert.Null(legacy.VatTotalPat);
+            var sPay = Assert.NotNull(legacy.SPay);
+            var legacyPatPayx = Assert.NotNull(legacy.LegacyPatPayx);
+            var legacyNet = Assert.NotNull(legacy.LegacyNet);
+            Assert.Equal(sPay + RoundForCashCreditVatDefault, legacyPatPayx);
+            Assert.Equal(Money.Round2(legacyPatPayx - (legacy.FinalDisc ?? 0m)), legacyNet);
+
+            Assert.Equal(sPay, package.PatPay);
+            Assert.Equal(legacy.FinalDisc, package.FinalDisc);
+            Assert.NotNull(package.VatTotalPat);
+            var cashCollected = Assert.NotNull(package.CashCollected);
+
+            var amountDue = Assert.NotNull(input.AmountDue);
+            Assert.Equal(cashCollected, amountDue);
+            Assert.NotEqual(legacyNet, amountDue);
+
+            Assert.Equal(DefaultFirstAmountMethod, input.Method);
+            var amount1 = PaymentAllocationRules.DefaultFirstAmount(amountDue);
+            Assert.Equal(cashCollected, amount1);
+            Assert.NotEqual(legacyNet, amount1);
+
+            var expectedValues = fixtureCase.Expected.Values
+                ?? throw new InvalidDataException($"Fixture '{AllocationRuleId}', case '{fixtureCase.Name}': expected.values is missing.");
+            Assert.True(
+                expectedValues.TryGetProperty(Amount1Key, out var expectedAmount1),
+                $"Fixture '{AllocationRuleId}', case '{fixtureCase.Name}': expected.values has no {Amount1Key}.");
+            Assert.Equal(JsonValueKind.Number, expectedAmount1.ValueKind);
+            Assert.Equal(cashCollected, expectedAmount1.GetDecimal());
+            Assert.NotEqual(legacyNet, expectedAmount1.GetDecimal());
+        }
+    }
+
     /// <summary>The DR-08 fixture is a derivable domain fixture traced to PU30 REMAIN.</summary>
     [Fact]
     [Trait("Rule", RefundRuleId)]
@@ -206,6 +266,11 @@ public sealed class PaymentAllocationRulesTests
         fixtureCase.Input.Deserialize<T>(ParityFixture.JsonOptions)
         ?? throw new InvalidDataException($"Fixture '{ruleId}', case '{fixtureCase.Name}': input is null.");
 
+    private static T ReadInputProperty<T>(string ruleId, FixtureCase fixtureCase, string name)
+        where T : class =>
+        fixtureCase.Input.GetProperty(name).Deserialize<T>(ParityFixture.JsonOptions)
+        ?? throw new InvalidDataException($"Fixture '{ruleId}', case '{fixtureCase.Name}': input.{name} is null.");
+
     private static string OutcomeOf(RuleResult result) =>
         result.IsBlocking
             ? ValidationMessage.Blocking
@@ -225,6 +290,28 @@ public sealed class PaymentAllocationRulesTests
     /// <param name="AmountDue">Amount due, the package's <c>cash_collected</c>.</param>
     /// <param name="Amount1">Amount on payment method 1.</param>
     private sealed record AllocationInput(string? Method, decimal? AmountDue, decimal? Amount1);
+
+    /// <summary>DR-07 legacy <c>ROUND_FOR_CASH</c> and <c>NET</c> terms.</summary>
+    /// <param name="PayType">Invoice pay type, <c>PAYTYPE</c>; 1 is cash, any other value credit.</param>
+    /// <param name="SPay">Patient share, <c>S_PAY</c>.</param>
+    /// <param name="VatTotalPat">Patient VAT, <c>VAT_TOTAL_PAT</c>.</param>
+    /// <param name="FinalDisc">Final discount, <c>FINALDISC</c>.</param>
+    /// <param name="LegacyPatPayx">Legacy <c>PAT_PAYX</c>, the <c>ROUND_FOR_CASH</c> result.</param>
+    /// <param name="LegacyNet">Legacy <c>NET</c>.</param>
+    private sealed record LegacyAmountDueTerms(
+        int? PayType,
+        decimal? SPay,
+        decimal? VatTotalPat,
+        decimal? FinalDisc,
+        decimal? LegacyPatPayx,
+        decimal? LegacyNet);
+
+    /// <summary>DR-07 package amount-due terms.</summary>
+    /// <param name="PatPay">Patient share, <c>pat_pay</c>.</param>
+    /// <param name="FinalDisc">Final discount, <c>finaldisc</c>.</param>
+    /// <param name="VatTotalPat">Patient VAT, <c>vat_total_pat</c>.</param>
+    /// <param name="CashCollected">Amount due, <c>cash_collected</c>.</param>
+    private sealed record PackageAmountDueTerms(decimal? PatPay, decimal? FinalDisc, decimal? VatTotalPat, decimal? CashCollected);
 
     /// <summary>DR-08 case input.</summary>
     /// <param name="Allocation">Payment split with cash tendered and the two payment methods.</param>

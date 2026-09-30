@@ -1,4 +1,6 @@
 using System.Data;
+using System.Text;
+using Billing.Invoicing.Data.Errors;
 using Billing.Invoicing.Domain.Model;
 using Oracle.ManagedDataAccess.Client;
 using Oracle.ManagedDataAccess.Types;
@@ -16,7 +18,7 @@ public static class LineInputBinder
     /// <param name="lines">Draft lines in bind order; element <c>i</c> of every array belongs to <c>lines[i]</c>.</param>
     /// <returns>36 parameters: the 35 <c>l_*</c> arrays in t_line_input order, then <c>line_count</c>.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="lines"/> is null.</exception>
-    /// <exception cref="ArgumentException">A line is null, or a text value exceeds 4000 characters.</exception>
+    /// <exception cref="ArgumentException">A line is null, or a text value is longer than 4000 characters or 4000 UTF-8 bytes.</exception>
     public static IReadOnlyList<OracleParameter> Bind(IReadOnlyList<InvoiceLineDraft> lines)
     {
         ArgumentNullException.ThrowIfNull(lines);
@@ -135,12 +137,22 @@ public static class LineInputBinder
                 continue;
             }
 
-            // A value longer than the t_vc element size is rejected, never truncated to fit.
+            // A value over the t_vc element size in characters or UTF-8 bytes is rejected, never truncated to fit.
+            string? rejection = null;
             if (value.Length > MaxVarchar2Length)
             {
-                throw new ArgumentException(
-                    $"Invoice line at index {i}: {name} has {value.Length} characters; at most {MaxVarchar2Length} can be bound.",
-                    nameof(lines));
+                rejection = $"Invoice line at index {i}: {name} has {value.Length} characters; at most {MaxVarchar2Length} can be bound.";
+            }
+            else if (Encoding.UTF8.GetByteCount(value) is var bytes and > MaxVarchar2Length)
+            {
+                rejection = $"Invoice line at index {i}: {name} has {bytes} bytes in UTF-8; at most {MaxVarchar2Length} can be bound.";
+            }
+
+            if (rejection is not null)
+            {
+                var error = new ArgumentException(rejection, nameof(lines));
+                error.Data[OracleFailureTranslator.BindingRejectionKey] = rejection;
+                throw error;
             }
 
             values[i] = new OracleString(value);

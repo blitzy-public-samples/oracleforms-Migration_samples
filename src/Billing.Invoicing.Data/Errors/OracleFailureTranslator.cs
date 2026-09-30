@@ -7,6 +7,12 @@ namespace Billing.Invoicing.Data.Errors;
 /// <summary>Translates Oracle errors and Data-layer exceptions into <see cref="DataFailure"/> values of the HTTP error contract.</summary>
 public sealed partial class OracleFailureTranslator
 {
+    /// <summary>Exception data key holding the operator-facing text of a line value a binder refused to bind.</summary>
+    public const string BindingRejectionKey = "Billing.Invoicing.Data.BindingRejection";
+
+    /// <summary><see cref="Exception.Data"/> key whose value <c>true</c> marks a blank or malformed Oracle connection string.</summary>
+    public const string ConfigurationFaultKey = "Billing.Invoicing.Data.ConfigurationFault";
+
     private const int ApplicationErrorFirst = -20999;
     private const int ApplicationErrorLast = -20000;
 
@@ -19,6 +25,7 @@ public sealed partial class OracleFailureTranslator
 
     private const string OracleErrorMessage = "The Oracle database returned an error.";
     private const string OracleUnavailableMessage = "Oracle database is unavailable.";
+    private const string ConfigurationFaultMessage = "The Oracle connection string is not configured or is not well-formed.";
 
     /// <summary>ORA codes classified as connectivity or availability failures.</summary>
     private static readonly FrozenSet<int> ConnectivityNumbers = new[]
@@ -78,7 +85,7 @@ public sealed partial class OracleFailureTranslator
         return OracleError(error.Number, InnermostFramePackage(error));
     }
 
-    /// <summary>Translates a Data-layer exception into a failure, or returns null when the exception is not an Oracle, open-item or transport failure.</summary>
+    /// <summary>Translates a Data-layer exception into a failure, or returns null when the exception is not an Oracle, connection-string, open-item, transport or binding-rejection failure.</summary>
     /// <param name="exception">The exception raised by a Data member.</param>
     /// <returns>The failure to return over HTTP, or <see langword="null"/> when the exception is not translated.</returns>
     public DataFailure? Translate(Exception exception)
@@ -100,23 +107,47 @@ public sealed partial class OracleFailureTranslator
             return failure.Status == InternalServerErrorStatus && transport ? Unavailable(failure.Number) : failure;
         }
 
-        // A blocked member names its open item at the start of the message.
-        if (exception is NotImplementedException)
+        // A blank or malformed connection string is a 500 without a number or package.
+        if (HasConfigurationFault(exception))
         {
-            Match openItem = OpenItemIdRegex().Match(exception.Message);
             return new DataFailure
             {
-                Status = NotImplementedStatus,
-                Type = DataFailure.OpenItemType,
-                OpenItemId = openItem.Success ? openItem.Value : null,
-                Message = exception.Message,
+                Status = InternalServerErrorStatus,
+                Type = DataFailure.OracleErrorType,
+                Message = ConfigurationFaultMessage,
             };
+        }
+
+        // A blocked member names its open item at the start of the message.
+        if (OpenItem(exception) is { } blocked)
+        {
+            return blocked;
         }
 
         // A socket failure or timeout without an Oracle error is 503 with no number.
         if (transport)
         {
             return Unavailable(null);
+        }
+
+        // A line value a binder refused is a form-level 422 carrying the binder's text.
+        if (exception is ArgumentException && exception.Data[BindingRejectionKey] is string text)
+        {
+            return new DataFailure
+            {
+                Status = UnprocessableEntityStatus,
+                Type = DataFailure.FieldValidationType,
+                Message = text,
+            };
+        }
+
+        // A blocked member wrapped by other exceptions is the first one along the inner-exception chain.
+        for (Exception? inner = exception.InnerException; inner is not null; inner = inner.InnerException)
+        {
+            if (OpenItem(inner) is { } wrapped)
+            {
+                return wrapped;
+            }
         }
 
         return null;
@@ -179,6 +210,28 @@ public sealed partial class OracleFailureTranslator
         Number = number,
         Message = OracleUnavailableMessage,
     };
+
+    /// <summary>Builds the 501 open-item failure of a <see cref="NotImplementedException"/> whose message starts with an open-item id.</summary>
+    /// <param name="exception">The exception or one of its inner exceptions.</param>
+    /// <returns>The 501 failure carrying that id and message, or null when the exception is not a <see cref="NotImplementedException"/> naming an open item.</returns>
+    private static DataFailure? OpenItem(Exception exception)
+    {
+        if (exception is not NotImplementedException)
+        {
+            return null;
+        }
+
+        Match openItem = OpenItemIdRegex().Match(exception.Message);
+        return openItem.Success
+            ? new DataFailure
+            {
+                Status = NotImplementedStatus,
+                Type = DataFailure.OpenItemType,
+                OpenItemId = openItem.Value,
+                Message = exception.Message,
+            }
+            : null;
+    }
 
     /// <summary>Returns the packages reachable from a gateway operation; all three when the operation is null or unknown.</summary>
     private static IReadOnlyCollection<string> CandidatePackages(string? operation) =>
@@ -243,6 +296,22 @@ public sealed partial class OracleFailureTranslator
         return false;
     }
 
+    /// <summary>Returns whether the exception or its inner-exception chain is marked under <see cref="ConfigurationFaultKey"/>.</summary>
+    /// <param name="exception">The exception raised by a Data member.</param>
+    /// <returns>True when the chain holds a connection-string fault.</returns>
+    private static bool HasConfigurationFault(Exception exception)
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            if (current.Data[ConfigurationFaultKey] is true)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /// <summary>Maps each Data gateway operation name to the packages it reaches.</summary>
     private static FrozenDictionary<string, IReadOnlyCollection<string>> BuildOperationPackages()
     {
@@ -285,7 +354,7 @@ public sealed partial class OracleFailureTranslator
         return map.ToFrozenDictionary(StringComparer.Ordinal);
     }
 
-    /// <summary>An open-item id such as OI-11 at the start of a message.</summary>
-    [GeneratedRegex("^OI-[0-9]{2}", RegexOptions.CultureInvariant)]
+    /// <summary>A two-digit open-item id such as OI-11 at the start of a message, not followed by a further digit.</summary>
+    [GeneratedRegex("^OI-[0-9]{2}(?![0-9])", RegexOptions.CultureInvariant)]
     private static partial Regex OpenItemIdRegex();
 }

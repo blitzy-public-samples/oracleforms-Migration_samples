@@ -80,6 +80,9 @@ public interface ILookupQueries
     /// <summary>Company type of a company, or null.</summary>
     Task<int?> GetCompanyType(string compCode, CancellationToken cancellationToken = default);
 
+    /// <summary>IS_DIRECT flag of a company, or null.</summary>
+    Task<int?> GetCompanyIsDirect(string compCode, CancellationToken cancellationToken = default);
+
     /// <summary>Doctor of a visit, or null.</summary>
     Task<int?> GetVisitDoctor(string visitUnique, CancellationToken cancellationToken = default);
 
@@ -135,7 +138,7 @@ public interface IBilInvoiceApiGateway
     /// <param name="amount1Auto">Whether the package fills amount 1 automatically.</param>
     Task<(IReadOnlyList<EditablePreviewLine> Lines, PreviewTotalsRow Totals)> CalculatePreview(IOracleSession session, InvoiceHeaderDraft header, IReadOnlyList<InvoiceLineDraft> lines, OperatorContext operatorContext, bool amount1Auto, CancellationToken cancellationToken = default);
 
-    /// <summary>Expands bundled offers and saves the invoice with its posting stages.</summary>
+    /// <summary>Expands bundled offers and saves the invoice with its posting stages; with no lines CREATE_FULL_INVOICE runs without expansion, so a recorded request id returns its existing invoice.</summary>
     /// <param name="requestId">Idempotency request id of the draft.</param>
     Task<FullInvoiceResultRow> CreateFullInvoice(IOracleSession session, InvoiceHeaderDraft header, IReadOnlyList<InvoiceLineDraft> lines, OperatorContext operatorContext, string requestId, CancellationToken cancellationToken = default);
 

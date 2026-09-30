@@ -9,6 +9,8 @@ namespace Billing.Invoicing.Data.Oracle;
 /// <summary>Opens Oracle connections and transactional sessions from <see cref="InvoicingDataOptions"/>. UNVERIFIED against Oracle.</summary>
 public sealed class OracleSessionFactory : IOracleSessionFactory
 {
+    private const string BlankConnectionStringMessage = "The Oracle connection string is not configured.";
+
     private readonly InvoicingDataOptions _options;
 
     /// <summary>Stores the data-layer settings; opens nothing.</summary>
@@ -33,25 +35,44 @@ public sealed class OracleSessionFactory : IOracleSessionFactory
         {
             transaction = connection.BeginTransaction(IsolationLevel.ReadCommitted);
         }
-        catch
+        catch (Exception exception)
         {
-            await connection.DisposeAsync().ConfigureAwait(false);
+            await DisposeAfterFailure(connection, exception).ConfigureAwait(false);
             throw;
         }
 
         return new OracleSession(connection, transaction);
     }
 
-    /// <summary>Opens a connection without a transaction; marks open failures in <see cref="Exception.Data"/> under <see cref="OracleErrorParser.DuringOpenKey"/> and rethrows.</summary>
+    /// <summary>Opens a connection without a transaction; marks a blank or malformed connection string under <see cref="OracleFailureTranslator.ConfigurationFaultKey"/> and open failures under <see cref="OracleErrorParser.DuringOpenKey"/> in <see cref="Exception.Data"/>, and rethrows.</summary>
     /// <param name="options">Settings holding the connection string.</param>
     /// <param name="cancellationToken">Cancels the connection open.</param>
     /// <returns>An open connection the caller disposes.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">The connection string is blank.</exception>
+    /// <exception cref="ArgumentException">The connection string is malformed.</exception>
     internal static async Task<OracleConnection> OpenConnection(InvoicingDataOptions options, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(options);
 
-        var connection = new OracleConnection(options.ConnectionString);
+        if (IsBlank(options.ConnectionString))
+        {
+            var blank = new InvalidOperationException(BlankConnectionStringMessage);
+            blank.Data[OracleFailureTranslator.ConfigurationFaultKey] = true;
+            throw blank;
+        }
+
+        OracleConnection connection;
+        try
+        {
+            connection = new OracleConnection(options.ConnectionString);
+        }
+        catch (ArgumentException exception)
+        {
+            exception.Data[OracleFailureTranslator.ConfigurationFaultKey] = true;
+            throw;
+        }
+
         try
         {
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
@@ -64,8 +85,29 @@ public sealed class OracleSessionFactory : IOracleSessionFactory
                 exception.Data[OracleErrorParser.DuringOpenKey] = true;
             }
 
-            await connection.DisposeAsync().ConfigureAwait(false);
+            await DisposeAfterFailure(connection, exception).ConfigureAwait(false);
             throw;
         }
     }
+
+    /// <summary>Disposes a connection whose open or transaction start failed; a disposal failure is attached to the original failure, not thrown.</summary>
+    /// <param name="connection">The connection to release.</param>
+    /// <param name="failure">The open or transaction-start failure that keeps propagating.</param>
+    private static async ValueTask DisposeAfterFailure(OracleConnection connection, Exception failure)
+    {
+        try
+        {
+            await connection.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception disposalFailure)
+        {
+            OracleSession.AttachSecondaryFailure(failure, disposalFailure);
+        }
+    }
+
+    /// <summary>Returns whether a connection string holds no attribute: null, empty, or only white space and semicolons.</summary>
+    /// <param name="connectionString">The configured connection string.</param>
+    /// <returns>True when the connection string is blank.</returns>
+    private static bool IsBlank(string? connectionString) =>
+        connectionString is null || connectionString.All(character => char.IsWhiteSpace(character) || character == ';');
 }

@@ -1,5 +1,8 @@
+using System.Buffers;
 using System.ComponentModel.DataAnnotations;
 using System.Globalization;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Billing.Invoicing.Domain.Model;
 
 namespace Billing.Invoicing.Api.Contracts;
@@ -28,10 +31,12 @@ public sealed record DraftDto : IValidatableObject
     /// <summary>Database time read when the draft was created.</summary>
     public DateTime DraftDate { get; init; }
 
-    /// <summary>The <c>T_INV</c> header.</summary>
+    /// <summary>The <c>T_INV</c> header; its JSON omits the pre-authorisation, <c>OFERID</c>, <c>DOCID1</c> and <c>SEQ_NO</c>.</summary>
+    [JsonConverter(typeof(RequestHeaderContract))]
     public InvoiceHeaderDraft Header { get; init; } = new();
 
-    /// <summary>The <c>D_INV</c> lines in grid order; a line's zero-based position is its line index.</summary>
+    /// <summary>The <c>D_INV</c> lines in grid order; a line's zero-based position is its line index; their JSON omits the display-only <c>CATID</c>, <c>FIXPAY</c>, <c>PAYRATE</c>, lens and <c>INS_EMP</c> members.</summary>
+    [JsonConverter(typeof(RequestLinesContract))]
     public IReadOnlyList<InvoiceLineDraft> Lines { get; init; } = [];
 
     /// <summary>The Form entry parameters set by the calling module.</summary>
@@ -76,4 +81,90 @@ public sealed record DraftDto : IValidatableObject
             }
         }
     }
+
+    /// <summary>JSON contract of <typeparamref name="T"/> that drops the named members on read and leaves them out on write.</summary>
+    /// <typeparam name="T">The header record, or the list of line records.</typeparam>
+    /// <param name="omittedMembers">CLR names of the members left out of every JSON object, or of every object in a JSON array.</param>
+    private abstract class OmittingContract<T>(params string[] omittedMembers) : JsonConverter<T>
+    {
+        /// <summary>Reads <typeparamref name="T"/> from the JSON value with the omitted members removed.</summary>
+        public override T? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            using var document = JsonDocument.ParseValue(ref reader);
+            var buffer = new ArrayBufferWriter<byte>();
+            using (var writer = new Utf8JsonWriter(buffer))
+            {
+                WriteValue(document.RootElement, writer, options);
+            }
+
+            return JsonSerializer.Deserialize<T>(buffer.WrittenSpan, options);
+        }
+
+        /// <summary>Writes <paramref name="value"/> without the omitted members.</summary>
+        public override void Write(Utf8JsonWriter writer, T value, JsonSerializerOptions options) =>
+            WriteValue(JsonSerializer.SerializeToElement(value, options), writer, options);
+
+        /// <summary>Writes an object, or each element of an array, without the omitted members; any other value unchanged.</summary>
+        private void WriteValue(JsonElement value, Utf8JsonWriter writer, JsonSerializerOptions options)
+        {
+            if (value.ValueKind != JsonValueKind.Array)
+            {
+                WriteObject(value, writer, options);
+                return;
+            }
+
+            writer.WriteStartArray();
+            foreach (var element in value.EnumerateArray())
+            {
+                WriteObject(element, writer, options);
+            }
+
+            writer.WriteEndArray();
+        }
+
+        /// <summary>Writes an object without the omitted members; any other value unchanged.</summary>
+        private void WriteObject(JsonElement value, Utf8JsonWriter writer, JsonSerializerOptions options)
+        {
+            if (value.ValueKind != JsonValueKind.Object)
+            {
+                value.WriteTo(writer);
+                return;
+            }
+
+            writer.WriteStartObject();
+            foreach (var property in value.EnumerateObject())
+            {
+                if (!IsOmitted(property.Name, options))
+                {
+                    property.WriteTo(writer);
+                }
+            }
+
+            writer.WriteEndObject();
+        }
+
+        /// <summary>Whether <paramref name="name"/> is the JSON name of an omitted member, ignoring case.</summary>
+        private bool IsOmitted(string name, JsonSerializerOptions options) =>
+            omittedMembers.Any(member =>
+                string.Equals(name, options.PropertyNamingPolicy?.ConvertName(member) ?? member, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>JSON contract of the header that omits the pre-authorisation and the display-only <c>OFERID</c>, <c>DOCID1</c> and <c>SEQ_NO</c>.</summary>
+    private sealed class RequestHeaderContract() : OmittingContract<InvoiceHeaderDraft>(
+        nameof(InvoiceHeaderDraft.PreAuthorization),
+        nameof(InvoiceHeaderDraft.OferId),
+        nameof(InvoiceHeaderDraft.DocId1),
+        nameof(InvoiceHeaderDraft.SeqNo));
+
+    /// <summary>JSON contract of the lines that omits the display-only <c>CATID</c>, <c>FIXPAY</c>, <c>PAYRATE</c>, lens and <c>INS_EMP</c> members.</summary>
+    private sealed class RequestLinesContract() : OmittingContract<IReadOnlyList<InvoiceLineDraft>>(
+        nameof(InvoiceLineDraft.CatId),
+        nameof(InvoiceLineDraft.FixPay),
+        nameof(InvoiceLineDraft.PayRate),
+        nameof(InvoiceLineDraft.RegularLensesType),
+        nameof(InvoiceLineDraft.LensSpecifications),
+        nameof(InvoiceLineDraft.ContactLensesType),
+        nameof(InvoiceLineDraft.FLIndicator),
+        nameof(InvoiceLineDraft.NumberOfPairs),
+        nameof(InvoiceLineDraft.InsEmp));
 }

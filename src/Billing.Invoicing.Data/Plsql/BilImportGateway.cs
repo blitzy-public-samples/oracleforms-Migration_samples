@@ -23,14 +23,35 @@ public sealed class BilImportGateway : IBilImportGateway
 
     private const string RequestRowIdParameterName = "req_row_id";
 
+    private const string MaxOutputLinesKey = "Invoicing:MaxOutputLines";
+    private const string CommandTimeoutSecondsKey = "Invoicing:CommandTimeoutSeconds";
+
     private readonly InvoicingDataOptions _options;
 
     /// <summary>Stores the data-layer settings; opens nothing.</summary>
     /// <param name="options">Application id, output capacity and command timeout used by every call.</param>
     /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><see cref="InvoicingDataOptions.MaxOutputLines"/> or <see cref="InvoicingDataOptions.CommandTimeoutSeconds"/> is below 1.</exception>
     public BilImportGateway(InvoicingDataOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
+
+        if (options.MaxOutputLines < 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                options.MaxOutputLines,
+                $"{MaxOutputLinesKey} ({nameof(InvoicingDataOptions)}.{nameof(InvoicingDataOptions.MaxOutputLines)}) must be at least 1.");
+        }
+
+        if (options.CommandTimeoutSeconds < 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                options.CommandTimeoutSeconds,
+                $"{CommandTimeoutSecondsKey} ({nameof(InvoicingDataOptions)}.{nameof(InvoicingDataOptions.CommandTimeoutSeconds)}) must be at least 1.");
+        }
+
         _options = options;
     }
 
@@ -164,8 +185,10 @@ public sealed class BilImportGateway : IBilImportGateway
             nameof(choice));
     }
 
-    /// <summary>Runs one block on the session's connection, tags a driver failure with its operation name, and reads the outputs.</summary>
+    /// <summary>Runs one block on the session's connection as a gateway call, tags a driver failure with its operation name, and reads the outputs.</summary>
     /// <exception cref="ArgumentException"><paramref name="session"/> is not an <see cref="OracleSession"/>.</exception>
+    /// <exception cref="ObjectDisposedException">The session is disposed.</exception>
+    /// <exception cref="InvalidOperationException">The session is already committed or rolled back.</exception>
     private async Task<T> Execute<T>(
         IOracleSession session,
         string block,
@@ -181,8 +204,11 @@ public sealed class BilImportGateway : IBilImportGateway
                 nameof(session));
         }
 
+        oracleSession.BeginCall();
+
         using var command = new OracleCommand(block.Replace("\r\n", "\n", StringComparison.Ordinal), oracleSession.Connection)
         {
+            Transaction = oracleSession.Transaction,
             CommandType = CommandType.Text,
             BindByName = true,
             CommandTimeout = _options.CommandTimeoutSeconds,
@@ -199,10 +225,13 @@ public sealed class BilImportGateway : IBilImportGateway
             catch (OracleException ex)
             {
                 ex.Data[OracleErrorParser.OperationKey] = operation;
+                oracleSession.RecordFailure(ex);
                 throw;
             }
 
-            return read(command.Parameters);
+            var result = read(command.Parameters);
+            oracleSession.EndCall();
+            return result;
         }
         finally
         {

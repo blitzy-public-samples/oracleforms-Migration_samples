@@ -1,7 +1,10 @@
 using System.ComponentModel.DataAnnotations;
+using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Billing.Invoicing.Api.Contracts;
+using Billing.Invoicing.Api.Services;
+using Billing.Invoicing.Data.Ports;
 using Billing.Invoicing.Domain.Model;
 
 namespace Billing.Invoicing.Tests.Api;
@@ -14,8 +17,19 @@ public sealed class DraftDtoValidationTests
     private const string UndefinedDiscountLimitChoice = "DiscountLimitChoice must be MaximumDiscount or Cancel";
     private const decimal MaxAmount = 19807040628566084398385987584m;
     private const string AmountRange = " must be between -19807040628566084398385987584 and 19807040628566084398385987584";
+    private const string RequestIdText = "Request id must be 32 upper-case hexadecimal characters.";
+    private const string WellFormedRequestId = "0123456789ABCDEF0123456789ABCDEF";
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { Converters = { new JsonStringEnumConverter() } };
+
+    private static readonly OperatorContext Operator = new()
+    {
+        UserNo = 1,
+        UserName = "dev",
+        InfoCenterId = "1",
+        MachineName = "clone28",
+        SessionId = "00112233445566778899AABBCCDDEEFF",
+    };
 
     private static List<ValidationResult> Validate(DraftDto dto)
     {
@@ -147,5 +161,277 @@ public sealed class DraftDtoValidationTests
         Assert.NotNull(bound);
         Assert.Null(bound.Header);
         Assert.Empty(Validate(bound));
+    }
+
+    public static TheoryData<Type> RequestTypes => new()
+    {
+        typeof(CreateInvoiceRequest),
+        typeof(ValidateDraftRequest),
+        typeof(ImportRequestsRequest),
+        typeof(PackageImportRequest),
+        typeof(VisitLineRequest),
+        typeof(BundledOfferRequest),
+    };
+
+    [Theory]
+    [MemberData(nameof(RequestTypes))]
+    public void RequestBody_DropsPreAuthorizationAndDisplayOnlyMembers(Type requestType)
+    {
+        const string body = """
+            {"draft":{"requestId":"0123456789ABCDEF0123456789ABCDEF",
+              "header":{"patientNo":"1001","subCompCode":"10",
+                "preAuthorization":"PA-1","PreAuthorization":"PA-2","PREAUTHORIZATION":"PA-3","pre\u0041uthorization":"PA-4",
+                "oferId":"abc","OferId":7,"docId1":12,"DOCID1":{"x":1},"seqNo":5,"SeqNo":"x"},
+              "lines":[
+                {"serviceId":"S1","catId":3,"priceOverride":12.5,"clientId":"C1","fixPay":"bad","FixPay":1,"payRate":0.5,"PAYRATE":{"x":1},
+                  "regularLensesType":"R","lensSpecifications":"L","ContactLensesType":"C","flIndicator":"F","NUMBEROFPAIRS":"2","insEmp":"abc"},
+                {"serviceId":"S2","clientId":"C2","fixPay":2,"CATID":"x","insEmp":44}]}}
+            """;
+
+        var request = JsonSerializer.Deserialize(body, requestType, Json);
+
+        Assert.NotNull(request);
+        var draft = Assert.IsType<DraftDto>(requestType.GetProperty(nameof(CreateInvoiceRequest.Draft))!.GetValue(request));
+        Assert.Equal(WellFormedRequestId, draft.RequestId);
+        Assert.Equal(new InvoiceHeaderDraft { PatientNo = "1001", SubCompCode = "10" }, draft.Header);
+        Assert.Equal(
+            new[]
+            {
+                new InvoiceLineDraft { ServiceId = "S1", PriceOverride = 12.5m, ClientId = "C1" },
+                new InvoiceLineDraft { ServiceId = "S2", ClientId = "C2" },
+            },
+            draft.Lines);
+    }
+
+    [Fact]
+    public void Serialize_OmitsPreAuthorizationAndDisplayOnlyMembers_AndRoundTrips()
+    {
+        var draft = new DraftDto
+        {
+            RequestId = WellFormedRequestId,
+            Header = new InvoiceHeaderDraft { PatientNo = "1001", SubCompCode = "10", PreAuthorization = "PA-1", OferId = 7, DocId1 = 12, SeqNo = 5 },
+            Lines =
+            [
+                new InvoiceLineDraft
+                {
+                    ServiceId = "S1",
+                    PriceOverride = 12.5m,
+                    ClientId = "C1",
+                    CatId = 3,
+                    FixPay = 1m,
+                    PayRate = 0.5m,
+                    RegularLensesType = "R",
+                    LensSpecifications = "L",
+                    ContactLensesType = "C",
+                    FLIndicator = "F",
+                    NumberOfPairs = "2",
+                    InsEmp = 44,
+                },
+            ],
+        };
+        var expectedHeader = new InvoiceHeaderDraft { PatientNo = "1001", SubCompCode = "10" };
+        var expectedLine = new InvoiceLineDraft { ServiceId = "S1", PriceOverride = 12.5m, ClientId = "C1" };
+
+        var draftJson = JsonSerializer.Serialize(draft, Json);
+        using (var document = JsonDocument.Parse(draftJson))
+        {
+            AssertOmitted(document.RootElement);
+        }
+
+        var back = JsonSerializer.Deserialize<DraftDto>(draftJson, Json);
+        Assert.NotNull(back);
+        Assert.Equal(WellFormedRequestId, back.RequestId);
+        Assert.Equal(expectedHeader, back.Header);
+        Assert.Equal(new[] { expectedLine }, back.Lines);
+
+        var responseJson = JsonSerializer.Serialize(new NewDraftResponse { Draft = draft }, Json);
+        using (var document = JsonDocument.Parse(responseJson))
+        {
+            AssertOmitted(document.RootElement.GetProperty("draft"));
+        }
+
+        var response = JsonSerializer.Deserialize<NewDraftResponse>(responseJson, Json);
+        Assert.NotNull(response);
+        Assert.Equal(expectedHeader, response.Draft.Header);
+        Assert.Equal(new[] { expectedLine }, response.Draft.Lines);
+    }
+
+    [Fact]
+    public void NullHeaderAndNullLines_KeepTheirBinding()
+    {
+        var request = JsonSerializer.Deserialize<CreateInvoiceRequest>("""{"draft":{"header":null,"lines":null}}""", Json);
+        Assert.NotNull(request);
+        Assert.Null(request.Draft.Header);
+        Assert.Null(request.Draft.Lines);
+
+        var withNullLine = JsonSerializer.Deserialize<DraftDto>("""{"header":null,"lines":[null,{"serviceId":"S1","fixPay":1}]}""", Json);
+        Assert.NotNull(withNullLine);
+        Assert.Null(withNullLine.Header);
+        Assert.Collection(
+            withNullLine.Lines,
+            line => Assert.Null(line),
+            line => Assert.Equal(new InvoiceLineDraft { ServiceId = "S1" }, line));
+
+        var written = JsonSerializer.Serialize(new DraftDto { Header = null!, Lines = [null!] }, Json);
+        using var document = JsonDocument.Parse(written);
+        Assert.Equal(JsonValueKind.Null, document.RootElement.GetProperty("header").ValueKind);
+        Assert.Equal(JsonValueKind.Null, Assert.Single(document.RootElement.GetProperty("lines").EnumerateArray()).ValueKind);
+    }
+
+    [Theory]
+    [InlineData("""{"header":5}""")]
+    [InlineData("""{"header":"1001"}""")]
+    [InlineData("""{"header":[{"patientNo":"1001"}]}""")]
+    [InlineData("""{"header":{"patientNo":1001}}""")]
+    [InlineData("""{"lines":{"serviceId":"S1"}}""")]
+    [InlineData("""{"lines":[5]}""")]
+    [InlineData("""{"lines":[{"qty":"abc"}]}""")]
+    [InlineData("""{"header":{"patientNo":"\uD800"}}""")]
+    [InlineData("""{"lines":[{"serviceId":"\uDC00"}]}""")]
+    [InlineData("""{"header":{"preAuthorization":"\uD800","patientNo":"\uD800"}}""")]
+    public void MalformedHeaderOrLines_StillFailAsJson(string json)
+    {
+        Assert.ThrowsAny<JsonException>(() => JsonSerializer.Deserialize<DraftDto>(json, Json));
+        Assert.ThrowsAny<JsonException>(() => JsonSerializer.Deserialize<CreateInvoiceRequest>($$"""{"draft":{{json}}}""", Json));
+    }
+
+    private static void AssertOmitted(JsonElement draft)
+    {
+        string[] omittedHeader = ["preAuthorization", "oferId", "docId1", "seqNo"];
+        string[] omittedLine =
+            ["catId", "fixPay", "payRate", "regularLensesType", "lensSpecifications", "contactLensesType", "flIndicator", "numberOfPairs", "insEmp"];
+
+        var header = draft.GetProperty("header").EnumerateObject().Select(property => property.Name).ToArray();
+        Assert.Equal(typeof(InvoiceHeaderDraft).GetProperties().Length - omittedHeader.Length, header.Length);
+        Assert.DoesNotContain(header, name => omittedHeader.Contains(name, StringComparer.OrdinalIgnoreCase));
+        Assert.Contains("patientNo", header);
+        Assert.Contains("subCompCode", header);
+
+        var line = Assert.Single(draft.GetProperty("lines").EnumerateArray()).EnumerateObject().Select(property => property.Name).ToArray();
+        Assert.Equal(typeof(InvoiceLineDraft).GetProperties().Length - omittedLine.Length, line.Length);
+        Assert.DoesNotContain(line, name => omittedLine.Contains(name, StringComparer.OrdinalIgnoreCase));
+        Assert.Contains("serviceId", line);
+        Assert.Contains("priceOverride", line);
+        Assert.Contains("clientId", line);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("0123456789ABCDEF0123456789ABCDE")]
+    [InlineData("0123456789ABCDEF0123456789ABCDEFA")]
+    [InlineData("0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF")]
+    [InlineData("0123456789abcdef0123456789abcdef")]
+    [InlineData("0123456789abcdef0123456789ABCDEF")]
+    [InlineData("0123456789ABCDEG0123456789ABCDEF")]
+    [InlineData(" 0123456789ABCDEF0123456789ABCDE")]
+    [InlineData("0123456789ABCDEF0123456789ABCDE ")]
+    [InlineData(" 0123456789ABCDEF0123456789ABCDEF ")]
+    [InlineData("0123456789ABCDEF0123456789ABCDEF\n")]
+    [InlineData("0123456789ABCDEF0123456789ABCDE\uFF21")]
+    [InlineData("0123456789ABCDEF-0123456789ABCDE")]
+    public async Task Create_MalformedRequestId_IsRejectedBeforeAnyPortCall(string? requestId)
+    {
+        await AssertRequestIdRejected(new CreateInvoiceRequest { Draft = new DraftDto { RequestId = requestId! } });
+        await AssertRequestIdRejected(new CreateInvoiceRequest
+        {
+            Draft = new DraftDto { RequestId = requestId!, Header = null!, Lines = [null!], Parameters = null! },
+        });
+    }
+
+    [Fact]
+    public async Task Create_NullDraft_IsRejectedBeforeAnyPortCall()
+    {
+        await AssertRequestIdRejected(new CreateInvoiceRequest { Draft = null! });
+
+        var bound = JsonSerializer.Deserialize<CreateInvoiceRequest>("""{"draft":null}""", Json);
+        Assert.NotNull(bound);
+        await AssertRequestIdRejected(bound);
+    }
+
+    [Theory]
+    [InlineData(WellFormedRequestId)]
+    [InlineData("00000000000000000000000000000000")]
+    [InlineData("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF")]
+    public async Task Create_WellFormedRequestId_ReachesTheReplayLookupFirst(string requestId)
+    {
+        await AssertReplayLookupFirst(requestId);
+    }
+
+    [Fact]
+    public async Task Create_IssuedRequestIdShape_ReachesTheReplayLookupFirst()
+    {
+        await AssertReplayLookupFirst(Guid.NewGuid().ToString("N").ToUpperInvariant());
+    }
+
+    private static InvoiceWorkflowService Service(List<PortCall> calls) => new(
+        RecordingPort.Create<IOracleSessionFactory>(calls),
+        RecordingPort.Create<ILookupQueries>(calls),
+        RecordingPort.Create<IInvoiceQueries>(calls),
+        RecordingPort.Create<ILovQueries>(calls),
+        RecordingPort.Create<IBilInvoiceApiGateway>(calls),
+        RecordingPort.Create<IBilImportGateway>(calls),
+        RecordingPort.Create<IPatientTransferCommand>(calls),
+        RecordingPort.Create<ILegacyExternalCalls>(calls),
+        RecordingPort.Create<IPackageConsumptionGateway>(calls));
+
+    private static async Task AssertRequestIdRejected(CreateInvoiceRequest request)
+    {
+        var calls = new List<PortCall>();
+
+        var response = await Service(calls).Create(request, Operator);
+
+        Assert.Null(response.InvNo);
+        Assert.Null(response.Message);
+        var message = Assert.Single(response.Messages);
+        Assert.Equal("REQUEST_ID", message.Field);
+        Assert.Equal(RequestIdText, message.Text);
+        Assert.Equal(ValidationMessage.Blocking, message.Severity);
+        Assert.Null(message.Rule);
+        Assert.Empty(response.OpenItems);
+        Assert.Empty(calls);
+    }
+
+    private static async Task AssertReplayLookupFirst(string requestId)
+    {
+        var calls = new List<PortCall>();
+        var request = new CreateInvoiceRequest { Draft = new DraftDto { RequestId = requestId } };
+
+        var failure = await Assert.ThrowsAsync<PortCalledException>(() => Service(calls).Create(request, Operator));
+
+        var call = Assert.Single(calls);
+        Assert.Equal(typeof(IInvoiceQueries), call.Port);
+        Assert.Equal(nameof(IInvoiceQueries.GetCreateRequest), call.Method);
+        Assert.Equal(requestId, call.Arguments[0]);
+        Assert.Equal(nameof(IInvoiceQueries.GetCreateRequest), failure.Message);
+    }
+
+    /// <summary>One call a <see cref="RecordingPort"/> received.</summary>
+    private sealed record PortCall(Type Port, string Method, object?[] Arguments);
+
+    /// <summary>Thrown by every <see cref="RecordingPort"/> call, carrying the called method name.</summary>
+    private sealed class PortCalledException(string method) : Exception(method);
+
+    /// <summary>Port stand-in that records each call into a shared list and then throws <see cref="PortCalledException"/>.</summary>
+    private class RecordingPort : DispatchProxy
+    {
+        private List<PortCall> _calls = [];
+
+        /// <summary>Returns a <typeparamref name="TPort"/> whose every call is recorded into <paramref name="calls"/>.</summary>
+        public static TPort Create<TPort>(List<PortCall> calls)
+            where TPort : class
+        {
+            var port = Create<TPort, RecordingPort>();
+            ((RecordingPort)(object)port)._calls = calls;
+            return port;
+        }
+
+        /// <summary>Records the call and throws <see cref="PortCalledException"/>.</summary>
+        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+        {
+            ArgumentNullException.ThrowIfNull(targetMethod);
+            _calls.Add(new PortCall(targetMethod.DeclaringType!, targetMethod.Name, args ?? []));
+            throw new PortCalledException(targetMethod.Name);
+        }
     }
 }

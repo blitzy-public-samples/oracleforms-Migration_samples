@@ -72,8 +72,8 @@
       "input": {
         "method": "DefaultFirstAmount",
         "amountDue": 100,
-        "package": { "patPay": 100, "finaldisc": 0, "vatTotalPat": 0 },
-        "legacy": { "sPay": 100, "vatTotalPat": null, "legacyPatPayx": 102, "legacyNet": 102 }
+        "package": { "patPay": 100, "finaldisc": 0, "vatTotalPat": 0, "cashCollected": 100 },
+        "legacy": { "payType": 2, "sPay": 100, "vatTotalPat": null, "finaldisc": 0, "legacyPatPayx": 102, "legacyNet": 102 }
       },
       "expected": { "outcome": "Pass", "messages": [], "values": { "AMOUNT_1": 100 } },
       "decision": "D-40"

@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using Billing.Invoicing.Data.Plsql;
 using Billing.Invoicing.Domain.Model;
 
@@ -9,11 +10,16 @@ public sealed record ImportResponse
     /// <summary>Lines to add to the draft.</summary>
     public IReadOnlyList<InvoiceLineDraft> Lines { get; init; } = [];
 
-    /// <summary>Package import counts and message (<c>t_import_result</c>); <c>null</c> where the operation has none.</summary>
+    /// <summary>Package import counts and message (<c>t_import_result</c>), with zero counts when no request row is selected; <c>null</c> where the operation has none.</summary>
     public ImportResultRow? Result { get; init; }
 
     /// <summary>Header values changed by the import, keyed by upper-case legacy item name, such as <c>ADD_TO_LIST</c>.</summary>
-    public IReadOnlyDictionary<string, object?> Adjusted { get; init; } = new Dictionary<string, object?>();
+    public IReadOnlyDictionary<string, object?> Adjusted
+    {
+        get;
+        init => field = new ReadOnlyDictionary<string, object?>(
+            new Dictionary<string, object?>(value ?? throw new ArgumentNullException(nameof(value)), StringComparer.Ordinal));
+    } = ReadOnlyDictionary<string, object?>.Empty;
 
     /// <summary>Notices and warnings, with legacy text verbatim.</summary>
     public IReadOnlyList<MessageDto> Messages { get; init; } = [];

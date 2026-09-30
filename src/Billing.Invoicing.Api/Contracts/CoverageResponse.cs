@@ -9,7 +9,7 @@ public sealed record CoverageResponse
     public PatientCoverageSnapshot? Coverage { get; init; }
 
     /// <summary>Pay type decided for the patient: 1 cash, 2 credit.</summary>
-    public int? PayType { get; init; }
+    public int PayType { get; init; }
 
     /// <summary>Eligibility messages, blocking and warning.</summary>
     public IReadOnlyList<MessageDto> Messages { get; init; } = [];

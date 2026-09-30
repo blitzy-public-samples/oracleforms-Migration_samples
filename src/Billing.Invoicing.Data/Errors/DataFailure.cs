@@ -18,6 +18,9 @@ public sealed record DataFailure
     /// <summary>Type value for any other Oracle error.</summary>
     public const string OracleErrorType = "oracle-error";
 
+    /// <summary>Type value for a request value the Data layer refused before any Oracle call.</summary>
+    public const string FieldValidationType = "field-validation";
+
     /// <summary>HTTP status: 422, 501, 503 or 500.</summary>
     public int Status { get; init; }
 
@@ -33,7 +36,7 @@ public sealed record DataFailure
     /// <summary>Attributed source package, or UNKNOWN; null when no package applies.</summary>
     public string? Package { get; init; }
 
-    /// <summary>Operator-facing text: the Oracle text after the ORA prefix for a 422, the open-item message for a 501, a fixed text for a 500 or 503.</summary>
+    /// <summary>Operator-facing text: the Oracle text after the ORA prefix for a 422, the binder's rejection text for a field-validation 422, the open-item message for a 501, a fixed text for a 500 or 503.</summary>
     public required string Message { get; init; }
 
     /// <summary>Legacy item name the failure maps to; null for a form-level failure.</summary>

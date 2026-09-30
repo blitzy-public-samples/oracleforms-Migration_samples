@@ -15,9 +15,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Billing.Invoicing.Domain\Billing.Invoicing.Domain.csproj" />
-    <ProjectReference Include="..\..\src\Billing.Invoicing.Data\Billing.Invoicing.Data.csproj" />
-    <ProjectReference Include="..\..\src\Billing.Invoicing.Api\Billing.Invoicing.Api.csproj" />
+    <ProjectReference Include="..\..\src\Billing.Invoicing.Domain\Billing.Invoicing.Domain.csproj" GlobalPropertiesToRemove="OutputType" />
+    <ProjectReference Include="..\..\src\Billing.Invoicing.Data\Billing.Invoicing.Data.csproj" GlobalPropertiesToRemove="OutputType" />
+    <ProjectReference Include="..\..\src\Billing.Invoicing.Api\Billing.Invoicing.Api.csproj" GlobalPropertiesToRemove="OutputType" />
   </ItemGroup>
 
   <ItemGroup>
