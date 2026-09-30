@@ -1,0 +1,61 @@
+{
+  "id": "DR-22",
+  "class": "domain",
+  "source": [
+    { "construct": "T014 T_INV WHEN-VALIDATE-RECORD", "locator": "05_Complex/Inv_Small_Cash.xml:366" },
+    { "construct": "T038 FINALDISC_PERC KEY-NEXT-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:73" },
+    { "construct": "T040 FINALDISC KEY-NEXT-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:77" },
+    { "construct": "T_INV.CASH_COLLECTED formula", "locator": "05_Complex/Inv_Small_Cash.xml:97" }
+  ],
+  "cases": [
+    {
+      "name": "collected-without-methods-warns",
+      "status": "derivable",
+      "input": {
+        "header": { "amount1": 100, "amount2": null, "subPayType": null, "subPayType2": null }
+      },
+      "expected": {
+        "outcome": "Warning",
+        "messages": [{ "field": "SUB_PAYTYPE", "text": "Payment type is empty", "severity": "Warning" }],
+        "values": { "SUB_PAYTYPE": 1 }
+      }
+    },
+    {
+      "name": "second-amount-only-without-methods-warns",
+      "status": "derivable",
+      "input": {
+        "header": { "amount1": null, "amount2": 50, "subPayType": null, "subPayType2": null }
+      },
+      "expected": {
+        "outcome": "Warning",
+        "messages": [{ "field": "SUB_PAYTYPE", "text": "Payment type is empty", "severity": "Warning" }],
+        "values": { "SUB_PAYTYPE": 1 }
+      }
+    },
+    {
+      "name": "first-method-set-passes",
+      "status": "derivable",
+      "input": {
+        "header": { "amount1": 100, "amount2": null, "subPayType": 1, "subPayType2": null }
+      },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "second-method-set-passes",
+      "status": "derivable",
+      "input": {
+        "header": { "amount1": 100, "amount2": null, "subPayType": null, "subPayType2": 2 }
+      },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "nothing-collected-passes",
+      "status": "derivable",
+      "input": {
+        "header": { "amount1": 0, "amount2": null, "subPayType": null, "subPayType2": null }
+      },
+      "expected": { "outcome": "Pass", "messages": [] }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "messages", "SUB_PAYTYPE"] }
+}
