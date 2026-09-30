@@ -1,6 +1,8 @@
 using System.Data;
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
+using Billing.Invoicing.Data.Errors;
 using Billing.Invoicing.Data.Plsql;
 using Billing.Invoicing.Domain.Model;
 using Oracle.ManagedDataAccess.Client;
@@ -11,6 +13,9 @@ namespace Billing.Invoicing.Tests.Data;
 [Trait("Category", "DataUnit")]
 public sealed class HeaderInputBinderTests
 {
+    /// <summary>U+00E9, two bytes in UTF-8.</summary>
+    private const char TwoByteCharacter = '\u00E9';
+
     private static readonly DateTime DraftDate = new(2026, 9, 28, 23, 59, 59);
 
     private static readonly string[] ExpectedNames =
@@ -67,6 +72,27 @@ public sealed class HeaderInputBinderTests
     {
         { 1, 10m, null },
         { 0, null, 25m },
+    };
+
+    public static TheoryData<string, int> TextWidths => new()
+    {
+        { "h_patientno", 12 },
+        { "h_curr_code", 3 },
+        { "h_pre_authorization", 20 },
+        { "h_claim_no", 40 },
+        { "h_claim_flag", 2 },
+        { "h_note_no", 40 },
+        { "h_machine_n", 15 },
+        { "h_info_center_id", 10 },
+    };
+
+    public static TheoryData<string, int> HeaderTextWidths => new()
+    {
+        { "h_patientno", 12 },
+        { "h_curr_code", 3 },
+        { "h_claim_no", 40 },
+        { "h_claim_flag", 2 },
+        { "h_note_no", 40 },
     };
 
     [Fact]
@@ -213,6 +239,165 @@ public sealed class HeaderInputBinderTests
     }
 
     [Fact]
+    public void Bind_PreAuthorizationOverFieldWidth_BindsNull()
+    {
+        InvoiceHeaderDraft header = CreateHeader() with { PreAuthorization = new string('P', 21) };
+
+        OracleParameter preAuthorization =
+            Find(HeaderInputBinder.Bind(header, CreateOperator()), "h_pre_authorization");
+
+        Assert.True(IsNull(preAuthorization));
+        Assert.Equal(20, preAuthorization.Size);
+    }
+
+    [Fact]
+    public void Bind_Varchar2Parameters_AreExactlyTheWidthBoundTextFields()
+    {
+        IReadOnlyList<OracleParameter> parameters = HeaderInputBinder.Bind(CreateHeader(), CreateOperator());
+
+        Assert.Equal(
+            TextWidths.Select(row => (string)row[0]).ToArray(),
+            parameters.Where(p => p.OracleDbType == OracleDbType.Varchar2).Select(p => p.ParameterName.TrimStart(':')).ToArray());
+    }
+
+    [Theory]
+    [MemberData(nameof(TextWidths))]
+    public void Bind_TextParameter_HasSizeOfItsFieldWidth(string name, int width)
+    {
+        OracleParameter populated = Find(HeaderInputBinder.Bind(CreateHeader(), CreateOperator()), name);
+        OracleParameter unset =
+            Find(HeaderInputBinder.Bind(new InvoiceHeaderDraft { DraftDate = DraftDate }, CreateOperator()), name);
+
+        Assert.Equal(width, populated.Size);
+        Assert.Equal(width, unset.Size);
+    }
+
+    [Theory]
+    [MemberData(nameof(HeaderTextWidths))]
+    public void Bind_HeaderTextAtFieldWidthInCharacters_BindsWholeValue(string name, int width)
+    {
+        string value = new('A', width);
+
+        IReadOnlyList<OracleParameter> parameters = HeaderInputBinder.Bind(WithHeaderText(name, value), CreateOperator());
+
+        Assert.Equal(value, Text(parameters, name));
+    }
+
+    [Theory]
+    [MemberData(nameof(HeaderTextWidths))]
+    public void Bind_HeaderTextAtFieldWidthInUtf8Bytes_BindsWholeValue(string name, int width)
+    {
+        string value = new string(TwoByteCharacter, width / 2) + (width % 2 == 1 ? "A" : string.Empty);
+
+        IReadOnlyList<OracleParameter> parameters = HeaderInputBinder.Bind(WithHeaderText(name, value), CreateOperator());
+
+        Assert.Equal(width, Encoding.UTF8.GetByteCount(value));
+        Assert.Equal(value, Text(parameters, name));
+    }
+
+    [Theory]
+    [MemberData(nameof(HeaderTextWidths))]
+    public void Bind_HeaderTextOverFieldWidthInCharacters_ThrowsBindingRejection(string name, int width)
+    {
+        string value = new('A', width + 1);
+        string expected = $"Invoice header: {name} has {width + 1} characters; at most {width} can be bound.";
+
+        ArgumentException error = Assert.Throws<ArgumentException>(
+            () => HeaderInputBinder.Bind(WithHeaderText(name, value), CreateOperator()));
+
+        AssertBindingRejection(expected, "header", error);
+    }
+
+    [Theory]
+    [MemberData(nameof(HeaderTextWidths))]
+    public void Bind_HeaderTextOverFieldWidthInUtf8Bytes_ThrowsBindingRejection(string name, int width)
+    {
+        string value = new(TwoByteCharacter, width / 2 + 1);
+        int bytes = Encoding.UTF8.GetByteCount(value);
+        string expected = $"Invoice header: {name} has {bytes} bytes in UTF-8; at most {width} can be bound.";
+
+        ArgumentException error = Assert.Throws<ArgumentException>(
+            () => HeaderInputBinder.Bind(WithHeaderText(name, value), CreateOperator()));
+
+        Assert.InRange(value.Length, 1, width);
+        Assert.True(bytes > width, $"{bytes} bytes");
+        AssertBindingRejection(expected, "header", error);
+    }
+
+    [Fact]
+    public void Bind_HeaderTextOverFieldWidthInCharactersAndBytes_ReportsCharacters()
+    {
+        InvoiceHeaderDraft header = CreateHeader() with { PatientNo = new string(TwoByteCharacter, 13) };
+
+        ArgumentException error = Assert.Throws<ArgumentException>(() => HeaderInputBinder.Bind(header, CreateOperator()));
+
+        AssertBindingRejection("Invoice header: h_patientno has 13 characters; at most 12 can be bound.", "header", error);
+    }
+
+    [Fact]
+    public void Bind_TenCharacterInfoCenterId_BindsWholeValue()
+    {
+        IReadOnlyList<OracleParameter> parameters =
+            HeaderInputBinder.Bind(CreateHeader(), CreateOperator() with { InfoCenterId = "1234567890" });
+
+        Assert.Equal("1234567890", Text(parameters, "h_info_center_id"));
+    }
+
+    [Theory]
+    [InlineData("12345678901", "Invoice header: h_info_center_id has 11 characters; at most 10 can be bound.")]
+    [InlineData("\u00E9\u00E9\u00E9\u00E9\u00E9\u00E9", "Invoice header: h_info_center_id has 12 bytes in UTF-8; at most 10 can be bound.")]
+    public void Bind_InfoCenterIdOverFieldWidth_ThrowsBindingRejection(string infoCenterId, string expected)
+    {
+        OperatorContext operatorContext = CreateOperator() with { InfoCenterId = infoCenterId };
+
+        ArgumentException error = Assert.Throws<ArgumentException>(() => HeaderInputBinder.Bind(CreateHeader(), operatorContext));
+
+        AssertBindingRejection(expected, "operatorContext", error);
+    }
+
+    [Fact]
+    public void Bind_FifteenCharacterAsciiMachineName_BindsWholeValue()
+    {
+        const string machineName = "WS-FRONT-DESK-0";
+
+        IReadOnlyList<OracleParameter> parameters = HeaderInputBinder.Bind(CreateHeader(), CreateOperator(machineName));
+
+        Assert.Equal(15, machineName.Length);
+        Assert.Equal(machineName, Text(parameters, "h_machine_n"));
+    }
+
+    [Fact]
+    public void Bind_FifteenCharacterMachineNameOverFieldWidthInUtf8Bytes_ThrowsBindingRejection()
+    {
+        string machineName = new string(TwoByteCharacter, 8) + "WS-0001";
+
+        ArgumentException error = Assert.Throws<ArgumentException>(
+            () => HeaderInputBinder.Bind(CreateHeader(), CreateOperator(machineName)));
+
+        Assert.Equal(15, machineName.Length);
+        AssertBindingRejection("Invoice header: h_machine_n has 23 bytes in UTF-8; at most 15 can be bound.", "operatorContext", error);
+    }
+
+    [Fact]
+    public void Bind_TextOverFieldWidth_TranslatesToFormLevelFieldValidation()
+    {
+        const string expected = "Invoice header: h_claim_flag has 3 characters; at most 2 can be bound.";
+        InvoiceHeaderDraft header = CreateHeader() with { ClaimFlag = "OOO" };
+        ArgumentException error = Assert.Throws<ArgumentException>(() => HeaderInputBinder.Bind(header, CreateOperator()));
+
+        DataFailure? failure = new OracleFailureTranslator().Translate(error);
+
+        Assert.NotNull(failure);
+        Assert.Equal(422, failure.Status);
+        Assert.Equal(DataFailure.FieldValidationType, failure.Type);
+        Assert.Equal(expected, failure.Message);
+        Assert.Null(failure.Field);
+        Assert.Null(failure.Number);
+        Assert.Null(failure.Package);
+        Assert.Null(failure.Kind);
+    }
+
+    [Fact]
     public void Bind_NullHeader_Throws()
     {
         Assert.Throws<ArgumentNullException>(() => HeaderInputBinder.Bind(null!, CreateOperator()));
@@ -259,6 +444,23 @@ public sealed class HeaderInputBinderTests
         MachineName = machineName,
         SessionId = Guid.NewGuid().ToString("N"),
     };
+
+    private static InvoiceHeaderDraft WithHeaderText(string name, string value) => name switch
+    {
+        "h_patientno" => CreateHeader() with { PatientNo = value },
+        "h_curr_code" => CreateHeader() with { CurrCode = value },
+        "h_claim_no" => CreateHeader() with { ClaimNo = value },
+        "h_claim_flag" => CreateHeader() with { ClaimFlag = value },
+        "h_note_no" => CreateHeader() with { NoteNo = value },
+        _ => throw new ArgumentOutOfRangeException(nameof(name), name, "Not a header-sourced text field."),
+    };
+
+    private static void AssertBindingRejection(string expected, string paramName, ArgumentException error)
+    {
+        Assert.Equal(paramName, error.ParamName);
+        Assert.StartsWith(expected, error.Message, StringComparison.Ordinal);
+        Assert.Equal(expected, error.Data[OracleFailureTranslator.BindingRejectionKey]);
+    }
 
     private static OracleParameter Find(IReadOnlyList<OracleParameter> parameters, string name) =>
         Assert.Single(parameters, p => p.ParameterName.TrimStart(':') == name);

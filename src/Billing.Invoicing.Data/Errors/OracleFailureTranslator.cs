@@ -7,7 +7,7 @@ namespace Billing.Invoicing.Data.Errors;
 /// <summary>Translates Oracle errors and Data-layer exceptions into <see cref="DataFailure"/> values of the HTTP error contract.</summary>
 public sealed partial class OracleFailureTranslator
 {
-    /// <summary>Exception data key holding the operator-facing text of a line value a binder refused to bind.</summary>
+    /// <summary>Exception data key holding the operator-facing text of a value a binder or gateway refused to bind.</summary>
     public const string BindingRejectionKey = "Billing.Invoicing.Data.BindingRejection";
 
     /// <summary><see cref="Exception.Data"/> key whose value <c>true</c> marks a blank or malformed Oracle connection string.</summary>
@@ -130,7 +130,7 @@ public sealed partial class OracleFailureTranslator
             return Unavailable(null);
         }
 
-        // A line value a binder refused is a form-level 422 carrying the binder's text.
+        // A value a binder or gateway refused is a form-level 422 carrying its rejection text.
         if (exception is ArgumentException && exception.Data[BindingRejectionKey] is string text)
         {
             return new DataFailure

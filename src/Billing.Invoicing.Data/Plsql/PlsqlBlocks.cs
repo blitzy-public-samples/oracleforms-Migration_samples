@@ -3,7 +3,7 @@ namespace Billing.Invoicing.Data.Plsql;
 /// <summary>Anonymous PL/SQL blocks that call BIL_INVOICE_API and BIL_IMPORT through scalar binds and scalar associative arrays. UNVERIFIED against Oracle.</summary>
 public static class PlsqlBlocks
 {
-    /// <summary>Calls BIL_INVOICE_API.EXPAND_BUNDLED_OFFER_IG_LINES, then CALCULATE_EDITABLE_INVOICE_PREVIEW; returns preview lines and totals.</summary>
+    /// <summary>Calls BIL_INVOICE_API.EXPAND_BUNDLED_OFFER_IG_LINES, then CALCULATE_EDITABLE_INVOICE_PREVIEW; returns preview lines and totals; copies no line when the preview exceeds max_output_lines, while pl_count reports the full count.</summary>
     public const string Preview = """
         declare
             type t_num is table of number index by pls_integer;
@@ -71,6 +71,7 @@ public static class PlsqlBlocks
                 amount_1 in number,
                 amount_2 in number,
                 amount_1_auto in varchar2,
+                max_output_lines in pls_integer,
                 pl_client_id out t_vc,
                 pl_line_no out t_num,
                 pl_serviceid out t_vc,
@@ -222,7 +223,11 @@ public static class PlsqlBlocks
                     o_totals => v_totals
                 );
 
-                v_idx := v_preview.first;
+                if v_preview.count > max_output_lines then
+                    v_idx := null;
+                else
+                    v_idx := v_preview.first;
+                end if;
                 while v_idx is not null loop
                     v_out := v_out + 1;
                     pl_client_id(v_out) := v_preview(v_idx).client_id;
@@ -274,7 +279,7 @@ public static class PlsqlBlocks
                     pl_offer_dtl_object_version_number(v_out) := v_preview(v_idx).offer_dtl_object_version_number;
                     v_idx := v_preview.next(v_idx);
                 end loop;
-                pl_count := v_out;
+                pl_count := v_preview.count;
                 if v_out = 0 then
                     pl_client_id(1) := null;
                     pl_line_no(1) := null;
@@ -402,6 +407,7 @@ public static class PlsqlBlocks
                 amount_1 => :amount_1,
                 amount_2 => :amount_2,
                 amount_1_auto => :amount_1_auto,
+                max_output_lines => :max_output_lines,
                 pl_client_id => :pl_client_id,
                 pl_line_no => :pl_line_no,
                 pl_serviceid => :pl_serviceid,
@@ -778,7 +784,7 @@ public static class PlsqlBlocks
         end;
         """;
 
-    /// <summary>Calls BIL_IMPORT.SET_REQUEST_LINE_SELECTION per row, GET_INVOICE_REQUEST_LINES, CLEAR_REQUEST_INVOICE_SELECTION and TO_ENGINE_LINES.</summary>
+    /// <summary>Calls BIL_IMPORT.SET_REQUEST_LINE_SELECTION per row, GET_INVOICE_REQUEST_LINES, CLEAR_REQUEST_INVOICE_SELECTION and TO_ENGINE_LINES; copies no line when the engine lines exceed max_output_lines, while el_count reports the full count.</summary>
     public const string RequestImport = """
         declare
             type t_num is table of number index by pls_integer;
@@ -795,6 +801,7 @@ public static class PlsqlBlocks
                 approval_mode in number,
                 req_row_id in t_num,
                 req_row_count in number,
+                max_output_lines in pls_integer,
                 el_serviceid out t_vc,
                 el_qty out t_num,
                 el_price_override out t_num,
@@ -885,7 +892,15 @@ public static class PlsqlBlocks
                     o_engine_lines => v_engine
                 );
 
-                v_idx := v_engine.first;
+                if v_engine.count > max_output_lines then
+
+                    v_idx := null;
+
+                else
+
+                    v_idx := v_engine.first;
+
+                end if;
                 while v_idx is not null loop
                     v_out := v_out + 1;
                     el_serviceid(v_out) := v_engine(v_idx).serviceid;
@@ -925,7 +940,7 @@ public static class PlsqlBlocks
                     el_offer_dtl_object_version_number(v_out) := v_engine(v_idx).offer_dtl_object_version_number;
                     v_idx := v_engine.next(v_idx);
                 end loop;
-                el_count := v_out;
+                el_count := v_engine.count;
                 if v_out = 0 then
                     el_serviceid(1) := null;
                     el_qty(1) := null;
@@ -985,6 +1000,7 @@ public static class PlsqlBlocks
                 approval_mode => :approval_mode,
                 req_row_id => :req_row_id,
                 req_row_count => :req_row_count,
+                max_output_lines => :max_output_lines,
                 el_serviceid => :el_serviceid,
                 el_qty => :el_qty,
                 el_price_override => :el_price_override,
@@ -1033,7 +1049,7 @@ public static class PlsqlBlocks
         end;
         """;
 
-    /// <summary>Calls BIL_IMPORT.GET_VISIT_LINE and TO_ENGINE_LINES; returns the visit line as engine lines.</summary>
+    /// <summary>Calls BIL_IMPORT.GET_VISIT_LINE and TO_ENGINE_LINES; returns the visit line as engine lines; copies no line when they exceed max_output_lines, while el_count reports the full count.</summary>
     public const string VisitLine = """
         declare
             type t_num is table of number index by pls_integer;
@@ -1047,6 +1063,7 @@ public static class PlsqlBlocks
                 clinicid in number,
                 info_center_id in varchar2,
                 invoice_date in date,
+                max_output_lines in pls_integer,
                 el_serviceid out t_vc,
                 el_qty out t_num,
                 el_price_override out t_num,
@@ -1120,7 +1137,15 @@ public static class PlsqlBlocks
                     o_engine_lines => v_engine
                 );
 
-                v_idx := v_engine.first;
+                if v_engine.count > max_output_lines then
+
+                    v_idx := null;
+
+                else
+
+                    v_idx := v_engine.first;
+
+                end if;
                 while v_idx is not null loop
                     v_out := v_out + 1;
                     el_serviceid(v_out) := v_engine(v_idx).serviceid;
@@ -1160,7 +1185,7 @@ public static class PlsqlBlocks
                     el_offer_dtl_object_version_number(v_out) := v_engine(v_idx).offer_dtl_object_version_number;
                     v_idx := v_engine.next(v_idx);
                 end loop;
-                el_count := v_out;
+                el_count := v_engine.count;
                 if v_out = 0 then
                     el_serviceid(1) := null;
                     el_qty(1) := null;
@@ -1217,6 +1242,7 @@ public static class PlsqlBlocks
                 clinicid => :clinicid,
                 info_center_id => :info_center_id,
                 invoice_date => :invoice_date,
+                max_output_lines => :max_output_lines,
                 el_serviceid => :el_serviceid,
                 el_qty => :el_qty,
                 el_price_override => :el_price_override,
@@ -1265,7 +1291,7 @@ public static class PlsqlBlocks
         end;
         """;
 
-    /// <summary>Calls BIL_INVOICE_API.GET_PACKAGE_LINES and BIL_IMPORT.TO_ENGINE_LINES; returns the package components as engine lines.</summary>
+    /// <summary>Calls BIL_INVOICE_API.GET_PACKAGE_LINES and BIL_IMPORT.TO_ENGINE_LINES; returns the package components as engine lines; copies no line when they exceed max_output_lines, while el_count reports the full count.</summary>
     public const string PackageLines = """
         declare
             type t_num is table of number index by pls_integer;
@@ -1275,6 +1301,7 @@ public static class PlsqlBlocks
                 package_serviceid in varchar2,
                 list_id in number,
                 parent_source_id in varchar2,
+                max_output_lines in pls_integer,
                 el_serviceid out t_vc,
                 el_qty out t_num,
                 el_price_override out t_num,
@@ -1339,7 +1366,15 @@ public static class PlsqlBlocks
                     o_engine_lines => v_engine
                 );
 
-                v_idx := v_engine.first;
+                if v_engine.count > max_output_lines then
+
+                    v_idx := null;
+
+                else
+
+                    v_idx := v_engine.first;
+
+                end if;
                 while v_idx is not null loop
                     v_out := v_out + 1;
                     el_serviceid(v_out) := v_engine(v_idx).serviceid;
@@ -1379,7 +1414,7 @@ public static class PlsqlBlocks
                     el_offer_dtl_object_version_number(v_out) := v_engine(v_idx).offer_dtl_object_version_number;
                     v_idx := v_engine.next(v_idx);
                 end loop;
-                el_count := v_out;
+                el_count := v_engine.count;
                 if v_out = 0 then
                     el_serviceid(1) := null;
                     el_qty(1) := null;
@@ -1432,6 +1467,7 @@ public static class PlsqlBlocks
                 package_serviceid => :package_serviceid,
                 list_id => :list_id,
                 parent_source_id => :parent_source_id,
+                max_output_lines => :max_output_lines,
                 el_serviceid => :el_serviceid,
                 el_qty => :el_qty,
                 el_price_override => :el_price_override,
@@ -1480,7 +1516,7 @@ public static class PlsqlBlocks
         end;
         """;
 
-    /// <summary>Calls BIL_INVOICE_API.GET_BUNDLED_OFFER_IG_LINES; returns the bundled offer as preview lines.</summary>
+    /// <summary>Calls BIL_INVOICE_API.GET_BUNDLED_OFFER_IG_LINES; returns the bundled offer as preview lines; copies no line when they exceed max_output_lines, while pl_count reports the full count.</summary>
     public const string BundledOffer = """
         declare
             type t_num is table of number index by pls_integer;
@@ -1493,6 +1529,7 @@ public static class PlsqlBlocks
                 info_center_id in varchar2,
                 offer_id in number,
                 bundle_qty in number,
+                max_output_lines in pls_integer,
                 pl_client_id out t_vc,
                 pl_line_no out t_num,
                 pl_serviceid out t_vc,
@@ -1556,7 +1593,15 @@ public static class PlsqlBlocks
                     o_lines => v_preview
                 );
 
-                v_idx := v_preview.first;
+                if v_preview.count > max_output_lines then
+
+                    v_idx := null;
+
+                else
+
+                    v_idx := v_preview.first;
+
+                end if;
                 while v_idx is not null loop
                     v_out := v_out + 1;
                     pl_client_id(v_out) := v_preview(v_idx).client_id;
@@ -1608,7 +1653,7 @@ public static class PlsqlBlocks
                     pl_offer_dtl_object_version_number(v_out) := v_preview(v_idx).offer_dtl_object_version_number;
                     v_idx := v_preview.next(v_idx);
                 end loop;
-                pl_count := v_out;
+                pl_count := v_preview.count;
                 if v_out = 0 then
                     pl_client_id(1) := null;
                     pl_line_no(1) := null;
@@ -1667,6 +1712,7 @@ public static class PlsqlBlocks
                 info_center_id => :info_center_id,
                 offer_id => :offer_id,
                 bundle_qty => :bundle_qty,
+                max_output_lines => :max_output_lines,
                 pl_client_id => :pl_client_id,
                 pl_line_no => :pl_line_no,
                 pl_serviceid => :pl_serviceid,

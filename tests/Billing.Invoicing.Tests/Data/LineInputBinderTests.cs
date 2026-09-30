@@ -1,4 +1,5 @@
 using System.Data;
+using System.Text;
 using System.Text.Json;
 using Billing.Invoicing.Api.Errors;
 using Billing.Invoicing.Data.Errors;
@@ -17,6 +18,7 @@ public sealed class LineInputBinderTests
 {
     private const string LineCountName = "line_count";
     private const string ClientIdName = "l_client_id";
+    private const string UsePriceOverrideName = "l_use_price_override";
 
     /// <summary>U+00E9, two bytes in UTF-8.</summary>
     private const char TwoByteCharacter = '\u00E9';
@@ -61,6 +63,34 @@ public sealed class LineInputBinderTests
     ];
 
     private static readonly DateTime ApprovalDate = new(2026, 9, 14, 0, 0, 0, DateTimeKind.Unspecified);
+
+    /// <summary>Every VARCHAR2 array in t_line_input order with its destination width in bytes; 4000 where the width is unstated.</summary>
+    private static readonly (string Name, int Width)[] LineTextWidths =
+    [
+        ("l_serviceid", 20),
+        (UsePriceOverrideName, 1),
+        ("l_discount_type", 1),
+        ("l_teeth_no", 2),
+        ("l_tooth_surface", 7),
+        ("l_teeth_no2", 2),
+        ("l_approv_ref_no", 20),
+        ("l_claim_no", 4000),
+        ("l_package_service_id", 4000),
+        ("l_package_instance_id", 4000),
+        ("l_package_line_role", 4000),
+        ("l_package_pricing_method", 4000),
+        ("l_package_definition_token", 64),
+        ("l_offer_instance_id", 4000),
+        ("l_offer_line_role", 4000),
+        ("l_offer_name_snapshot", 4000),
+    ];
+
+    /// <summary>All 16 VARCHAR2 arrays with their destination widths.</summary>
+    public static TheoryData<string, int> TextArrayWidths => ToTheoryData(LineTextWidths);
+
+    /// <summary>The VARCHAR2 arrays bound from a line field, with their destination widths; <c>l_use_price_override</c> is computed by the binder.</summary>
+    public static TheoryData<string, int> SettableTextArrayWidths =>
+        ToTheoryData(LineTextWidths.Where(array => array.Name != UsePriceOverrideName));
 
     [Fact]
     public void Bind_TwoLines_Returns35ArraysInLineInputOrderThenLineCount()
@@ -508,6 +538,88 @@ public sealed class LineInputBinderTests
     }
 
     [Fact]
+    public void TextArrayWidths_CoverEveryVarchar2ArrayInLineInputOrder()
+    {
+        Assert.Equal(
+            ExpectedArrays.Where(array => array.Type == OracleDbType.Varchar2).Select(array => array.Name),
+            LineTextWidths.Select(array => array.Name));
+    }
+
+    [Theory]
+    [MemberData(nameof(TextArrayWidths))]
+    public void Bind_TextOfItsFieldWidthInCharacters_IsBoundWholeWithItsLengthAsBindSize(string arrayName, int width)
+    {
+        string value = arrayName == UsePriceOverrideName ? "Y" : new string('x', width);
+        InvoiceLineDraft line = arrayName == UsePriceOverrideName
+            ? PriceOverrideCase("direct-with-override")
+            : WithText(Line("S1", "c-1"), arrayName, value);
+
+        OracleParameter parameter = Find(LineInputBinder.Bind([line]), arrayName);
+
+        Assert.Equal(width, value.Length);
+        Assert.Equal(value, Assert.Single(Plain(parameter)));
+        Assert.Equal(width, Assert.Single(parameter.ArrayBindSize));
+        Assert.Equal(OracleParameterStatus.Success, Assert.Single(parameter.ArrayBindStatus));
+    }
+
+    [Fact]
+    public void Bind_UsePriceOverrideFlags_AreBoundAtTheirOneByteWidth()
+    {
+        OracleParameter flags = Find(
+            LineInputBinder.Bind([PriceOverrideCase("direct-with-override"), PriceOverrideCase("direct-without-override")]),
+            UsePriceOverrideName);
+
+        Assert.Equal(new object?[] { "Y", "N" }, Plain(flags));
+        Assert.Equal(new[] { 1, 1 }, flags.ArrayBindSize);
+    }
+
+    [Theory]
+    [MemberData(nameof(SettableTextArrayWidths))]
+    public void Bind_TextOfItsFieldWidthInUtf8Bytes_IsBoundWholeWithItsCharacterLengthAsBindSize(string arrayName, int width)
+    {
+        string value = new string(TwoByteCharacter, width / 2) + (width % 2 == 1 ? "x" : string.Empty);
+
+        OracleParameter parameter = Find(LineInputBinder.Bind([WithText(Line("S1", "c-1"), arrayName, value)]), arrayName);
+
+        Assert.Equal(width, Encoding.UTF8.GetByteCount(value));
+        Assert.Equal(value, Assert.Single(Plain(parameter)));
+        Assert.Equal(value.Length, Assert.Single(parameter.ArrayBindSize));
+        Assert.Equal(OracleParameterStatus.Success, Assert.Single(parameter.ArrayBindStatus));
+    }
+
+    [Theory]
+    [MemberData(nameof(SettableTextArrayWidths))]
+    public void Bind_TextOverItsFieldWidthInCharacters_ThrowsBindingRejectionNamingTheLineAndArray(string arrayName, int width)
+    {
+        IReadOnlyList<InvoiceLineDraft> lines =
+        [
+            Line("S1", "c-1"),
+            WithText(Line("S2", "c-2"), arrayName, new string('x', width + 1)),
+        ];
+        string expected = $"Invoice line at index 1: {arrayName} has {width + 1} characters; at most {width} can be bound.";
+
+        ArgumentException error = Assert.Throws<ArgumentException>(() => LineInputBinder.Bind(lines));
+
+        AssertBindingRejection(expected, error);
+    }
+
+    [Theory]
+    [MemberData(nameof(SettableTextArrayWidths))]
+    public void Bind_TextWithinItsFieldWidthInCharactersButOverItInUtf8Bytes_ThrowsBindingRejection(string arrayName, int width)
+    {
+        string value = new(TwoByteCharacter, width / 2 + 1);
+        int bytes = Encoding.UTF8.GetByteCount(value);
+        IReadOnlyList<InvoiceLineDraft> lines = [Line("S1", "c-1"), WithText(Line("S2", "c-2"), arrayName, value)];
+        string expected = $"Invoice line at index 1: {arrayName} has {bytes} bytes in UTF-8; at most {width} can be bound.";
+
+        ArgumentException error = Assert.Throws<ArgumentException>(() => LineInputBinder.Bind(lines));
+
+        Assert.InRange(value.Length, 1, width);
+        Assert.True(bytes > width, $"{bytes} bytes");
+        AssertBindingRejection(expected, error);
+    }
+
+    [Fact]
     public void Bind_NullLineList_Throws()
     {
         Assert.Throws<ArgumentNullException>(() => LineInputBinder.Bind(null!));
@@ -536,6 +648,11 @@ public sealed class LineInputBinderTests
     [InlineData("client-id-bytes", "Invoice line at index 1: l_client_id has 4002 bytes in UTF-8; at most 4000 can be bound.")]
     [InlineData("text-characters", "Invoice line at index 1: l_offer_name_snapshot has 4001 characters; at most 4000 can be bound.")]
     [InlineData("text-bytes", "Invoice line at index 1: l_offer_name_snapshot has 4002 bytes in UTF-8; at most 4000 can be bound.")]
+    [InlineData("service-id-characters", "Invoice line at index 1: l_serviceid has 21 characters; at most 20 can be bound.")]
+    [InlineData("teeth-no-characters", "Invoice line at index 1: l_teeth_no has 3 characters; at most 2 can be bound.")]
+    [InlineData("teeth-no-bytes", "Invoice line at index 1: l_teeth_no has 4 bytes in UTF-8; at most 2 can be bound.")]
+    [InlineData("discount-type-bytes", "Invoice line at index 1: l_discount_type has 2 bytes in UTF-8; at most 1 can be bound.")]
+    [InlineData("package-definition-token-bytes", "Invoice line at index 1: l_package_definition_token has 66 bytes in UTF-8; at most 64 can be bound.")]
     public void BindingRejection_CarriesItsTextAndTranslatesToFormLevelFieldValidation(string rejectionCase, string expectedText)
     {
         ArgumentException error = BindingRejection(rejectionCase);
@@ -606,6 +723,47 @@ public sealed class LineInputBinderTests
     private static IReadOnlyList<InvoiceLineDraft> TwoLines() =>
         [Line("S1", "c-1") with { Qty = 2m }, Line("S2", "c-2") with { Qty = 3m }];
 
+    /// <summary>Returns the line with the field bound to the named VARCHAR2 array set to the value.</summary>
+    private static InvoiceLineDraft WithText(InvoiceLineDraft line, string arrayName, string value) => arrayName switch
+    {
+        "l_serviceid" => line with { ServiceId = value },
+        "l_discount_type" => line with { DiscountType = value },
+        "l_teeth_no" => line with { TeethNo = value },
+        "l_tooth_surface" => line with { ToothSurface = value },
+        "l_teeth_no2" => line with { TeethNo2 = value },
+        "l_approv_ref_no" => line with { ApprovRefNo = value },
+        "l_claim_no" => line with { ClaimNo = value },
+        "l_package_service_id" => line with { PackageServiceId = value },
+        "l_package_instance_id" => line with { PackageInstanceId = value },
+        "l_package_line_role" => line with { PackageLineRole = value },
+        "l_package_pricing_method" => line with { PackagePricingMethod = value },
+        "l_package_definition_token" => line with { PackageDefinitionToken = value },
+        "l_offer_instance_id" => line with { OfferInstanceId = value },
+        "l_offer_line_role" => line with { OfferLineRole = value },
+        "l_offer_name_snapshot" => line with { OfferNameSnapshot = value },
+        _ => throw new ArgumentOutOfRangeException(nameof(arrayName), arrayName, "Not a VARCHAR2 array bound from a line field."),
+    };
+
+    /// <summary>Converts (array name, width) pairs to theory rows.</summary>
+    private static TheoryData<string, int> ToTheoryData(IEnumerable<(string Name, int Width)> widths)
+    {
+        var data = new TheoryData<string, int>();
+        foreach ((string name, int width) in widths)
+        {
+            data.Add(name, width);
+        }
+
+        return data;
+    }
+
+    /// <summary>Asserts the exception is the binder's rejection of <c>lines</c> carrying exactly the expected text.</summary>
+    private static void AssertBindingRejection(string expected, ArgumentException error)
+    {
+        Assert.Equal(new ArgumentException(expected, "lines").Message, error.Message);
+        Assert.Equal("lines", error.ParamName);
+        Assert.Equal(expected, error.Data[OracleFailureTranslator.BindingRejectionKey]);
+    }
+
     private static InvoiceLineDraft PriceOverrideCase(string lineKind)
     {
         InvoiceLineDraft direct = Line("S1", "c-1") with { Price = 99m };
@@ -664,6 +822,16 @@ public sealed class LineInputBinderTests
                 () => LineInputBinder.Bind([first, second with { OfferNameSnapshot = new string('x', 4001) }])),
             "text-bytes" => Assert.Throws<ArgumentException>(
                 () => LineInputBinder.Bind([first, second with { OfferNameSnapshot = new string(TwoByteCharacter, 2001) }])),
+            "service-id-characters" => Assert.Throws<ArgumentException>(
+                () => LineInputBinder.Bind([first, second with { ServiceId = new string('S', 21) }])),
+            "teeth-no-characters" => Assert.Throws<ArgumentException>(
+                () => LineInputBinder.Bind([first, second with { TeethNo = "123" }])),
+            "teeth-no-bytes" => Assert.Throws<ArgumentException>(
+                () => LineInputBinder.Bind([first, second with { TeethNo = new string(TwoByteCharacter, 2) }])),
+            "discount-type-bytes" => Assert.Throws<ArgumentException>(
+                () => LineInputBinder.Bind([first, second with { DiscountType = new string(TwoByteCharacter, 1) }])),
+            "package-definition-token-bytes" => Assert.Throws<ArgumentException>(
+                () => LineInputBinder.Bind([first, second with { PackageDefinitionToken = new string(TwoByteCharacter, 33) }])),
             _ => throw new ArgumentOutOfRangeException(nameof(rejectionCase), rejectionCase, "Unknown binding-rejection case."),
         };
     }

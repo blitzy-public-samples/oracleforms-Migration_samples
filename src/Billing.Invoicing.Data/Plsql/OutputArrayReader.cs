@@ -9,7 +9,6 @@ namespace Billing.Invoicing.Data.Plsql;
 public static class OutputArrayReader
 {
     private const int MaxVarcharSize = 4000;
-    private const int DecimalPrecision = 28;
     private const string PreviewLineCountName = "pl_count";
     private const string EngineLineCountName = "el_count";
 
@@ -514,17 +513,25 @@ public static class OutputArrayReader
         }
     }
 
-    /// <summary>Rounds to 28 significant digits; a value still outside the decimal range throws <see cref="OverflowException"/>.</summary>
+    /// <summary>Converts exactly; a value decimal cannot represent exactly throws <see cref="OverflowException"/>.</summary>
     private static decimal FromOracleDecimal(OracleDecimal value, string name)
     {
+        decimal result;
         try
         {
-            return OracleDecimal.SetPrecision(value, DecimalPrecision).Value;
+            result = value.Value;
         }
         catch (Exception ex) when (ex is InvalidCastException or OverflowException)
         {
-            throw new OverflowException($"OUT parameter '{name}' holds {value}, which exceeds the decimal range.", ex);
+            throw new OverflowException($"OUT parameter '{name}' holds {value}, which cannot be represented exactly as a decimal.", ex);
         }
+
+        if (value.CompareTo(new OracleDecimal(result)) != 0)
+        {
+            throw new OverflowException($"OUT parameter '{name}' holds {value}, which cannot be represented exactly as a decimal.");
+        }
+
+        return result;
     }
 
     private static int? ToInt32(object? value, string name)

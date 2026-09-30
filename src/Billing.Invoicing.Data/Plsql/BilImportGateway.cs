@@ -22,6 +22,7 @@ public sealed class BilImportGateway : IBilImportGateway
     private const string GetVisitLineOperation = "GetVisitLine";
 
     private const string RequestRowIdParameterName = "req_row_id";
+    private const string EngineLineCountName = "el_count";
 
     private const string MaxOutputLinesKey = "Invoicing:MaxOutputLines";
     private const string CommandTimeoutSecondsKey = "Invoicing:CommandTimeoutSeconds";
@@ -66,7 +67,7 @@ public sealed class BilImportGateway : IBilImportGateway
     /// <returns>The imported rows as engine lines, and the package's import result.</returns>
     /// <exception cref="ArgumentNullException">A reference argument is null.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="approvalMode"/> is neither 0 nor 1.</exception>
-    /// <exception cref="ArgumentException"><paramref name="session"/> is not an Oracle session of this layer.</exception>
+    /// <exception cref="ArgumentException"><paramref name="session"/> is not an Oracle session of this layer, a value exceeds its destination width, or the import returns more lines than Invoicing:MaxOutputLines.</exception>
     /// <exception cref="OracleException">The block failed; the exception carries the operation name under <see cref="OracleErrorParser.OperationKey"/>.</exception>
     public async Task<(IReadOnlyList<EngineLineInput> Lines, ImportResultRow Result)> ImportRequestLines(
         IOracleSession session,
@@ -90,26 +91,36 @@ public sealed class BilImportGateway : IBilImportGateway
                 $"Approval check mode must be {ApprovalCheckSkipped} or {ApprovalCheckEnforced}.");
         }
 
+        BoundedVarchar2.Validate("patientno", header.PatientNo, BoundedVarchar2.PatientNoBytes, nameof(header));
+        BoundedVarchar2.Validate("visit_unique", visitUnique, BoundedVarchar2.VisitUniqueBytes, nameof(visitUnique));
+        BoundedVarchar2.Validate("app_session_id", operatorContext.SessionId, BoundedVarchar2.SqlVarchar2Bytes, nameof(operatorContext));
+        BoundedVarchar2.Validate("app_user", operatorContext.UserName, BoundedVarchar2.SqlVarchar2Bytes, nameof(operatorContext));
+
         return await Execute(
             session,
             PlsqlBlocks.RequestImport,
             ImportRequestLinesOperation,
             parameters =>
             {
-                parameters.Add(Input("patientno", OracleDbType.Varchar2, header.PatientNo));
-                parameters.Add(Input("visit_unique", OracleDbType.Varchar2, visitUnique));
+                parameters.Add(BoundedVarchar2.Input("patientno", header.PatientNo, BoundedVarchar2.PatientNoBytes, nameof(header)));
+                parameters.Add(BoundedVarchar2.Input("visit_unique", visitUnique, BoundedVarchar2.VisitUniqueBytes, nameof(visitUnique)));
                 parameters.Add(Input("paytype", OracleDbType.Decimal, header.PayType));
                 parameters.Add(Input("app_id", OracleDbType.Decimal, _options.ApplicationId));
-                parameters.Add(Input("app_session_id", OracleDbType.Varchar2, operatorContext.SessionId));
-                parameters.Add(Input("app_user", OracleDbType.Varchar2, operatorContext.UserName));
+                parameters.Add(BoundedVarchar2.Input("app_session_id", operatorContext.SessionId, BoundedVarchar2.SqlVarchar2Bytes, nameof(operatorContext)));
+                parameters.Add(BoundedVarchar2.Input("app_user", operatorContext.UserName, BoundedVarchar2.SqlVarchar2Bytes, nameof(operatorContext)));
                 parameters.Add(Input("invoice_date", OracleDbType.Date, header.DraftDate));
                 parameters.Add(Input("approval_mode", OracleDbType.Decimal, approvalMode));
                 parameters.Add(RequestRowIdArray(patServReqRowIds));
                 parameters.Add(Input("req_row_count", OracleDbType.Decimal, patServReqRowIds.Count));
+                parameters.Add(Input("max_output_lines", OracleDbType.Decimal, _options.MaxOutputLines));
                 OutputArrayReader.AddEngineLineOutputs(parameters, _options.MaxOutputLines);
                 OutputArrayReader.AddImportResultOutputs(parameters);
             },
-            parameters => (OutputArrayReader.ReadEngineLines(parameters), OutputArrayReader.ReadImportResult(parameters)),
+            parameters =>
+            {
+                RejectOverCapacity(parameters, "The request import returns", nameof(patServReqRowIds));
+                return (OutputArrayReader.ReadEngineLines(parameters), OutputArrayReader.ReadImportResult(parameters));
+            },
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -127,7 +138,7 @@ public sealed class BilImportGateway : IBilImportGateway
     /// <param name="cancellationToken">Cancels the database call.</param>
     /// <returns>The first engine line, or null when the package returns none, and the package's import result.</returns>
     /// <exception cref="ArgumentNullException">A reference argument is null.</exception>
-    /// <exception cref="ArgumentException"><paramref name="choice"/> is neither review nor consultation, or <paramref name="session"/> is not an Oracle session of this layer.</exception>
+    /// <exception cref="ArgumentException"><paramref name="choice"/> is neither review nor consultation, <paramref name="session"/> is not an Oracle session of this layer, a value exceeds its destination width, or the import returns more lines than Invoicing:MaxOutputLines.</exception>
     /// <exception cref="OracleException">The block failed; the exception carries the operation name under <see cref="OracleErrorParser.OperationKey"/>.</exception>
     public async Task<(EngineLineInput? Line, ImportResultRow Result)> GetVisitLine(
         IOracleSession session,
@@ -141,6 +152,9 @@ public sealed class BilImportGateway : IBilImportGateway
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(header);
         ArgumentNullException.ThrowIfNull(operatorContext);
+        BoundedVarchar2.Validate("patientno", header.PatientNo, BoundedVarchar2.PatientNoBytes, nameof(header));
+        BoundedVarchar2.Validate("new_visit_type", visitType, BoundedVarchar2.NewVisitTypeBytes, nameof(choice));
+        BoundedVarchar2.Validate("info_center_id", operatorContext.InfoCenterId, BoundedVarchar2.InfoCenterIdBytes, nameof(operatorContext));
 
         return await Execute(
             session,
@@ -148,18 +162,20 @@ public sealed class BilImportGateway : IBilImportGateway
             GetVisitLineOperation,
             parameters =>
             {
-                parameters.Add(Input("patientno", OracleDbType.Varchar2, header.PatientNo));
+                parameters.Add(BoundedVarchar2.Input("patientno", header.PatientNo, BoundedVarchar2.PatientNoBytes, nameof(header)));
                 parameters.Add(Input("docid", OracleDbType.Decimal, header.DocId));
-                parameters.Add(Input("new_visit_type", OracleDbType.Varchar2, visitType));
+                parameters.Add(BoundedVarchar2.Input("new_visit_type", visitType, BoundedVarchar2.NewVisitTypeBytes, nameof(choice)));
                 parameters.Add(Input("paytype", OracleDbType.Decimal, header.PayType));
                 parameters.Add(Input("clinicid", OracleDbType.Decimal, header.ClinicId));
-                parameters.Add(Input("info_center_id", OracleDbType.Varchar2, operatorContext.InfoCenterId));
+                parameters.Add(BoundedVarchar2.Input("info_center_id", operatorContext.InfoCenterId, BoundedVarchar2.InfoCenterIdBytes, nameof(operatorContext)));
                 parameters.Add(Input("invoice_date", OracleDbType.Date, header.DraftDate));
+                parameters.Add(Input("max_output_lines", OracleDbType.Decimal, _options.MaxOutputLines));
                 OutputArrayReader.AddEngineLineOutputs(parameters, _options.MaxOutputLines);
                 OutputArrayReader.AddImportResultOutputs(parameters);
             },
             parameters =>
             {
+                RejectOverCapacity(parameters, "The visit line import returns", nameof(choice));
                 var lines = OutputArrayReader.ReadEngineLines(parameters);
                 return (lines.Count > 0 ? lines[0] : null, OutputArrayReader.ReadImportResult(parameters));
             },
@@ -239,6 +255,31 @@ public sealed class BilImportGateway : IBilImportGateway
             {
                 parameter.Dispose();
             }
+        }
+    }
+
+    /// <summary>Throws a capacity rejection when the <c>el_count</c> OUT value exceeds <see cref="InvoicingDataOptions.MaxOutputLines"/>; null counts as 0.</summary>
+    /// <param name="parameters">Executed command parameters.</param>
+    /// <param name="subject">Start of the rejection text, naming what returned the lines.</param>
+    /// <param name="paramName">Argument the rejection names.</param>
+    /// <exception cref="ArgumentException">The count exceeds the capacity; <see cref="Exception.Data"/> holds the text under <see cref="OracleFailureTranslator.BindingRejectionKey"/>.</exception>
+    /// <exception cref="InvalidCastException">The count is neither a number nor null.</exception>
+    private void RejectOverCapacity(OracleParameterCollection parameters, string subject, string paramName)
+    {
+        var count = parameters[EngineLineCountName].Value switch
+        {
+            null or DBNull or OracleDecimal { IsNull: true } => 0,
+            OracleDecimal value => value.ToInt32(),
+            decimal value => decimal.ToInt32(value),
+            var other => throw new InvalidCastException($"OUT parameter '{EngineLineCountName}' holds a {other.GetType().Name}, not a number."),
+        };
+
+        if (count > _options.MaxOutputLines)
+        {
+            var text = $"{subject} {count} lines; at most {_options.MaxOutputLines} lines can be returned ({MaxOutputLinesKey}).";
+            var error = new ArgumentException(text, paramName);
+            error.Data[OracleFailureTranslator.BindingRejectionKey] = text;
+            throw error;
         }
     }
 

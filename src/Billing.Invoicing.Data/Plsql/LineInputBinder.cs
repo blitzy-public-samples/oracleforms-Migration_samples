@@ -12,13 +12,24 @@ public static class LineInputBinder
 {
     private const string LineCountParameterName = "line_count";
     private const int MaxVarchar2Length = 4000;
+
+    // t_line_input field widths in bytes; the d_inv.%type ones follow the D_INV Form items and are UNVERIFIED.
+    private const int ServiceIdLength = 20;
+    private const int UsePriceOverrideLength = 1;
+    private const int DiscountTypeLength = 1;
+    private const int TeethNoLength = 2;
+    private const int ToothSurfaceLength = 7;
+    private const int TeethNo2Length = 2;
+    private const int ApprovRefNoLength = 20;
+    private const int PackageDefinitionTokenLength = 64;
+
     private const string ComponentLineRole = "COMPONENT";
 
     /// <summary>Builds the IN associative-array parameters for <c>l_serviceid</c> … <c>l_offer_dtl_object_version_number</c> and the <c>line_count</c> scalar.</summary>
     /// <param name="lines">Draft lines in bind order; element <c>i</c> of every array belongs to <c>lines[i]</c>.</param>
     /// <returns>36 parameters: the 35 <c>l_*</c> arrays in t_line_input order, then <c>line_count</c>.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="lines"/> is null.</exception>
-    /// <exception cref="ArgumentException">A line is null, or a text value is longer than 4000 characters or 4000 UTF-8 bytes.</exception>
+    /// <exception cref="ArgumentException">A line is null, or a text value is longer than its t_line_input field width in characters or UTF-8 bytes (4000 where the width is unstated).</exception>
     public static IReadOnlyList<OracleParameter> Bind(IReadOnlyList<InvoiceLineDraft> lines)
     {
         ArgumentNullException.ThrowIfNull(lines);
@@ -33,49 +44,60 @@ public static class LineInputBinder
         var count = lines.Count;
         var size = Math.Max(count, 1);
 
-        var parameters = new List<OracleParameter>(36)
+        var parameters = new List<OracleParameter>(36);
+        try
         {
-            TextArray("l_serviceid", lines, size, line => line.ServiceId),
-            NumberArray("l_qty", lines, size, line => line.Qty),
-            NumberArray("l_price_override", lines, size, line => AllowsPriceOverride(line) ? line.PriceOverride : null),
-            TextArray("l_use_price_override", lines, size, line => AllowsPriceOverride(line) ? "Y" : "N"),
-            TextArray("l_discount_type", lines, size, line => line.DiscountType),
-            NumberArray("l_disc", lines, size, line => line.Disc),
-            NumberArray("l_my_disc", lines, size, line => line.MyDisc),
-            TextArray("l_teeth_no", lines, size, line => line.TeethNo),
-            TextArray("l_tooth_surface", lines, size, line => line.ToothSurface),
-            TextArray("l_teeth_no2", lines, size, line => line.TeethNo2),
-            NumberArray("l_pat_serv_req_row_id", lines, size, line => line.PatServReqRowId),
-            DateArray("l_approv_date", lines, size, line => line.ApprovDate),
-            NumberArray("l_approv_validity", lines, size, line => line.ApprovValidity),
-            TextArray("l_approv_ref_no", lines, size, line => line.ApprovRefNo),
-            TextArray("l_claim_no", lines, size, line => line.ClaimNo),
-            NumberArray("l_req_need_a", lines, size, line => line.ReqNeedA),
-            NumberArray("l_req_a_status", lines, size, line => line.ReqAStatus),
-            TextArray("l_package_service_id", lines, size, line => line.PackageServiceId),
-            TextArray("l_package_instance_id", lines, size, line => line.PackageInstanceId),
-            TextArray("l_package_line_role", lines, size, line => line.PackageLineRole),
-            NumberArray("l_package_component_order", lines, size, line => line.PackageComponentOrder),
-            NumberArray("l_package_parent_line_id", lines, size, line => line.PackageParentLineId),
-            TextArray("l_package_pricing_method", lines, size, line => line.PackagePricingMethod),
-            TextArray("l_package_definition_token", lines, size, line => line.PackageDefinitionToken),
-            NumberArray("l_offer_id", lines, size, line => line.OfferId),
-            NumberArray("l_offer_dtl_id", lines, size, line => line.OfferDtlId),
-            NumberArray("l_offer_type", lines, size, line => line.OfferType),
-            TextArray("l_offer_instance_id", lines, size, line => line.OfferInstanceId),
-            TextArray("l_offer_line_role", lines, size, line => line.OfferLineRole),
-            NumberArray("l_offer_parent_line_id", lines, size, line => line.OfferParentLineId),
-            NumberArray("l_offer_price_applied", lines, size, line => line.OfferPriceApplied),
-            NumberArray("l_offer_dis_applied", lines, size, line => line.OfferDisApplied),
-            TextArray("l_offer_name_snapshot", lines, size, line => line.OfferNameSnapshot),
-            NumberArray("l_offer_object_version_number", lines, size, line => line.OfferObjectVersionNumber),
-            NumberArray("l_offer_dtl_object_version_number", lines, size, line => line.OfferDtlObjectVersionNumber),
-            new OracleParameter(LineCountParameterName, OracleDbType.Decimal)
+            parameters.Add(TextArray("l_serviceid", lines, size, ServiceIdLength, line => line.ServiceId));
+            parameters.Add(NumberArray("l_qty", lines, size, line => line.Qty));
+            parameters.Add(NumberArray("l_price_override", lines, size, line => AllowsPriceOverride(line) ? line.PriceOverride : null));
+            parameters.Add(TextArray("l_use_price_override", lines, size, UsePriceOverrideLength, line => AllowsPriceOverride(line) ? "Y" : "N"));
+            parameters.Add(TextArray("l_discount_type", lines, size, DiscountTypeLength, line => line.DiscountType));
+            parameters.Add(NumberArray("l_disc", lines, size, line => line.Disc));
+            parameters.Add(NumberArray("l_my_disc", lines, size, line => line.MyDisc));
+            parameters.Add(TextArray("l_teeth_no", lines, size, TeethNoLength, line => line.TeethNo));
+            parameters.Add(TextArray("l_tooth_surface", lines, size, ToothSurfaceLength, line => line.ToothSurface));
+            parameters.Add(TextArray("l_teeth_no2", lines, size, TeethNo2Length, line => line.TeethNo2));
+            parameters.Add(NumberArray("l_pat_serv_req_row_id", lines, size, line => line.PatServReqRowId));
+            parameters.Add(DateArray("l_approv_date", lines, size, line => line.ApprovDate));
+            parameters.Add(NumberArray("l_approv_validity", lines, size, line => line.ApprovValidity));
+            parameters.Add(TextArray("l_approv_ref_no", lines, size, ApprovRefNoLength, line => line.ApprovRefNo));
+            parameters.Add(TextArray("l_claim_no", lines, size, MaxVarchar2Length, line => line.ClaimNo));
+            parameters.Add(NumberArray("l_req_need_a", lines, size, line => line.ReqNeedA));
+            parameters.Add(NumberArray("l_req_a_status", lines, size, line => line.ReqAStatus));
+            parameters.Add(TextArray("l_package_service_id", lines, size, MaxVarchar2Length, line => line.PackageServiceId));
+            parameters.Add(TextArray("l_package_instance_id", lines, size, MaxVarchar2Length, line => line.PackageInstanceId));
+            parameters.Add(TextArray("l_package_line_role", lines, size, MaxVarchar2Length, line => line.PackageLineRole));
+            parameters.Add(NumberArray("l_package_component_order", lines, size, line => line.PackageComponentOrder));
+            parameters.Add(NumberArray("l_package_parent_line_id", lines, size, line => line.PackageParentLineId));
+            parameters.Add(TextArray("l_package_pricing_method", lines, size, MaxVarchar2Length, line => line.PackagePricingMethod));
+            parameters.Add(TextArray("l_package_definition_token", lines, size, PackageDefinitionTokenLength, line => line.PackageDefinitionToken));
+            parameters.Add(NumberArray("l_offer_id", lines, size, line => line.OfferId));
+            parameters.Add(NumberArray("l_offer_dtl_id", lines, size, line => line.OfferDtlId));
+            parameters.Add(NumberArray("l_offer_type", lines, size, line => line.OfferType));
+            parameters.Add(TextArray("l_offer_instance_id", lines, size, MaxVarchar2Length, line => line.OfferInstanceId));
+            parameters.Add(TextArray("l_offer_line_role", lines, size, MaxVarchar2Length, line => line.OfferLineRole));
+            parameters.Add(NumberArray("l_offer_parent_line_id", lines, size, line => line.OfferParentLineId));
+            parameters.Add(NumberArray("l_offer_price_applied", lines, size, line => line.OfferPriceApplied));
+            parameters.Add(NumberArray("l_offer_dis_applied", lines, size, line => line.OfferDisApplied));
+            parameters.Add(TextArray("l_offer_name_snapshot", lines, size, MaxVarchar2Length, line => line.OfferNameSnapshot));
+            parameters.Add(NumberArray("l_offer_object_version_number", lines, size, line => line.OfferObjectVersionNumber));
+            parameters.Add(NumberArray("l_offer_dtl_object_version_number", lines, size, line => line.OfferDtlObjectVersionNumber));
+            parameters.Add(new OracleParameter(LineCountParameterName, OracleDbType.Decimal)
             {
                 Direction = ParameterDirection.Input,
                 Value = count,
-            },
-        };
+            });
+        }
+        catch
+        {
+            // A rejected value disposes the arrays built before it.
+            foreach (var parameter in parameters)
+            {
+                parameter.Dispose();
+            }
+
+            throw;
+        }
 
         return parameters.AsReadOnly();
     }
@@ -116,11 +138,12 @@ public static class LineInputBinder
         return ArrayParameter(name, OracleDbType.Decimal, size, values, status);
     }
 
-    /// <summary>Builds a VARCHAR2 associative array with per-element bind sizes; null values are bound as null elements.</summary>
+    /// <summary>Builds a VARCHAR2 associative array with per-element bind sizes, rejecting a value over the field's destination width <paramref name="maxLength"/>; null values are bound as null elements.</summary>
     private static OracleParameter TextArray(
         string name,
         IReadOnlyList<InvoiceLineDraft> lines,
         int size,
+        int maxLength,
         Func<InvoiceLineDraft, string?> select)
     {
         var values = new OracleString[size];
@@ -137,15 +160,15 @@ public static class LineInputBinder
                 continue;
             }
 
-            // A value over the t_vc element size in characters or UTF-8 bytes is rejected, never truncated to fit.
+            // A value over its field's destination width in characters or UTF-8 bytes is rejected, never truncated to fit.
             string? rejection = null;
-            if (value.Length > MaxVarchar2Length)
+            if (value.Length > maxLength)
             {
-                rejection = $"Invoice line at index {i}: {name} has {value.Length} characters; at most {MaxVarchar2Length} can be bound.";
+                rejection = $"Invoice line at index {i}: {name} has {value.Length} characters; at most {maxLength} can be bound.";
             }
-            else if (Encoding.UTF8.GetByteCount(value) is var bytes and > MaxVarchar2Length)
+            else if (Encoding.UTF8.GetByteCount(value) is var bytes && bytes > maxLength)
             {
-                rejection = $"Invoice line at index {i}: {name} has {bytes} bytes in UTF-8; at most {MaxVarchar2Length} can be bound.";
+                rejection = $"Invoice line at index {i}: {name} has {bytes} bytes in UTF-8; at most {maxLength} can be bound.";
             }
 
             if (rejection is not null)

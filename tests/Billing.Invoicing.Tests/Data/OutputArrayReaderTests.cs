@@ -57,6 +57,15 @@ public sealed class OutputArrayReaderTests
         "ir_skipped_need_approval_count", "ir_skipped_invalid_count", "ir_has_price_overrides", "ir_message",
     ];
 
+    private static readonly string[] FullInvoiceResultFields =
+    [
+        "fr_inv_no", "fr_invdate", "fr_patientno", "fr_curr_code", "fr_line_count", "fr_total_gross",
+        "fr_total_discount", "fr_total_net", "fr_pat_pay", "fr_comp_pay", "fr_vat_total_pat", "fr_vat_total_co",
+        "fr_vat_total", "fr_finaldisc", "fr_cash_collected", "fr_shift_system_unique", "fr_payment_posted",
+        "fr_queue_posted", "fr_stock_posted", "fr_print_url_built", "fr_sms_sent", "fr_message",
+        "fr_message_send_status", "fr_message_text",
+    ];
+
     private static readonly HashSet<string> TextFields = new(StringComparer.Ordinal)
     {
         "pl_client_id", "pl_serviceid", "pl_servicedesc", "pl_curr_code", "pl_manual_discount_type",
@@ -69,9 +78,11 @@ public sealed class OutputArrayReaderTests
         "el_package_line_role", "el_package_pricing_method", "el_package_definition_token",
         "el_offer_instance_id", "el_offer_line_role", "el_offer_name_snapshot",
         "ir_source_type", "ir_has_price_overrides", "ir_message",
+        "fr_patientno", "fr_curr_code", "fr_payment_posted", "fr_queue_posted", "fr_stock_posted",
+        "fr_print_url_built", "fr_sms_sent", "fr_message", "fr_message_send_status", "fr_message_text",
     };
 
-    private static readonly HashSet<string> DateFields = new(StringComparer.Ordinal) { "el_approv_date" };
+    private static readonly HashSet<string> DateFields = new(StringComparer.Ordinal) { "el_approv_date", "fr_invdate" };
 
     [Fact]
     public void ReadPreviewLines_CountBelowPopulatedSlots_ReadsOnlyCountedSlotsFieldByField()
@@ -131,6 +142,32 @@ public sealed class OutputArrayReaderTests
             () => OutputArrayReader.ReadPreviewLines(command.Parameters));
 
         Assert.Contains("pl_line_no", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ReadPreviewLines_HighPrecisionListId_ReadsBackExactly()
+    {
+        using OracleCommand command = new();
+        AddTable(command.Parameters, PreviewLineCount, new OracleDecimal(1), PopulatedArrays(PreviewLineFields, populatedSlots: 1));
+        Replace(command.Parameters, "pl_list_id", new[] { OracleDecimal.Parse("12345678901234567890123456789") });
+
+        EditablePreviewLine line = Assert.Single(OutputArrayReader.ReadPreviewLines(command.Parameters));
+
+        Assert.Equal(decimal.GetBits(12345678901234567890123456789m), decimal.GetBits(line.ListId!.Value));
+        Assert.Equal(ExpectedPreviewLine(0) with { ListId = 12345678901234567890123456789m }, line);
+    }
+
+    [Fact]
+    public void ReadPreviewLines_PriceBeyondDecimalPrecision_ThrowsOverflow()
+    {
+        using OracleCommand command = new();
+        AddTable(command.Parameters, PreviewLineCount, new OracleDecimal(1), PopulatedArrays(PreviewLineFields, populatedSlots: 1));
+        Replace(command.Parameters, "pl_price", new[] { OracleDecimal.Divide(new OracleDecimal(1), new OracleDecimal(3)) });
+
+        OverflowException error = Assert.Throws<OverflowException>(
+            () => OutputArrayReader.ReadPreviewLines(command.Parameters));
+
+        Assert.Contains("pl_price", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -237,15 +274,34 @@ public sealed class OutputArrayReaderTests
     }
 
     [Fact]
-    public void ReadPreviewTotals_NumberBeyondDecimalPrecision_RoundsTo28SignificantDigits()
+    public void ReadPreviewTotals_AmountBeyondDecimalPrecision_ThrowsOverflow()
     {
         using OracleCommand command = new();
         AddScalars(command.Parameters, GeneratedScalars(PreviewTotalsFields));
-        Replace(command.Parameters, "pt_total_gross", OracleDecimal.Parse("1.23456789012345678901234567891"));
+        Replace(command.Parameters, "pt_cash_collected", OracleDecimal.Parse("1.23456789012345678901234567891"));
+
+        OverflowException error = Assert.Throws<OverflowException>(
+            () => OutputArrayReader.ReadPreviewTotals(command.Parameters));
+
+        Assert.Contains("pt_cash_collected", error.Message, StringComparison.Ordinal);
+        Assert.Contains("1.23456789012345678901234567891", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ReadPreviewTotals_HighPrecisionAmounts_ReadBackExactly()
+    {
+        using OracleCommand command = new();
+        AddScalars(command.Parameters, GeneratedScalars(PreviewTotalsFields));
+        Replace(command.Parameters, "pt_total_gross", OracleDecimal.Parse("7.9228162514264337593543950335"));
+        Replace(command.Parameters, "pt_total_net", new OracleDecimal(decimal.MaxValue));
 
         PreviewTotalsRow totals = OutputArrayReader.ReadPreviewTotals(command.Parameters);
 
-        Assert.Equal(1.234567890123456789012345679m, totals.TotalGross);
+        Assert.Equal(decimal.GetBits(7.9228162514264337593543950335m), decimal.GetBits(totals.TotalGross!.Value));
+        Assert.Equal(decimal.GetBits(decimal.MaxValue), decimal.GetBits(totals.TotalNet!.Value));
+        Assert.Equal(
+            ExpectedPreviewTotals() with { TotalGross = 7.9228162514264337593543950335m, TotalNet = decimal.MaxValue },
+            totals);
     }
 
     [Fact]
@@ -547,6 +603,47 @@ public sealed class OutputArrayReaderTests
         Assert.Contains("ir_message", error.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void ReadFullInvoiceResult_Scalars_MapFieldByField()
+    {
+        using OracleCommand command = new();
+        AddScalars(command.Parameters, GeneratedScalars(FullInvoiceResultFields));
+
+        FullInvoiceResultRow result = OutputArrayReader.ReadFullInvoiceResult(command.Parameters);
+
+        Assert.Equal((long)Number(FullInvoiceResultFields, "fr_inv_no", 0), result.InvNo);
+        Assert.Equal(FirstApprovalDate, result.InvDate);
+        Assert.Equal(Text("fr_message_text", 0), result.MessageText);
+        Assert.Equal(ExpectedFullInvoiceResult(), result);
+    }
+
+    [Fact]
+    public void ReadFullInvoiceResult_FractionalInvoiceNumberBeyondDecimalPrecision_ThrowsOverflow()
+    {
+        using OracleCommand command = new();
+        AddScalars(command.Parameters, GeneratedScalars(FullInvoiceResultFields));
+        Replace(command.Parameters, "fr_inv_no", OracleDecimal.Parse("1000000000000000001.0000000000000000001"));
+
+        OverflowException error = Assert.Throws<OverflowException>(
+            () => OutputArrayReader.ReadFullInvoiceResult(command.Parameters));
+
+        Assert.Contains("fr_inv_no", error.Message, StringComparison.Ordinal);
+        Assert.Contains("1000000000000000001.0000000000000000001", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ReadFullInvoiceResult_InvoiceNumberAtInt64Max_ReadsExactly()
+    {
+        using OracleCommand command = new();
+        AddScalars(command.Parameters, GeneratedScalars(FullInvoiceResultFields));
+        Replace(command.Parameters, "fr_inv_no", new OracleDecimal(long.MaxValue));
+
+        FullInvoiceResultRow result = OutputArrayReader.ReadFullInvoiceResult(command.Parameters);
+
+        Assert.Equal(long.MaxValue, result.InvNo);
+        Assert.Equal(ExpectedFullInvoiceResult() with { InvNo = long.MaxValue }, result);
+    }
+
     [Theory]
     [InlineData("db-null")]
     [InlineData("clr-null")]
@@ -577,6 +674,7 @@ public sealed class OutputArrayReaderTests
         Assert.Throws<ArgumentNullException>(() => OutputArrayReader.ReadPreviewTotals(null!));
         Assert.Throws<ArgumentNullException>(() => OutputArrayReader.ReadEngineLines(null!));
         Assert.Throws<ArgumentNullException>(() => OutputArrayReader.ReadImportResult(null!));
+        Assert.Throws<ArgumentNullException>(() => OutputArrayReader.ReadFullInvoiceResult(null!));
     }
 
     private static void AddArray(OracleParameterCollection parameters, string name, OracleDbType type, Array values) =>
@@ -758,6 +856,39 @@ public sealed class OutputArrayReaderTests
             Amount2 = N("pt_amount_2"),
             RemainingAmount = N("pt_remaining_amount"),
             PaymentStatus = Text("pt_payment_status", 0),
+        };
+    }
+
+    private static FullInvoiceResultRow ExpectedFullInvoiceResult()
+    {
+        string T(string field) => Text(field, 0);
+        decimal N(string field) => Number(FullInvoiceResultFields, field, 0);
+        return new FullInvoiceResultRow
+        {
+            InvNo = (long)N("fr_inv_no"),
+            InvDate = FirstApprovalDate,
+            PatientNo = T("fr_patientno"),
+            CurrCode = T("fr_curr_code"),
+            LineCount = (int)N("fr_line_count"),
+            TotalGross = N("fr_total_gross"),
+            TotalDiscount = N("fr_total_discount"),
+            TotalNet = N("fr_total_net"),
+            PatPay = N("fr_pat_pay"),
+            CompPay = N("fr_comp_pay"),
+            VatTotalPat = N("fr_vat_total_pat"),
+            VatTotalCo = N("fr_vat_total_co"),
+            VatTotal = N("fr_vat_total"),
+            FinalDisc = N("fr_finaldisc"),
+            CashCollected = N("fr_cash_collected"),
+            ShiftSystemUnique = N("fr_shift_system_unique"),
+            PaymentPosted = T("fr_payment_posted"),
+            QueuePosted = T("fr_queue_posted"),
+            StockPosted = T("fr_stock_posted"),
+            PrintUrlBuilt = T("fr_print_url_built"),
+            SmsSent = T("fr_sms_sent"),
+            Message = T("fr_message"),
+            MessageSendStatus = T("fr_message_send_status"),
+            MessageText = T("fr_message_text"),
         };
     }
 

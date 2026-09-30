@@ -4,6 +4,7 @@ using Billing.Invoicing.Data.Oracle;
 using Billing.Invoicing.Data.Ports;
 using Billing.Invoicing.Domain.Model;
 using Oracle.ManagedDataAccess.Client;
+using Oracle.ManagedDataAccess.Types;
 
 namespace Billing.Invoicing.Data.Plsql;
 
@@ -18,6 +19,9 @@ public sealed class BilInvoiceApiGateway : IBilInvoiceApiGateway
 
     private const string MaxOutputLinesKey = "Invoicing:MaxOutputLines";
     private const string CommandTimeoutSecondsKey = "Invoicing:CommandTimeoutSeconds";
+
+    private const string PreviewLineCountName = "pl_count";
+    private const string EngineLineCountName = "el_count";
 
     private readonly InvoicingDataOptions _options;
 
@@ -57,7 +61,7 @@ public sealed class BilInvoiceApiGateway : IBilInvoiceApiGateway
     /// <param name="cancellationToken">Cancels the call.</param>
     /// <returns>The preview lines and totals as returned by the package.</returns>
     /// <exception cref="ArgumentNullException">An argument is null.</exception>
-    /// <exception cref="ArgumentException"><paramref name="session"/> is not an <see cref="OracleSession"/>, or a line cannot be bound.</exception>
+    /// <exception cref="ArgumentException">The draft exceeds Invoicing:MaxOutputLines, <paramref name="session"/> is not an <see cref="OracleSession"/>, or a header or line value cannot be bound.</exception>
     /// <exception cref="OracleException">The block failed; <see cref="Exception.Data"/> holds the operation name under <see cref="OracleErrorParser.OperationKey"/>.</exception>
     public async Task<(IReadOnlyList<EditablePreviewLine> Lines, PreviewTotalsRow Totals)> CalculatePreview(
         IOracleSession session,
@@ -67,29 +71,50 @@ public sealed class BilInvoiceApiGateway : IBilInvoiceApiGateway
         bool amount1Auto,
         CancellationToken cancellationToken = default)
     {
-        var oracleSession = AsOracleSession(session);
+        ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(header);
         ArgumentNullException.ThrowIfNull(lines);
         ArgumentNullException.ThrowIfNull(operatorContext);
+        if (lines.Count > _options.MaxOutputLines)
+        {
+            throw CapacityRejection(
+                $"The draft has {lines.Count} lines; a preview returns at most {_options.MaxOutputLines} lines ({MaxOutputLinesKey}).",
+                nameof(lines));
+        }
 
-        var inputs = DraftInputs(header, lines, operatorContext);
-        inputs.Add(Number("amount_1", header.Amount1 ?? 0m));
-        inputs.Add(Number("amount_2", header.Amount2 ?? 0m));
-        inputs.Add(Text("amount_1_auto", amount1Auto ? AutoYes : AutoNo));
+        var oracleSession = AsOracleSession(session);
 
-        using var command = await ExecuteAsync(
+        var preview = await ExecuteAsync(
             oracleSession,
             PlsqlBlocks.Preview,
-            inputs,
+            inputs =>
+            {
+                AddDraftInputs(inputs, header, lines, operatorContext);
+                inputs.Add(Number("amount_1", header.Amount1 ?? 0m));
+                inputs.Add(Number("amount_2", header.Amount2 ?? 0m));
+                inputs.Add(BoundedVarchar2.Input("amount_1_auto", amount1Auto ? AutoYes : AutoNo, BoundedVarchar2.FlagBytes, nameof(amount1Auto)));
+                inputs.Add(Number("max_output_lines", _options.MaxOutputLines));
+            },
             parameters =>
             {
                 OutputArrayReader.AddPreviewLineOutputs(parameters, _options.MaxOutputLines);
                 OutputArrayReader.AddPreviewTotalsOutputs(parameters);
             },
+            parameters =>
+            {
+                var count = OutCount(parameters, PreviewLineCountName);
+                if (count > _options.MaxOutputLines)
+                {
+                    throw CapacityRejection(
+                        $"The draft expands to {count} preview lines; a preview returns at most {_options.MaxOutputLines} lines ({MaxOutputLinesKey}).",
+                        nameof(lines));
+                }
+
+                return (OutputArrayReader.ReadPreviewLines(parameters), OutputArrayReader.ReadPreviewTotals(parameters));
+            },
             nameof(CalculatePreview),
             cancellationToken).ConfigureAwait(false);
 
-        var preview = (OutputArrayReader.ReadPreviewLines(command.Parameters), OutputArrayReader.ReadPreviewTotals(command.Parameters));
         oracleSession.EndCall();
         return preview;
     }
@@ -103,7 +128,7 @@ public sealed class BilInvoiceApiGateway : IBilInvoiceApiGateway
     /// <param name="cancellationToken">Cancels the call.</param>
     /// <returns>The invoice result, posting flags and message as returned by the package.</returns>
     /// <exception cref="ArgumentNullException">An argument is null.</exception>
-    /// <exception cref="ArgumentException"><paramref name="requestId"/> is empty or whitespace, <paramref name="session"/> is not an <see cref="OracleSession"/>, or a line cannot be bound.</exception>
+    /// <exception cref="ArgumentException"><paramref name="requestId"/> is empty or whitespace, a value exceeds its destination width, <paramref name="session"/> is not an <see cref="OracleSession"/>, or a header or line value cannot be bound.</exception>
     /// <exception cref="OracleException">The block failed; <see cref="Exception.Data"/> holds the operation name under <see cref="OracleErrorParser.OperationKey"/>.</exception>
     public async Task<FullInvoiceResultRow> CreateFullInvoice(
         IOracleSession session,
@@ -113,28 +138,30 @@ public sealed class BilInvoiceApiGateway : IBilInvoiceApiGateway
         string requestId,
         CancellationToken cancellationToken = default)
     {
-        var oracleSession = AsOracleSession(session);
+        ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(header);
         ArgumentNullException.ThrowIfNull(lines);
         ArgumentNullException.ThrowIfNull(operatorContext);
         ArgumentException.ThrowIfNullOrWhiteSpace(requestId);
+        BoundedVarchar2.Validate("request_id", requestId, BoundedVarchar2.RequestIdBytes, nameof(requestId));
+        var oracleSession = AsOracleSession(session);
 
-        var inputs = DraftInputs(header, lines, operatorContext);
-        inputs.Add(Number("amount_1", header.Amount1));
-        inputs.Add(Number("amount_2", header.Amount2 ?? 0m));
-        inputs.Add(Number("sub_paytype", header.SubPayType));
-        inputs.Add(Number("sub_paytype2", header.SubPayType2));
-        inputs.Add(Text("request_id", requestId));
-
-        using var command = await ExecuteAsync(
+        return await ExecuteAsync(
             oracleSession,
             PlsqlBlocks.Create,
-            inputs,
+            inputs =>
+            {
+                AddDraftInputs(inputs, header, lines, operatorContext);
+                inputs.Add(Number("amount_1", header.Amount1));
+                inputs.Add(Number("amount_2", header.Amount2 ?? 0m));
+                inputs.Add(Number("sub_paytype", header.SubPayType));
+                inputs.Add(Number("sub_paytype2", header.SubPayType2));
+                inputs.Add(BoundedVarchar2.Input("request_id", requestId, BoundedVarchar2.RequestIdBytes, nameof(requestId)));
+            },
             OutputArrayReader.AddFullInvoiceResultOutputs,
+            OutputArrayReader.ReadFullInvoiceResult,
             nameof(CreateFullInvoice),
             cancellationToken).ConfigureAwait(false);
-
-        return OutputArrayReader.ReadFullInvoiceResult(command.Parameters);
     }
 
     /// <summary>Runs BIL_INVOICE_API.GET_BUNDLED_OFFER_IG_LINES for the draft's patient, pay type and date.</summary>
@@ -146,7 +173,7 @@ public sealed class BilInvoiceApiGateway : IBilInvoiceApiGateway
     /// <param name="cancellationToken">Cancels the call.</param>
     /// <returns>The offer's component lines as preview lines.</returns>
     /// <exception cref="ArgumentNullException">An argument is null.</exception>
-    /// <exception cref="ArgumentException"><paramref name="session"/> is not an <see cref="OracleSession"/>.</exception>
+    /// <exception cref="ArgumentException">A value exceeds its destination width, <paramref name="session"/> is not an <see cref="OracleSession"/>, or the package returns more lines than Invoicing:MaxOutputLines.</exception>
     /// <exception cref="OracleException">The block failed; <see cref="Exception.Data"/> holds the operation name under <see cref="OracleErrorParser.OperationKey"/>.</exception>
     public async Task<IReadOnlyList<EditablePreviewLine>> GetBundledOfferLines(
         IOracleSession session,
@@ -156,29 +183,35 @@ public sealed class BilInvoiceApiGateway : IBilInvoiceApiGateway
         decimal bundleQty,
         CancellationToken cancellationToken = default)
     {
-        var oracleSession = AsOracleSession(session);
+        ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(header);
         ArgumentNullException.ThrowIfNull(operatorContext);
+        BoundedVarchar2.Validate("patientno", header.PatientNo, BoundedVarchar2.PatientNoBytes, nameof(header));
+        BoundedVarchar2.Validate("info_center_id", operatorContext.InfoCenterId, BoundedVarchar2.InfoCenterIdBytes, nameof(operatorContext));
+        var oracleSession = AsOracleSession(session);
 
-        OracleParameter[] inputs =
-        [
-            Text("patientno", header.PatientNo),
-            Number("paytype", header.PayType),
-            Date("invoice_date", header.DraftDate),
-            Text("info_center_id", operatorContext.InfoCenterId),
-            Number("offer_id", offerId),
-            Number("bundle_qty", bundleQty),
-        ];
-
-        using var command = await ExecuteAsync(
+        var offerLines = await ExecuteAsync(
             oracleSession,
             PlsqlBlocks.BundledOffer,
-            inputs,
+            inputs =>
+            {
+                inputs.Add(BoundedVarchar2.Input("patientno", header.PatientNo, BoundedVarchar2.PatientNoBytes, nameof(header)));
+                inputs.Add(Number("paytype", header.PayType));
+                inputs.Add(Date("invoice_date", header.DraftDate));
+                inputs.Add(BoundedVarchar2.Input("info_center_id", operatorContext.InfoCenterId, BoundedVarchar2.InfoCenterIdBytes, nameof(operatorContext)));
+                inputs.Add(Number("offer_id", offerId));
+                inputs.Add(Number("bundle_qty", bundleQty));
+                inputs.Add(Number("max_output_lines", _options.MaxOutputLines));
+            },
             parameters => OutputArrayReader.AddPreviewLineOutputs(parameters, _options.MaxOutputLines),
+            parameters =>
+            {
+                RejectOverCapacity(parameters, PreviewLineCountName, "The bundled offer expands to", nameof(offerId));
+                return OutputArrayReader.ReadPreviewLines(parameters);
+            },
             nameof(GetBundledOfferLines),
             cancellationToken).ConfigureAwait(false);
 
-        var offerLines = OutputArrayReader.ReadPreviewLines(command.Parameters);
         oracleSession.EndCall();
         return offerLines;
     }
@@ -191,7 +224,7 @@ public sealed class BilInvoiceApiGateway : IBilInvoiceApiGateway
     /// <param name="cancellationToken">Cancels the call.</param>
     /// <returns>The package components as engine lines, with the import result.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="session"/> or <paramref name="packageServiceId"/> is null.</exception>
-    /// <exception cref="ArgumentException"><paramref name="session"/> is not an <see cref="OracleSession"/>.</exception>
+    /// <exception cref="ArgumentException">A value exceeds its destination width, <paramref name="session"/> is not an <see cref="OracleSession"/>, or the package returns more lines than Invoicing:MaxOutputLines.</exception>
     /// <exception cref="OracleException">The block failed; <see cref="Exception.Data"/> holds the operation name under <see cref="OracleErrorParser.OperationKey"/>.</exception>
     public async Task<(IReadOnlyList<EngineLineInput> Lines, ImportResultRow Result)> GetPackageLines(
         IOracleSession session,
@@ -200,29 +233,35 @@ public sealed class BilInvoiceApiGateway : IBilInvoiceApiGateway
         string? parentSourceId,
         CancellationToken cancellationToken = default)
     {
-        var oracleSession = AsOracleSession(session);
+        ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(packageServiceId);
+        BoundedVarchar2.Validate("package_serviceid", packageServiceId, BoundedVarchar2.ServiceIdBytes, nameof(packageServiceId));
+        BoundedVarchar2.Validate("parent_source_id", parentSourceId, BoundedVarchar2.SourceIdBytes, nameof(parentSourceId));
+        var oracleSession = AsOracleSession(session);
 
-        OracleParameter[] inputs =
-        [
-            Text("package_serviceid", packageServiceId),
-            Number("list_id", listId),
-            Text("parent_source_id", parentSourceId),
-        ];
-
-        using var command = await ExecuteAsync(
+        var package = await ExecuteAsync(
             oracleSession,
             PlsqlBlocks.PackageLines,
-            inputs,
+            inputs =>
+            {
+                inputs.Add(BoundedVarchar2.Input("package_serviceid", packageServiceId, BoundedVarchar2.ServiceIdBytes, nameof(packageServiceId)));
+                inputs.Add(Number("list_id", listId));
+                inputs.Add(BoundedVarchar2.Input("parent_source_id", parentSourceId, BoundedVarchar2.SourceIdBytes, nameof(parentSourceId)));
+                inputs.Add(Number("max_output_lines", _options.MaxOutputLines));
+            },
             parameters =>
             {
                 OutputArrayReader.AddEngineLineOutputs(parameters, _options.MaxOutputLines);
                 OutputArrayReader.AddImportResultOutputs(parameters);
             },
+            parameters =>
+            {
+                RejectOverCapacity(parameters, EngineLineCountName, "The package expands to", nameof(packageServiceId));
+                return (OutputArrayReader.ReadEngineLines(parameters), OutputArrayReader.ReadImportResult(parameters));
+            },
             nameof(GetPackageLines),
             cancellationToken).ConfigureAwait(false);
 
-        var package = (OutputArrayReader.ReadEngineLines(command.Parameters), OutputArrayReader.ReadImportResult(command.Parameters));
         oracleSession.EndCall();
         return package;
     }
@@ -233,80 +272,140 @@ public sealed class BilInvoiceApiGateway : IBilInvoiceApiGateway
     /// <exception cref="NotImplementedException">Always, with a message starting with the print open-item id.</exception>
     public string BuildPrintUrl(long invNo) => throw new NotImplementedException(PrintUrlUnavailableMessage);
 
-    /// <summary>Returns the session as an active <see cref="OracleSession"/> with a gateway call marked as started.</summary>
+    /// <summary>Returns the session as an <see cref="OracleSession"/>.</summary>
     /// <exception cref="ArgumentNullException"><paramref name="session"/> is null.</exception>
     /// <exception cref="ArgumentException"><paramref name="session"/> is another implementation.</exception>
-    /// <exception cref="ObjectDisposedException">The session is disposed.</exception>
-    /// <exception cref="InvalidOperationException">The session is already committed or rolled back.</exception>
     private static OracleSession AsOracleSession(IOracleSession session)
     {
         ArgumentNullException.ThrowIfNull(session);
 
-        var oracleSession = session as OracleSession
+        return session as OracleSession
             ?? throw new ArgumentException($"Expected an {nameof(OracleSession)}, got {session.GetType().Name}.", nameof(session));
-        oracleSession.BeginCall();
-        return oracleSession;
     }
 
-    /// <summary>Header, line and client-id inputs shared by the preview and create blocks.</summary>
-    private static List<OracleParameter> DraftInputs(InvoiceHeaderDraft header, IReadOnlyList<InvoiceLineDraft> lines, OperatorContext operatorContext)
+    /// <summary>Builds a capacity rejection carrying its text under <see cref="OracleFailureTranslator.BindingRejectionKey"/>.</summary>
+    /// <param name="text">Operator-facing rejection text.</param>
+    /// <param name="paramName">Argument the rejection names.</param>
+    /// <returns>The rejection to throw.</returns>
+    private static ArgumentException CapacityRejection(string text, string paramName)
     {
-        var inputs = new List<OracleParameter>(HeaderInputBinder.Bind(header, operatorContext));
+        var error = new ArgumentException(text, paramName);
+        error.Data[OracleFailureTranslator.BindingRejectionKey] = text;
+        return error;
+    }
+
+    /// <summary>Reads an OUT line count; null counts as 0.</summary>
+    /// <exception cref="InvalidCastException">The value is neither a number nor null.</exception>
+    /// <exception cref="OverflowException">The value exceeds the Int32 range.</exception>
+    private static int OutCount(OracleParameterCollection parameters, string countName) =>
+        parameters[countName].Value switch
+        {
+            null or DBNull or OracleDecimal { IsNull: true } => 0,
+            OracleDecimal count => count.ToInt32(),
+            decimal count => decimal.ToInt32(count),
+            var other => throw new InvalidCastException($"OUT parameter '{countName}' holds a {other.GetType().Name}, not a number."),
+        };
+
+    /// <summary>Throws a capacity rejection when the OUT line count exceeds <see cref="InvoicingDataOptions.MaxOutputLines"/>.</summary>
+    /// <param name="parameters">Executed command parameters.</param>
+    /// <param name="countName">Name of the OUT count parameter.</param>
+    /// <param name="subject">Start of the rejection text, naming what returned the lines.</param>
+    /// <param name="paramName">Argument the rejection names.</param>
+    /// <exception cref="ArgumentException">The count exceeds the capacity; <see cref="Exception.Data"/> holds the text under <see cref="OracleFailureTranslator.BindingRejectionKey"/>.</exception>
+    private void RejectOverCapacity(OracleParameterCollection parameters, string countName, string subject, string paramName)
+    {
+        var count = OutCount(parameters, countName);
+        if (count > _options.MaxOutputLines)
+        {
+            throw CapacityRejection(
+                $"{subject} {count} lines; at most {_options.MaxOutputLines} lines can be returned ({MaxOutputLinesKey}).",
+                paramName);
+        }
+    }
+
+    /// <summary>Adds the header, line and client-id inputs shared by the preview and create blocks to the list.</summary>
+    private static void AddDraftInputs(List<OracleParameter> inputs, InvoiceHeaderDraft header, IReadOnlyList<InvoiceLineDraft> lines, OperatorContext operatorContext)
+    {
+        inputs.AddRange(HeaderInputBinder.Bind(header, operatorContext));
         inputs.AddRange(LineInputBinder.Bind(lines));
         inputs.Add(ClientIdBinder.Bind(lines));
-        return inputs;
     }
 
-    /// <summary>Runs a block on the session's connection with the given inputs and outputs; the caller reads the OUT values and disposes the command.</summary>
+    /// <summary>Builds the inputs, runs a block on the session's connection as a gateway call, tags a driver failure with its operation name, reads the outputs, and disposes every parameter and the command.</summary>
     /// <param name="session">Session whose connection and active transaction the block runs in.</param>
     /// <param name="block">Anonymous PL/SQL block text.</param>
-    /// <param name="inputs">IN parameters, each bound by name.</param>
+    /// <param name="addInputs">Adds the IN parameters, each bound by name, to the list.</param>
     /// <param name="addOutputs">Adds the OUT parameters to the command's collection.</param>
+    /// <param name="read">Reads the result from the executed command's parameters.</param>
     /// <param name="operation">Public method name stored on a failing <see cref="OracleException"/>.</param>
     /// <param name="cancellationToken">Cancels the execution.</param>
-    /// <returns>The executed command holding the OUT values.</returns>
-    private async Task<OracleCommand> ExecuteAsync(
+    /// <returns>The value <paramref name="read"/> returns.</returns>
+    /// <exception cref="ObjectDisposedException">The session is disposed.</exception>
+    /// <exception cref="InvalidOperationException">The session is already committed or rolled back.</exception>
+    private async Task<T> ExecuteAsync<T>(
         OracleSession session,
         string block,
-        IEnumerable<OracleParameter> inputs,
+        Action<List<OracleParameter>> addInputs,
         Action<OracleParameterCollection> addOutputs,
+        Func<OracleParameterCollection, T> read,
         string operation,
         CancellationToken cancellationToken)
     {
-        var command = new OracleCommand(block.Replace("\r\n", "\n", StringComparison.Ordinal), session.Connection)
-        {
-            Transaction = session.Transaction,
-            CommandType = CommandType.Text,
-            BindByName = true,
-            CommandTimeout = _options.CommandTimeoutSeconds,
-        };
-
-        var executed = false;
+        var inputs = new List<OracleParameter>();
+        OracleCommand? command = null;
         try
         {
+            addInputs(inputs);
+            session.BeginCall();
+
+            command = new OracleCommand(block.Replace("\r\n", "\n", StringComparison.Ordinal), session.Connection)
+            {
+                Transaction = session.Transaction,
+                CommandType = CommandType.Text,
+                BindByName = true,
+                CommandTimeout = _options.CommandTimeoutSeconds,
+            };
+
             foreach (var parameter in inputs)
             {
                 command.Parameters.Add(parameter);
             }
 
+            inputs.Clear();
             addOutputs(command.Parameters);
 
-            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-            executed = true;
-            return command;
-        }
-        catch (OracleException exception)
-        {
-            exception.Data[OracleErrorParser.OperationKey] = operation;
-            session.RecordFailure(exception);
-            throw;
+            try
+            {
+                await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OracleException exception)
+            {
+                exception.Data[OracleErrorParser.OperationKey] = operation;
+                session.RecordFailure(exception);
+                throw;
+            }
+
+            return read(command.Parameters);
         }
         finally
         {
-            if (!executed)
+            if (command is not null)
             {
-                command.Dispose();
+                foreach (OracleParameter parameter in command.Parameters)
+                {
+                    parameter.Dispose();
+                }
             }
+
+            foreach (var parameter in inputs)
+            {
+                if (command is null || !command.Parameters.Contains(parameter))
+                {
+                    parameter.Dispose();
+                }
+            }
+
+            command?.Dispose();
         }
     }
 
@@ -315,9 +414,6 @@ public sealed class BilInvoiceApiGateway : IBilInvoiceApiGateway
 
     /// <summary>Numeric input bound as <see cref="OracleDbType.Decimal"/>.</summary>
     private static OracleParameter Number(string name, int? value) => Input(name, OracleDbType.Decimal, value);
-
-    /// <summary>Text input bound as <see cref="OracleDbType.Varchar2"/>.</summary>
-    private static OracleParameter Text(string name, string? value) => Input(name, OracleDbType.Varchar2, value);
 
     /// <summary>Date input bound as <see cref="OracleDbType.Date"/>.</summary>
     private static OracleParameter Date(string name, DateTime value) => Input(name, OracleDbType.Date, value);
