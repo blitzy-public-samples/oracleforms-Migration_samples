@@ -10,7 +10,7 @@ using Microsoft.Data.Sqlite;
 
 namespace Billing.Invoicing.Tests.Data;
 
-/// <summary>T_INV block, T082 and T085 query predicates and the D-12 selected-row mapping of <see cref="InvoiceQueries"/> (D-26), and the D-12 approval check mode of <see cref="BilImportGateway"/>.</summary>
+/// <summary>T_INV block, T082 and T085 query predicates, the D-12 selected-row mapping (D-26) and the D-93 saved-invoice projection of <see cref="InvoiceQueries"/>, and the D-12 approval check mode of <see cref="BilImportGateway"/>.</summary>
 [Trait("Category", "DataUnit")]
 public sealed class DataContractTests
 {
@@ -41,6 +41,54 @@ public sealed class DataContractTests
 
     private const string RequestRowSeedTail = ", 'P1', NULL, 1, 'V1', 'Cash')) ";
     private const string ClaimBind = "claimNo";
+
+    private const string LineRowTypeName = "InvoiceLineRow";
+    private const string LineDraftMapperName = "ToLineDraft";
+    private const string LineDisplayMapperName = "ToLineDisplay";
+    private const string RowsMapperName = "ToRows";
+    private const string LinesSource = "D_INV";
+    private const string LinesAlias = "d";
+    private const string EmployeeSource = "EMP";
+    private const string EmployeeAlias = "e";
+    private const string SavedLinesFrom = "FROM D_INV d WHERE";
+    private const string RowIdColumn = "D_INV_ROW_ID";
+    private const string RowIdSource = LinesAlias + "." + RowIdColumn;
+    private const string RowIdAsText = "TO_CHAR(" + RowIdSource + ") AS " + RowIdColumn;
+    private const string FortyDigitRowId = "1234567890123456789012345678901234567890";
+    private const long SeededInvoiceNo = 1;
+    private const long OtherInvoiceNo = 2;
+    private const long InvoiceWithoutLinesNo = 3;
+
+    private const string HeaderRowTypeName = "InvoiceHeaderRow";
+    private const string TotalsRowTypeName = "InvoiceTotalsRow";
+    private const string DisplayMapperName = "ToDisplay";
+    private const string HeaderDraftMapperName = "ToHeaderDraft";
+    private const string InvoiceSource = "T_INV";
+    private const string InvDateColumn = "INVDATE";
+    private const string Amount1Column = "AMOUNT_1";
+    private const string Amount2Column = "AMOUNT_2";
+    private const string AmountDueColumn = "CASH_COLLECTED";
+    private const string TotalCollectedKey = "TOTAL_COLLECTED";
+    private const string TotalGrossColumn = "TOTAL_GROSS";
+    private const string TotalDiscountColumn = "TOTAL_DISCOUNT";
+    private const string TotalNetColumn = "TOTAL_NET";
+
+    private static readonly IReadOnlyDictionary<string, string> NoLiterals = new Dictionary<string, string>(StringComparer.Ordinal);
+
+    private static readonly IReadOnlyDictionary<string, string> FortyDigitLine = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        [RowIdColumn] = "'" + FortyDigitRowId + "'",
+        ["INV_NO"] = SeededInvoiceNo.ToString(CultureInfo.InvariantCulture),
+        [ServiceIdColumn] = "'S100'",
+    };
+
+    private static readonly IReadOnlyDictionary<string, string>[] TotalsLines =
+    [
+        TotalsLine(SeededInvoiceNo, "100.25", "NULL", "100.25", "0"),
+        TotalsLine(SeededInvoiceNo, "50", "5.5", "44.5", "NULL"),
+        TotalsLine(SeededInvoiceNo, "200.5", "20.25", "180.25", "1"),
+        TotalsLine(OtherInvoiceNo, "999", "9", "990", "0"),
+    ];
 
     private static readonly string[] RequestRowApprovalColumns = ["REQ_A_STATUS", "REQ_NEED_A", "APPROV_REF_NO"];
 
@@ -301,6 +349,265 @@ public sealed class DataContractTests
         Assert.Equal(
             expected.Order(StringComparer.Ordinal),
             Binds(LookupQueries.GetServiceProfilesSql).Order(StringComparer.Ordinal));
+    }
+
+    [Theory]
+    [Trait("Decision", "D-93")]
+    [InlineData(nameof(InvoiceQueries.GetInvoiceLinesSql))]
+    [InlineData(nameof(InvoiceQueries.GetMoreDetailsLinesSql))]
+    public void SavedLineRead_SelectsTheRowIdAsTextInItsNumericOrder(string statementName)
+    {
+        string squashed = Squash(Statement(statementName));
+        int fromIndex = squashed.IndexOf(Squash(SavedLinesFrom), StringComparison.Ordinal);
+
+        Assert.StartsWith("SELECT", squashed, StringComparison.Ordinal);
+        Assert.True(fromIndex > 0);
+
+        string selectList = squashed["SELECT".Length..fromIndex];
+        Assert.Contains(Squash(RowIdAsText), selectList.Split(','));
+        Assert.Single(Regex.Matches(selectList, Regex.Escape(Squash(RowIdSource)), RegexOptions.CultureInvariant));
+        Assert.EndsWith(Squash("ORDER BY " + RowIdSource), squashed, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-93")]
+    public void SavedLine_FortyDigitRowId_IsTheClientIdAndLineDisplayTextExactly()
+    {
+        Type? rowType = typeof(InvoiceQueries).GetNestedType(LineRowTypeName, BindingFlags.NonPublic);
+        MethodInfo? toDraft = typeof(InvoiceQueries).GetMethod(LineDraftMapperName, BindingFlags.NonPublic | BindingFlags.Static);
+        MethodInfo? toDisplay = typeof(InvoiceQueries).GetMethod(LineDisplayMapperName, BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(rowType);
+        Assert.NotNull(toDraft);
+        Assert.NotNull(toDisplay);
+
+        string sql = InvoiceQueries.GetInvoiceLinesSql;
+        using var connection = OpenWithToChar();
+
+        object row = Assert.Single(connection.Query(
+            rowType,
+            "WITH " + SeedSource(LinesSource, SourceColumns(sql, LinesAlias), FortyDigitLine) + " " + sql,
+            new { invNo = SeededInvoiceNo }));
+
+        var draft = Assert.IsType<InvoiceLineDraft>(
+            toDraft.Invoke(null, BindingFlags.DoNotWrapExceptions, null, [row], CultureInfo.InvariantCulture));
+        var display = Assert.IsType<Dictionary<string, object?>>(
+            toDisplay.Invoke(null, BindingFlags.DoNotWrapExceptions, null, [row], CultureInfo.InvariantCulture));
+
+        Assert.Equal(FortyDigitRowId, draft.ClientId);
+        Assert.Equal(FortyDigitRowId, Assert.IsType<string>(display[RowIdColumn]));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-93")]
+    public void MoreDetailsLine_FortyDigitRowId_IsTheRowIdTextExactly()
+    {
+        MethodInfo? toRows = typeof(InvoiceQueries).GetMethod(RowsMapperName, BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(toRows);
+
+        string sql = InvoiceQueries.GetMoreDetailsLinesSql;
+        using var connection = OpenWithToChar();
+
+        List<object> rows = connection.Query<object>(
+            "WITH " + SeedSource(LinesSource, SourceColumns(sql, LinesAlias), FortyDigitLine) + ", "
+            + SeedSource(EmployeeSource, SourceColumns(sql, EmployeeAlias), NoLiterals) + " " + sql,
+            new { invNo = SeededInvoiceNo }).AsList();
+
+        var mapped = Assert.IsAssignableFrom<IReadOnlyList<IReadOnlyDictionary<string, object?>>>(
+            toRows.Invoke(null, BindingFlags.DoNotWrapExceptions, null, [rows], CultureInfo.InvariantCulture));
+
+        Assert.Equal(FortyDigitRowId, Assert.IsType<string>(Assert.Single(mapped)[RowIdColumn]));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-93")]
+    public void InvoiceTotals_SumOnlyTheInvoicesLinesNotFlaggedDeleted()
+    {
+        Assert.Equal(((decimal?)150.25m, (decimal?)5.5m, (decimal?)144.75m), ReadInvoiceTotals(SeededInvoiceNo));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-93")]
+    public void InvoiceTotals_InvoiceWithoutLines_AreZero()
+    {
+        Assert.Equal(((decimal?)0m, (decimal?)0m, (decimal?)0m), ReadInvoiceTotals(InvoiceWithoutLinesNo));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-93")]
+    [Trait("Rule", "DR-09")]
+    public void SavedDisplay_CarriesAmountDueTotalCollectedAndTheLineTotalsAsRead()
+    {
+        Type? headerType = typeof(InvoiceQueries).GetNestedType(HeaderRowTypeName, BindingFlags.NonPublic);
+        Type? totalsType = typeof(InvoiceQueries).GetNestedType(TotalsRowTypeName, BindingFlags.NonPublic);
+        MethodInfo? toDisplay = typeof(InvoiceQueries).GetMethod(DisplayMapperName, BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(headerType);
+        Assert.NotNull(totalsType);
+        Assert.NotNull(toDisplay);
+
+        object header = NewRow(headerType);
+        SetProperty(header, Amount1Column, 60m);
+        SetProperty(header, Amount2Column, null);
+        SetProperty(header, AmountDueColumn, 100m);
+        object totals = NewRow(totalsType);
+        SetProperty(totals, TotalGrossColumn, 150.25m);
+        SetProperty(totals, TotalDiscountColumn, 5.5m);
+        SetProperty(totals, TotalNetColumn, 144.75m);
+
+        var display = Assert.IsType<Dictionary<string, object?>>(toDisplay.Invoke(
+            null,
+            BindingFlags.DoNotWrapExceptions,
+            null,
+            [header, Array.Empty<IReadOnlyDictionary<string, object?>>(), totals],
+            CultureInfo.InvariantCulture));
+
+        Assert.Equal(100m, Assert.IsType<decimal>(display[AmountDueColumn]));
+        Assert.Equal(60m, Assert.IsType<decimal>(display[TotalCollectedKey]));
+        Assert.Equal(150.25m, Assert.IsType<decimal>(display[TotalGrossColumn]));
+        Assert.Equal(5.5m, Assert.IsType<decimal>(display[TotalDiscountColumn]));
+        Assert.Equal(144.75m, Assert.IsType<decimal>(display[TotalNetColumn]));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-93")]
+    public void SavedHeader_WithoutInvDate_IsRejectedNamingTheColumn()
+    {
+        var failure = Assert.Throws<InvalidCastException>(() => MapHeaderDraft(null));
+
+        Assert.Contains(InvDateColumn, failure.Message, StringComparison.Ordinal);
+        Assert.Contains(InvoiceSource, failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-93")]
+    public void SavedHeader_WithInvDate_IsTheDraftDateAndTheInvoiceDate()
+    {
+        var invDate = new DateTime(2026, 9, 28, 10, 15, 0);
+
+        InvoiceHeaderDraft header = MapHeaderDraft(invDate);
+
+        Assert.Equal(invDate, header.DraftDate);
+        Assert.Equal(invDate, header.InvDate);
+    }
+
+    /// <summary>Maps a private InvoiceHeaderRow holding only INVDATE with the private ToHeaderDraft.</summary>
+    /// <param name="invDate">INVDATE of the row.</param>
+    /// <returns>The header draft.</returns>
+    private static InvoiceHeaderDraft MapHeaderDraft(DateTime? invDate)
+    {
+        Type? rowType = typeof(InvoiceQueries).GetNestedType(HeaderRowTypeName, BindingFlags.NonPublic);
+        MethodInfo? mapper = typeof(InvoiceQueries).GetMethod(HeaderDraftMapperName, BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(rowType);
+        Assert.NotNull(mapper);
+
+        object row = NewRow(rowType);
+        SetProperty(row, InvDateColumn, invDate);
+
+        return Assert.IsType<InvoiceHeaderDraft>(
+            mapper.Invoke(null, BindingFlags.DoNotWrapExceptions, null, [row], CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>Runs <see cref="InvoiceQueries.GetInvoiceTotalsSql"/> unchanged in SQLite over the seeded lines and reads the private InvoiceTotalsRow.</summary>
+    /// <param name="invNo">Invoice number bound to :invNo.</param>
+    /// <returns>TOTAL_GROSS, TOTAL_DISCOUNT and TOTAL_NET as read.</returns>
+    private static (decimal?, decimal?, decimal?) ReadInvoiceTotals(long invNo)
+    {
+        Type? rowType = typeof(InvoiceQueries).GetNestedType(TotalsRowTypeName, BindingFlags.NonPublic);
+        Assert.NotNull(rowType);
+
+        string sql = InvoiceQueries.GetInvoiceTotalsSql;
+        using var connection = new SqliteConnection("Data Source=:memory:");
+        connection.Open();
+
+        object row = Assert.Single(connection.Query(
+            rowType,
+            "WITH " + SeedSource(LinesSource, SourceColumns(sql, LinesAlias), TotalsLines) + " " + sql,
+            new { invNo }));
+
+        return (
+            (decimal?)PropertyValue(row, TotalGrossColumn),
+            (decimal?)PropertyValue(row, TotalDiscountColumn),
+            (decimal?)PropertyValue(row, TotalNetColumn));
+    }
+
+    /// <summary>SQL literals of one seeded D_INV line for <see cref="InvoiceQueries.GetInvoiceTotalsSql"/>.</summary>
+    private static Dictionary<string, string> TotalsLine(long invNo, string myPrice, string myDisc, string myNet, string isDeleted) =>
+        new(StringComparer.Ordinal)
+        {
+            ["INV_NO"] = invNo.ToString(CultureInfo.InvariantCulture),
+            ["MY_PRICE"] = myPrice,
+            ["MY_DISC"] = myDisc,
+            ["MY_NET"] = myNet,
+            ["IS_DELETED"] = isDeleted,
+        };
+
+    /// <summary>New instance of a private row type.</summary>
+    private static object NewRow(Type rowType)
+    {
+        object? row = Activator.CreateInstance(rowType, nonPublic: true);
+        Assert.NotNull(row);
+
+        return row;
+    }
+
+    /// <summary>Value of a row property by name.</summary>
+    private static object? PropertyValue(object row, string name)
+    {
+        PropertyInfo? property = row.GetType().GetProperty(name);
+        Assert.NotNull(property);
+
+        return property.GetValue(row);
+    }
+
+    /// <summary>Sets a row property by name.</summary>
+    private static void SetProperty(object row, string name, object? value)
+    {
+        PropertyInfo? property = row.GetType().GetProperty(name);
+        Assert.NotNull(property);
+
+        property.SetValue(row, value);
+    }
+
+    /// <summary>Text of a public SQL constant of <see cref="InvoiceQueries"/>.</summary>
+    private static string Statement(string name)
+    {
+        FieldInfo? field = typeof(InvoiceQueries).GetField(name, BindingFlags.Public | BindingFlags.Static);
+        Assert.NotNull(field);
+
+        return Assert.IsType<string>(field.GetRawConstantValue());
+    }
+
+    /// <summary>In-memory SQLite connection with an Oracle TO_CHAR shim.</summary>
+    private static SqliteConnection OpenWithToChar()
+    {
+        var connection = new SqliteConnection("Data Source=:memory:");
+        connection.Open();
+        connection.CreateFunction<object?, string?>("TO_CHAR", ToChar, isDeterministic: true);
+        return connection;
+    }
+
+    /// <summary>Oracle TO_CHAR of a value: its invariant text, null for null.</summary>
+    private static string? ToChar(object? value) =>
+        value is null or DBNull ? null : Convert.ToString(value, CultureInfo.InvariantCulture);
+
+    /// <summary>Distinct columns a statement reads through a table alias, in order of first appearance.</summary>
+    private static string[] SourceColumns(string sql, string alias) =>
+        Regex.Matches(sql, @"\b" + Regex.Escape(alias) + @"\.(\w+)", RegexOptions.CultureInvariant)
+            .Select(match => match.Groups[1].Value)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+    /// <summary>WITH-clause source over the given columns with one VALUES row per literal map, NULL for each column a map omits.</summary>
+    /// <param name="name">Source name the statement reads.</param>
+    /// <param name="columns">Every column of the source.</param>
+    /// <param name="rows">SQL literals by column, one map per row; at least one.</param>
+    private static string SeedSource(string name, IReadOnlyList<string> columns, params IReadOnlyDictionary<string, string>[] rows)
+    {
+        Assert.NotEmpty(rows);
+        Assert.All(rows.SelectMany(row => row.Keys), column => Assert.Contains(column, columns));
+
+        return name + " (" + string.Join(", ", columns) + ") AS (VALUES "
+            + string.Join(", ", rows.Select(row => "(" + string.Join(", ", columns.Select(column => row.GetValueOrDefault(column, "NULL"))) + ")"))
+            + ")";
     }
 
     /// <summary>Removes all whitespace and upper-cases invariantly.</summary>

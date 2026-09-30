@@ -490,6 +490,45 @@ export interface DraftDto {
   discountLimitChoice: DiscountLimitChoice | null;
 }
 
+/** Display-only header members never sent in a request body. */
+export type RequestOmittedHeaderMember = 'preAuthorization' | 'oferId' | 'docId1' | 'seqNo';
+
+/** Display-only line members never sent in a request body. */
+export type RequestOmittedLineMember =
+  | 'catId'
+  | 'fixPay'
+  | 'payRate'
+  | 'regularLensesType'
+  | 'lensSpecifications'
+  | 'contactLensesType'
+  | 'flIndicator'
+  | 'numberOfPairs'
+  | 'insEmp';
+
+/** Header as sent in a request body. */
+export type DraftRequestHeader = Omit<InvoiceHeaderDraft, RequestOmittedHeaderMember>;
+
+/** Line as sent in a request body. */
+export type DraftRequestLine = Omit<InvoiceLineDraft, RequestOmittedLineMember>;
+
+/** Draft as sent in a request body, without the display-only members. */
+export interface DraftRequestDto {
+  /** 32-character upper-case hexadecimal request id, kept for the life of the draft. */
+  requestId: string;
+  /** Database time read when the draft was created. */
+  draftDate: string;
+  /** Seal of the request id and draft date issued with the draft. */
+  draftSeal: string | null;
+  /** The T_INV header. */
+  header: DraftRequestHeader;
+  /** The D_INV lines in grid order; a line's zero-based position is its line index. */
+  lines: DraftRequestLine[];
+  /** The Form entry parameters. */
+  parameters: InvoiceEntryParameters;
+  /** The operator's answer to the maximum-discount alert; null when none was given. */
+  discountLimitChoice: DiscountLimitChoice | null;
+}
+
 /** Items, lines and the record accepted as validation targets. */
 export type ValidateTarget =
   | 'PATIENTNO'
@@ -516,7 +555,7 @@ export type ValidateTarget =
 /** Body of POST /api/drafts/validate. */
 export interface ValidateDraftRequest {
   /** The current draft. */
-  draft: DraftDto;
+  draft: DraftRequestDto;
   /** Upper-case legacy item name, LINE or RECORD. */
   target: ValidateTarget;
   /** Zero-based index into the draft lines for a line target; null for a header target. */
@@ -526,25 +565,25 @@ export interface ValidateDraftRequest {
 /** Body of POST /api/invoices. */
 export interface CreateInvoiceRequest {
   /** The draft to save, carrying its request id and any discount-limit choice. */
-  draft: DraftDto;
+  draft: DraftRequestDto;
 }
 
 /** Body of POST /api/imports/requests. */
 export interface ImportRequestsRequest {
   /** The current draft. */
-  draft: DraftDto;
+  draft: DraftRequestDto;
 }
 
 /** Body of POST /api/imports/visit-line. */
 export interface VisitLineRequest {
   /** The current draft. */
-  draft: DraftDto;
+  draft: DraftRequestDto;
 }
 
 /** Body of POST /api/imports/package. */
 export interface PackageImportRequest {
   /** The current draft. */
-  draft: DraftDto;
+  draft: DraftRequestDto;
   /** Service id of the package to expand (SERVICEID). */
   packageServiceId: string;
   /** Parent source id passed as p_parent_source_id; null when none. */
@@ -554,9 +593,9 @@ export interface PackageImportRequest {
 /** Body of POST /api/imports/bundled-offer. */
 export interface BundledOfferRequest {
   /** The current draft. */
-  draft: DraftDto;
-  /** Offer chosen in the OFFERS list (OFERID). */
-  offerId: number;
+  draft: DraftRequestDto;
+  /** OFERID as the exact decimal text of the OFFERS row. */
+  offerId: string;
   /** Number of bundles to load. */
   bundleQty: DecimalValue;
 }
@@ -679,7 +718,7 @@ export interface InvoiceViewResponse {
   header: InvoiceHeaderDraft;
   /** Saved invoice lines. */
   lines: InvoiceLineDraft[];
-  /** Display-only lookup names and persisted totals, keyed by upper-case column or item name. */
+  /** Display-only lookup names and persisted totals keyed by upper-case column or item name, with the saved-line totals TOTAL_GROSS, TOTAL_DISCOUNT and TOTAL_NET, CASH_COLLECTED as the amount due and TOTAL_COLLECTED as amount 1 plus amount 2. */
   display: Record<string, unknown>;
   /** Whether the invoice is read-only. */
   readOnly: boolean;

@@ -656,7 +656,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Item\|T_INV\|CASH_PAYED\|-\|93 | — | DR-08, OI-33 | `InvoiceHeaderDraft.CashPayed`; tendered cash not persisted (the engine stores `cash_collected`) |
 | Trigger\|T_INV\|CASH_PAYED\|KEY-NEXT-ITEM\|94 | T047 | N | UI mechanics: focus navigation |
 | Trigger\|T_INV\|CASH_PAYED\|WHEN-VALIDATE-ITEM\|95 | T048 | N | Empty trigger |
-| Item\|T_INV\|CASH_COLLECTED\|-\|97 | — | DR-09, DR-22 | `PreviewResponse.TotalCollected` from `PaymentAllocationRules.TotalCollected` |
+| Item\|T_INV\|CASH_COLLECTED\|-\|97 | — | DR-09, DR-22 | `PreviewResponse.TotalCollected` from `PaymentAllocationRules.TotalCollected`; `InvoiceViewResponse.Display["TOTAL_COLLECTED"]` |
 | Item\|T_INV\|DOC_NAME\|-\|98 | — | OI-15.16 | `DOC` rows of `LovResponse.Rows`; `InvoiceViewResponse.Display["DOC_NAME"]` |
 | Item\|T_INV\|CARD_NAME\|-\|99 | — | OI-15.24 | `InvoiceViewResponse.Display["CARD_NAME"]` |
 | Item\|T_INV\|DOC_NAME1\|-\|100 | — | OI-15.16, OI-33 | `InvoiceViewResponse.Display["DOC_NAME1"]`; the `DOC1` LOV is blocked |
@@ -747,7 +747,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Block\|FORM\|D_INV\|-\|375 | — | PR-14, OI-15.02 | `InvoiceLineDraft`; Web `InvoiceLinesGrid` |
 | Item\|D_INV\|INS_EMP_NAME\|-\|376 | — | OI-15.27, OI-33 | `MoreDetailsResponse.Lines` `INS_EMP_NAME`, read-only |
 | Item\|D_INV\|R_COUNT\|-\|377 | — | DR-02 | Line count passed to `InvoiceDetailRules.RequireDetails` |
-| Item\|D_INV\|S_NET\|-\|378 | — | PR-02 | `PreviewTotals.TotalNet` |
+| Item\|D_INV\|S_NET\|-\|378 | — | PR-02 | `PreviewTotals.TotalNet`; `InvoiceViewResponse.Display["TOTAL_NET"]` |
 | Item\|D_INV\|XVAT_VAL_CO\|-\|379 | — | PR-05 | `PreviewTotals.VatTotalCo` |
 | Item\|D_INV\|XVAT_VAL_PAT\|-\|380 | — | PR-05 | `PreviewTotals.VatTotalPat` |
 | Item\|D_INV\|SERV_C\|-\|381 | — | DR-02 | Line count passed to `InvoiceDetailRules.RequireDetails` |
@@ -772,8 +772,8 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Trigger\|D_INV\|FIXPAY\|WHEN-VALIDATE-ITEM\|406 | T072 | PR-04, OI-33 | Payer share inside the package; operator override not carried (OI-33) |
 | Item\|D_INV\|PAYRATE\|-\|408 | — | PR-04, OI-33 | `InvoiceLineDraft.PayRate`, display-only; operator override not carried |
 | Trigger\|D_INV\|PAYRATE\|WHEN-VALIDATE-ITEM\|409 | T073 | PR-04, OI-33 | Payer share inside the package; operator override not carried (OI-33) |
-| Item\|D_INV\|S_PRICE\|-\|411 | — | PR-01 | `PreviewTotals.TotalGross` |
-| Item\|D_INV\|S_DISC\|-\|412 | — | PR-02 | `PreviewTotals.TotalDiscount` |
+| Item\|D_INV\|S_PRICE\|-\|411 | — | PR-01 | `PreviewTotals.TotalGross`; `InvoiceViewResponse.Display["TOTAL_GROSS"]` |
+| Item\|D_INV\|S_DISC\|-\|412 | — | PR-02 | `PreviewTotals.TotalDiscount`; `InvoiceViewResponse.Display["TOTAL_DISCOUNT"]` |
 | Item\|D_INV\|XMY_NET\|-\|413 | — | PR-01, PR-02 | `EditablePreviewLine.MyNet` |
 | Item\|D_INV\|XMY_PRICE\|-\|414 | — | PR-01 | `EditablePreviewLine.MyPrice` |
 | Item\|D_INV\|CLINICNAME2\|-\|415 | — | N | UI mechanics: on no canvas and read by no trigger |
@@ -1172,7 +1172,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Billing.Invoicing.Data.Queries.LookupQueries.GetPatientCoverage | T023 `V_PAT_DATA` (DR-03) |
 | Billing.Invoicing.Data.Queries.LookupQueries.GetPreferences | T003 `PREF` (DR-14) |
 | Billing.Invoicing.Data.Queries.LookupQueries.GetRequestedServices | T052 `PAT_SERV_REQ` (DR-16) |
-| Billing.Invoicing.Data.Queries.LookupQueries.GetServiceProfile | T052, T066, T068 `SERVICES` (DR-12, DR-16, OI-32) |
+| Billing.Invoicing.Data.Queries.LookupQueries.GetServiceProfile | T052, T066, T068 `SERVICES` (DR-12, DR-16, DR-23, OI-32, D-80) |
 | Billing.Invoicing.Data.Queries.LookupQueries.GetServiceProfiles | T052, T066, T068 `SERVICES` (DR-12, DR-16, DR-23, OI-32, D-80) |
 | Billing.Invoicing.Data.Queries.LookupQueries.GetServiceQueueFlags | T029, T066 `SERVICES.ADD_TO_QUE` (DR-23) |
 | Billing.Invoicing.Data.Queries.LookupQueries.GetUserMaxDiscount | T039, T041 `USERS_TABLE.MAX_DISC` (DR-06) |

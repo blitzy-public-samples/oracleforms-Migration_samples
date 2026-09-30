@@ -116,6 +116,7 @@ public interface IInvoiceQueries
 {
     /// <summary>Saved invoice header, lines and display values keyed by column name, or null when not found.</summary>
     /// <param name="localDocType">LOCAL_DOC_TYPE entry parameter mapped to a ROW_TYPE filter; null or an unmapped value applies none.</param>
+    /// <exception cref="InvalidCastException">The saved invoice has no INVDATE, or a whole-number column holds a fractional number.</exception>
     Task<(InvoiceHeaderDraft Header, IReadOnlyList<InvoiceLineDraft> Lines, IReadOnlyDictionary<string, object?> Display)?> GetInvoice(long invNo, int? localDocType, CancellationToken cancellationToken = default);
 
     /// <summary>More-details header, line and transfer rows of a saved invoice keyed by column name, or null when not found.</summary>

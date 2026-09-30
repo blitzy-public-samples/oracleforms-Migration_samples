@@ -6,6 +6,9 @@ import type {
   CreateInvoiceResponse,
   DocumentKind,
   DraftDto,
+  DraftRequestDto,
+  DraftRequestHeader,
+  DraftRequestLine,
   ImportRequestsRequest,
   ImportResponse,
   InvoiceEntryParameters,
@@ -292,6 +295,107 @@ function withQuery(path: string, query: URLSearchParams): string {
   return text === '' ? path : `${path}?${text}`;
 }
 
+/** Header members a request body carries. */
+const draftRequestHeaderMembers: Record<keyof DraftRequestHeader, true> = {
+  patientNo: true,
+  invDate: true,
+  invTypeId: true,
+  payType: true,
+  subPayType: true,
+  subPayType2: true,
+  clinicId: true,
+  docId: true,
+  currCode: true,
+  claimNo: true,
+  claimFlag: true,
+  noteNo: true,
+  finalDiscPerc: true,
+  finalDisc: true,
+  amount1: true,
+  amount2: true,
+  addToList: true,
+  userNo: true,
+  machineN: true,
+  infoCenterId: true,
+  draftDate: true,
+  invNo: true,
+  deptWise: true,
+  call: true,
+  discT: true,
+  cashPayed: true,
+  compCode: true,
+  subCompCode: true,
+  classCode: true,
+  insNumber: true,
+  cardEnd: true,
+  patPolicyNo: true,
+};
+
+/** Line members a request body carries. */
+const draftRequestLineMembers: Record<keyof DraftRequestLine, true> = {
+  serviceId: true,
+  qty: true,
+  priceOverride: true,
+  usePriceOverride: true,
+  discountType: true,
+  disc: true,
+  myDisc: true,
+  teethNo: true,
+  toothSurface: true,
+  teethNo2: true,
+  patServReqRowId: true,
+  approvDate: true,
+  approvValidity: true,
+  approvRefNo: true,
+  claimNo: true,
+  reqNeedA: true,
+  reqAStatus: true,
+  packageServiceId: true,
+  packageInstanceId: true,
+  packageLineRole: true,
+  packageComponentOrder: true,
+  packageParentLineId: true,
+  packagePricingMethod: true,
+  packageDefinitionToken: true,
+  offerId: true,
+  offerDtlId: true,
+  offerType: true,
+  offerInstanceId: true,
+  offerLineRole: true,
+  offerParentLineId: true,
+  offerPriceApplied: true,
+  offerDisApplied: true,
+  offerNameSnapshot: true,
+  offerObjectVersionNumber: true,
+  offerDtlObjectVersionNumber: true,
+  clientId: true,
+  price: true,
+};
+
+/** New object holding the own members of `source` that `members` lists. */
+function pickMembers<T extends object>(source: T, members: Record<keyof T, true>): T {
+  const picked: Partial<T> = {};
+  for (const member of Object.keys(members) as (keyof T)[]) {
+    if (Object.hasOwn(source, member)) {
+      picked[member] = source[member];
+    }
+  }
+  return picked as T;
+}
+
+/** Request-body copy of a draft, holding only the members the Api's request contract carries. */
+function toDraftRequest(draft: DraftRequestDto): DraftRequestDto {
+  return {
+    requestId: draft.requestId,
+    draftDate: draft.draftDate,
+    draftSeal: draft.draftSeal,
+    header: pickMembers(draft.header, draftRequestHeaderMembers),
+    lines: draft.lines.map((line) => pickMembers(line, draftRequestLineMembers)),
+    parameters: draft.parameters,
+    discountLimitChoice: draft.discountLimitChoice,
+  };
+}
+
 /** GET /api/drafts/new with the entry parameters of a query string such as window.location.search. */
 export async function newDraft(search: string): Promise<NewDraftResponse> {
   const query = search === '' || search.startsWith('?') ? search : `?${search}`;
@@ -300,7 +404,8 @@ export async function newDraft(search: string): Promise<NewDraftResponse> {
 
 /** POST /api/drafts/validate: runs the item, line or record checks for one validated target. */
 export async function validateDraft(req: ValidateDraftRequest): Promise<ValidateDraftResponse> {
-  return request<ValidateDraftResponse>('POST', '/api/drafts/validate', req);
+  const body: ValidateDraftRequest = { draft: toDraftRequest(req.draft), target: req.target, lineIndex: req.lineIndex };
+  return request<ValidateDraftResponse>('POST', '/api/drafts/validate', body);
 }
 
 /** GET /api/patients/{patientNo}/coverage for the draft date and entry parameters. */
@@ -317,17 +422,19 @@ export async function getCoverage(
 
 /** POST /api/invoices/preview: package-calculated lines, totals and payment status of a draft. */
 export async function previewInvoice(draft: DraftDto): Promise<PreviewResponse> {
-  return request<PreviewResponse>('POST', '/api/invoices/preview', draft);
+  return request<PreviewResponse>('POST', '/api/invoices/preview', toDraftRequest(draft));
 }
 
 /** POST /api/invoices: saves the draft and resolves with the 201 body. */
 export async function createInvoice(req: CreateInvoiceRequest): Promise<CreateInvoiceResponse> {
-  return request<CreateInvoiceResponse>('POST', '/api/invoices', req);
+  const body: CreateInvoiceRequest = { draft: toDraftRequest(req.draft) };
+  return request<CreateInvoiceResponse>('POST', '/api/invoices', body);
 }
 
-/** GET /api/invoices/{invNo}: read-only view of a saved invoice. */
-export async function getInvoice(invNo: number): Promise<InvoiceViewResponse> {
-  return request<InvoiceViewResponse>('GET', `/api/invoices/${segment(invNo)}`);
+/** GET /api/invoices/{invNo} with the entry parameters of a query string such as window.location.search: read-only view of a saved invoice. */
+export async function getInvoice(invNo: number, search: string): Promise<InvoiceViewResponse> {
+  const query = search === '' || search.startsWith('?') ? search : `?${search}`;
+  return request<InvoiceViewResponse>('GET', `/api/invoices/${segment(invNo)}${query}`);
 }
 
 /** GET /api/invoices/last: highest invoice number of the operator's information centre. */
@@ -357,22 +464,30 @@ export async function transferStock(invNo: number): Promise<void> {
 
 /** POST /api/imports/requests: imports the visit's selected service requests as draft lines. */
 export async function importRequests(req: ImportRequestsRequest): Promise<ImportResponse> {
-  return request<ImportResponse>('POST', '/api/imports/requests', req);
+  const body: ImportRequestsRequest = { draft: toDraftRequest(req.draft) };
+  return request<ImportResponse>('POST', '/api/imports/requests', body);
 }
 
 /** POST /api/imports/visit-line: the consultation, review or fixed-service visit line. */
 export async function importVisitLine(req: VisitLineRequest): Promise<ImportResponse> {
-  return request<ImportResponse>('POST', '/api/imports/visit-line', req);
+  const body: VisitLineRequest = { draft: toDraftRequest(req.draft) };
+  return request<ImportResponse>('POST', '/api/imports/visit-line', body);
 }
 
 /** POST /api/imports/package: the component lines of a package service. */
 export async function importPackage(req: PackageImportRequest): Promise<ImportResponse> {
-  return request<ImportResponse>('POST', '/api/imports/package', req);
+  const body: PackageImportRequest = {
+    draft: toDraftRequest(req.draft),
+    packageServiceId: req.packageServiceId,
+    parentSourceId: req.parentSourceId,
+  };
+  return request<ImportResponse>('POST', '/api/imports/package', body);
 }
 
 /** POST /api/imports/bundled-offer: the lines of a bundled offer. */
 export async function importBundledOffer(req: BundledOfferRequest): Promise<ImportResponse> {
-  return request<ImportResponse>('POST', '/api/imports/bundled-offer', req);
+  const body: BundledOfferRequest = { draft: toDraftRequest(req.draft), offerId: req.offerId, bundleQty: req.bundleQty };
+  return request<ImportResponse>('POST', '/api/imports/bundled-offer', body);
 }
 
 /** GET /api/lov/{name} with the non-empty item binds; `signal` aborts the request. */

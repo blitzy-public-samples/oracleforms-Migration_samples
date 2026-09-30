@@ -2703,6 +2703,7 @@ public sealed class InvoiceWorkflowService
     {
         ServiceId = line.ServiceId,
         Qty = line.Qty,
+        DiscountType = line.ManualDiscountType,
         Disc = line.Disc,
         MyDisc = line.MyDisc,
         ReqNeedA = line.ReqNeedA,
@@ -3104,7 +3105,7 @@ public sealed class InvoiceWorkflowService
         };
     }
 
-    /// <summary>Service profiles of one workflow call, read through one batched lookup per price list and kept by list and service id.</summary>
+    /// <summary>Service profiles of one workflow call, read once per price list (a lone service through GetServiceProfile, several through GetServiceProfiles) and kept by list and service id.</summary>
     private sealed class ProfileReads
     {
         private readonly ILookupQueries _lookups;
@@ -3113,7 +3114,7 @@ public sealed class InvoiceWorkflowService
         /// <summary>Creates an empty set of reads over the lookups.</summary>
         public ProfileReads(ILookupQueries lookups) => _lookups = lookups;
 
-        /// <summary>Reads the profiles of the keys with a list and a service that are not read yet, once per list; a service not on its list reads as null.</summary>
+        /// <summary>Reads the profiles of the keys with a list and a service that are not read yet, once per list; a service not on its list, or a blank one, reads as null.</summary>
         public async Task Load(IEnumerable<(decimal? ListId, string? ServiceId)> keys, CancellationToken cancellationToken)
         {
             var listOrder = new List<decimal>();
@@ -3142,10 +3143,20 @@ public sealed class InvoiceWorkflowService
             foreach (var list in listOrder)
             {
                 var serviceIds = unreadByList[list];
-                var profiles = await _lookups.GetServiceProfiles(serviceIds, list, cancellationToken);
-                foreach (var serviceId in serviceIds)
+                if (serviceIds.Count == 1)
                 {
-                    _read[(list, serviceId)] = profiles.GetValueOrDefault(serviceId);
+                    var serviceId = serviceIds[0];
+                    _read[(list, serviceId)] = IsBlank(serviceId)
+                        ? null
+                        : await _lookups.GetServiceProfile(serviceId, list, cancellationToken);
+                }
+                else
+                {
+                    var profiles = await _lookups.GetServiceProfiles(serviceIds, list, cancellationToken);
+                    foreach (var serviceId in serviceIds)
+                    {
+                        _read[(list, serviceId)] = profiles.GetValueOrDefault(serviceId);
+                    }
                 }
             }
         }

@@ -5,6 +5,7 @@ using System.Runtime.CompilerServices;
 using Billing.Invoicing.Data.Oracle;
 using Billing.Invoicing.Data.Ports;
 using Billing.Invoicing.Domain.Model;
+using Billing.Invoicing.Domain.Rules;
 using Dapper;
 
 namespace Billing.Invoicing.Data.Queries;
@@ -39,9 +40,9 @@ public sealed class InvoiceQueries : IInvoiceQueries
         + "WHERE (t.INVTYPEID <> 8 and t.INVTYPEID <> 9) and t.PHARMACY_INV_NO is null AND t.INV_NO = :invNo AND (:rowType IS NULL OR t.ROW_TYPE = :rowType) "
         + "ORDER BY t.INV_NO";
 
-    /// <summary>Lines of a saved invoice in D_INV_ROW_ID order; binds :invNo.</summary>
+    /// <summary>Lines of a saved invoice in D_INV_ROW_ID order, the row id returned as text; binds :invNo.</summary>
     public const string GetInvoiceLinesSql =
-        "SELECT d.D_INV_ROW_ID, d.SERVICEID, d.SERVICEDESC, d.CATID, d.XCAT_NAMEX, d.PRICE, d.QTY, d.DISC, d.MY_DISC, d.FIXPAY, d.PAYRATE, "
+        "SELECT TO_CHAR(d.D_INV_ROW_ID) AS D_INV_ROW_ID, d.SERVICEID, d.SERVICEDESC, d.CATID, d.XCAT_NAMEX, d.PRICE, d.QTY, d.DISC, d.MY_DISC, d.FIXPAY, d.PAYRATE, "
         + "d.TEETH_NO, d.TOOTH_SURFACE, d.TEETH_NO2, d.PAT_SERV_REQ_ROW_ID, d.APPROV_DATE, d.APPROV_VALIDITY, d.APPROV_REF_NO, "
         + "d.CLAIM_NO, d.REQ_NEED_A, d.REQ_A_STATUS, d.LIST_ID, d.CURR_CODE, d.MY_PRICE, d.MY_NET, d.THE_PAY, d.THE_COMP, d.THE_FIX, d.THE_RATE, "
         + "d.VAT_RATE, d.VAT_VAL_CO, d.VAT_VAL_PAT, d.VAT_VAL_PAT_EX, d.REGULAR_LENSES_TYPE, d.LENS_SPECIFICATIONS, d.CONTACT_LENSES_TYPE, "
@@ -51,14 +52,20 @@ public sealed class InvoiceQueries : IInvoiceQueries
         + "d.OFFER_DIS_APPLIED, d.OFFER_NAME_SNAPSHOT, d.OFFER_OBJECT_VERSION_NUMBER, d.OFFER_DTL_OBJECT_VERSION_NUMBER "
         + "FROM D_INV d WHERE d.INV_NO = :invNo ORDER BY d.D_INV_ROW_ID";
 
+    /// <summary>Gross, discount and net totals of a saved invoice's lines that are not flagged deleted, each 0 when none; binds :invNo.</summary>
+    public const string GetInvoiceTotalsSql =
+        "SELECT COALESCE(SUM(COALESCE(d.MY_PRICE, 0)), 0) AS TOTAL_GROSS, COALESCE(SUM(COALESCE(d.MY_DISC, 0)), 0) AS TOTAL_DISCOUNT, "
+        + "COALESCE(SUM(COALESCE(d.MY_NET, 0)), 0) AS TOTAL_NET "
+        + "FROM D_INV d WHERE d.INV_NO = :invNo AND COALESCE(d.IS_DELETED, 0) = 0";
+
     /// <summary>More-details insurance header of a saved invoice; binds :invNo.</summary>
     public const string GetMoreDetailsSql =
         "SELECT t.INV_NO, t.INS_NUMBER, t.CARD_END, t.PAT_POLICY_NO FROM T_INV t "
         + "WHERE (t.INVTYPEID <> 8 and t.INVTYPEID <> 9) and t.PHARMACY_INV_NO is null AND t.INV_NO = :invNo";
 
-    /// <summary>More-details dental, lens, approval and insurance-employee fields of each saved line in D_INV_ROW_ID order; binds :invNo.</summary>
+    /// <summary>More-details dental, lens, approval and insurance-employee fields of each saved line in D_INV_ROW_ID order, the row id returned as text; binds :invNo.</summary>
     public const string GetMoreDetailsLinesSql =
-        "SELECT d.D_INV_ROW_ID, d.SERVICEID, d.TEETH_NO, d.TOOTH_SURFACE, d.REGULAR_LENSES_TYPE, d.LENS_SPECIFICATIONS, d.CONTACT_LENSES_TYPE, "
+        "SELECT TO_CHAR(d.D_INV_ROW_ID) AS D_INV_ROW_ID, d.SERVICEID, d.TEETH_NO, d.TOOTH_SURFACE, d.REGULAR_LENSES_TYPE, d.LENS_SPECIFICATIONS, d.CONTACT_LENSES_TYPE, "
         + "d.F_L_INDICATOR, d.NUMBER_OF_PAIRS, d.APPROV_DATE, d.APPROV_VALIDITY, d.APPROV_REF_NO, d.REQ_NEED_A, d.REQ_A_STATUS, d.INS_EMP, "
         + "(SELECT CASE WHEN COUNT(*) = 1 THEN MAX(e.EMP_NAME_EN) END FROM EMP e WHERE e.EMP_ID = d.INS_EMP) AS INS_EMP_NAME "
         + "FROM D_INV d WHERE d.INV_NO = :invNo ORDER BY d.D_INV_ROW_ID";
@@ -96,7 +103,7 @@ public sealed class InvoiceQueries : IInvoiceQueries
     private const string LineDisplayKey = "LINE_DISPLAY";
     private const string OfferNameKey = "OFFER_NAME";
     private const string PreAuthorizationKey = "PRE_AUTHORIZATION";
-    private const string NumberTextFormat = "0.############################";
+    private const string TotalCollectedKey = "TOTAL_COLLECTED";
 
     private readonly InvoicingDataOptions _options;
 
@@ -117,6 +124,7 @@ public sealed class InvoiceQueries : IInvoiceQueries
     /// <param name="localDocType">LOCAL_DOC_TYPE entry parameter: 532 or 505 filters ROW_TYPE 1, 783 filters ROW_TYPE 2, any other value or null applies no filter.</param>
     /// <param name="cancellationToken">Cancels the connection open and the reads.</param>
     /// <returns>The header, the lines in D_INV_ROW_ID order and the display values, or null.</returns>
+    /// <exception cref="InvalidCastException">The saved invoice has no INVDATE, or a whole-number column holds a fractional number.</exception>
     public async Task<(InvoiceHeaderDraft Header, IReadOnlyList<InvoiceLineDraft> Lines, IReadOnlyDictionary<string, object?> Display)?> GetInvoice(
         long invNo,
         int? localDocType,
@@ -210,7 +218,7 @@ public sealed class InvoiceQueries : IInvoiceQueries
         return await ReadCreateRequest(connection, requestId, _options.CommandTimeoutSeconds, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>Reads a saved invoice header, then its lines when the header exists.</summary>
+    /// <summary>Reads a saved invoice header, then its lines and line totals when the header exists.</summary>
     private static async Task<(InvoiceHeaderDraft Header, IReadOnlyList<InvoiceLineDraft> Lines, IReadOnlyDictionary<string, object?> Display)?> ReadInvoice(
         DbConnection connection,
         long invNo,
@@ -230,6 +238,8 @@ public sealed class InvoiceQueries : IInvoiceQueries
 
         var lines = (await connection.QueryAsync<InvoiceLineRow>(
             Command(GetInvoiceLinesSql, InvoiceNumberParameters(invNo), commandTimeoutSeconds, cancellationToken)).ConfigureAwait(false)).AsList();
+        var totals = await connection.QuerySingleAsync<InvoiceTotalsRow>(
+            Command(GetInvoiceTotalsSql, InvoiceNumberParameters(invNo), commandTimeoutSeconds, cancellationToken)).ConfigureAwait(false);
 
         var drafts = new InvoiceLineDraft[lines.Count];
         var lineDisplay = new IReadOnlyDictionary<string, object?>[lines.Count];
@@ -239,7 +249,7 @@ public sealed class InvoiceQueries : IInvoiceQueries
             lineDisplay[index] = ToLineDisplay(lines[index]);
         }
 
-        return (ToHeaderDraft(header), drafts, ToDisplay(header, lineDisplay));
+        return (ToHeaderDraft(header), drafts, ToDisplay(header, lineDisplay, totals));
     }
 
     /// <summary>Reads the more-details header row, then the line and transfer rows when the header exists.</summary>
@@ -383,6 +393,7 @@ public sealed class InvoiceQueries : IInvoiceQueries
     };
 
     /// <summary>Header draft of a saved invoice row; the pre-authorisation and header offer stay null.</summary>
+    /// <exception cref="InvalidCastException">INVDATE is null, or a whole-number column holds a fractional number.</exception>
     private static InvoiceHeaderDraft ToHeaderDraft(InvoiceHeaderRow row) => new()
     {
         PatientNo = row.PATIENTNO,
@@ -405,7 +416,7 @@ public sealed class InvoiceQueries : IInvoiceQueries
         UserNo = ToInt32(row.USER_NO),
         MachineN = row.MACHINE_N,
         InfoCenterId = row.INFO_CENTER_ID,
-        DraftDate = row.INVDATE.GetValueOrDefault(),
+        DraftDate = row.INVDATE ?? throw new InvalidCastException("Column INVDATE of T_INV holds null."),
         InvNo = ToInt64(row.INV_NO),
         DeptWise = ToInt32(row.DEPT_WISE),
         Call = ToInt32(row.CALL),
@@ -452,7 +463,7 @@ public sealed class InvoiceQueries : IInvoiceQueries
         OfferNameSnapshot = row.OFFER_NAME_SNAPSHOT,
         OfferObjectVersionNumber = ToInt64(row.OFFER_OBJECT_VERSION_NUMBER),
         OfferDtlObjectVersionNumber = ToInt64(row.OFFER_DTL_OBJECT_VERSION_NUMBER),
-        ClientId = ToText(row.D_INV_ROW_ID),
+        ClientId = row.D_INV_ROW_ID,
         Price = row.PRICE,
         CatId = ToInt32(row.CATID),
         FixPay = row.FIXPAY,
@@ -465,7 +476,7 @@ public sealed class InvoiceQueries : IInvoiceQueries
         InsEmp = ToInt32(row.INS_EMP),
     };
 
-    /// <summary>Display values of a saved line: row id, description, category name, currency, price list, amounts, shares and VAT as read.</summary>
+    /// <summary>Display values of a saved line: row id as text, description, category name, currency, price list, amounts, shares and VAT as read.</summary>
     private static Dictionary<string, object?> ToLineDisplay(InvoiceLineRow row) => new(StringComparer.OrdinalIgnoreCase)
     {
         [nameof(InvoiceLineRow.D_INV_ROW_ID)] = row.D_INV_ROW_ID,
@@ -485,8 +496,11 @@ public sealed class InvoiceQueries : IInvoiceQueries
         [nameof(InvoiceLineRow.VAT_VAL_PAT_EX)] = row.VAT_VAL_PAT_EX,
     };
 
-    /// <summary>Display values of a saved invoice: the lookups, OFFER_NAME as null, the persisted display columns, PRE_AUTHORIZATION and LINE_DISPLAY.</summary>
-    private static Dictionary<string, object?> ToDisplay(InvoiceHeaderRow row, IReadOnlyList<IReadOnlyDictionary<string, object?>> lineDisplay) =>
+    /// <summary>Display values of a saved invoice: the lookups, OFFER_NAME as null, the persisted display columns with CASH_COLLECTED as the amount due, TOTAL_COLLECTED as amount 1 plus amount 2, the line totals as read, PRE_AUTHORIZATION and LINE_DISPLAY.</summary>
+    private static Dictionary<string, object?> ToDisplay(
+        InvoiceHeaderRow row,
+        IReadOnlyList<IReadOnlyDictionary<string, object?>> lineDisplay,
+        InvoiceTotalsRow totals) =>
         new(StringComparer.OrdinalIgnoreCase)
         {
             [nameof(InvoiceHeaderRow.USER_NAME_TO_SHOW)] = row.USER_NAME_TO_SHOW,
@@ -518,12 +532,16 @@ public sealed class InvoiceQueries : IInvoiceQueries
             [nameof(InvoiceHeaderRow.VAT_TOTAL_CO)] = row.VAT_TOTAL_CO,
             [nameof(InvoiceHeaderRow.VAT_TOTAL)] = row.VAT_TOTAL,
             [nameof(InvoiceHeaderRow.CASH_COLLECTED)] = row.CASH_COLLECTED,
+            [TotalCollectedKey] = PaymentAllocationRules.TotalCollected(row.AMOUNT_1, row.AMOUNT_2),
             [nameof(InvoiceHeaderRow.REUND)] = row.REUND,
             [nameof(InvoiceHeaderRow.MAX_DEDUCTABLE)] = row.MAX_DEDUCTABLE,
             [nameof(InvoiceHeaderRow.RESERV_THE_TIME)] = row.RESERV_THE_TIME,
             [nameof(InvoiceHeaderRow.INS_NUMBER)] = row.INS_NUMBER,
             [nameof(InvoiceHeaderRow.CARD_END)] = row.CARD_END,
             [nameof(InvoiceHeaderRow.PAT_POLICY_NO)] = row.PAT_POLICY_NO,
+            [nameof(InvoiceTotalsRow.TOTAL_GROSS)] = totals.TOTAL_GROSS,
+            [nameof(InvoiceTotalsRow.TOTAL_DISCOUNT)] = totals.TOTAL_DISCOUNT,
+            [nameof(InvoiceTotalsRow.TOTAL_NET)] = totals.TOTAL_NET,
             [PreAuthorizationKey] = row.PRE_AUTHORIZATION,
             [LineDisplayKey] = lineDisplay,
         };
@@ -572,9 +590,6 @@ public sealed class InvoiceQueries : IInvoiceQueries
     /// <summary>Column maps of Dapper rows, in order.</summary>
     private static IReadOnlyList<IReadOnlyDictionary<string, object?>> ToRows(IEnumerable<object> dapperRows) =>
         dapperRows.Select(IReadOnlyDictionary<string, object?> (row) => ToRow(row)).ToArray();
-
-    /// <summary>Invariant text of a number without trailing zeros, or null.</summary>
-    private static string? ToText(decimal? value) => value?.ToString(NumberTextFormat, CultureInfo.InvariantCulture);
 
     /// <summary>Checked conversion of an integral NUMBER to Int32, or null.</summary>
     /// <exception cref="InvalidCastException">The value has a fractional part.</exception>
@@ -674,7 +689,7 @@ public sealed class InvoiceQueries : IInvoiceQueries
     /// <summary>Row of <see cref="GetInvoiceLinesSql"/>.</summary>
     private sealed class InvoiceLineRow
     {
-        public decimal? D_INV_ROW_ID { get; set; }
+        public string? D_INV_ROW_ID { get; set; }
         public string? SERVICEID { get; set; }
         public string? SERVICEDESC { get; set; }
         public decimal? CATID { get; set; }
@@ -730,6 +745,14 @@ public sealed class InvoiceQueries : IInvoiceQueries
         public string? OFFER_NAME_SNAPSHOT { get; set; }
         public decimal? OFFER_OBJECT_VERSION_NUMBER { get; set; }
         public decimal? OFFER_DTL_OBJECT_VERSION_NUMBER { get; set; }
+    }
+
+    /// <summary>Row of <see cref="GetInvoiceTotalsSql"/>.</summary>
+    private sealed class InvoiceTotalsRow
+    {
+        public decimal? TOTAL_GROSS { get; set; }
+        public decimal? TOTAL_DISCOUNT { get; set; }
+        public decimal? TOTAL_NET { get; set; }
     }
 
     /// <summary>Row of <see cref="GetSelectedRequestRowsSql"/>.</summary>

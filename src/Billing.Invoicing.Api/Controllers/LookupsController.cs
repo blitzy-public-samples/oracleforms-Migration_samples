@@ -20,6 +20,8 @@ public sealed class LookupsController : ControllerBase
     private const string PatientNoItem = "PATIENTNO";
     private const string PayTypeItem = "PAYTYPE";
     private const string LovNotFoundText = "List of values not found.";
+    private const string OffersLov = "OFFERS";
+    private const string OferIdColumn = "OFERID";
 
     /// <summary>Operator-context headers named when the request carries no operator context.</summary>
     private static readonly string[] OperatorHeaders =
@@ -54,7 +56,7 @@ public sealed class LookupsController : ControllerBase
     /// <param name="patientNo">Draft patient number, bound as <c>PATIENTNO</c>.</param>
     /// <param name="payType">Draft pay type, bound as <c>PAYTYPE</c>.</param>
     /// <param name="draftDate">Draft date, bound as <c>INVDATE</c>.</param>
-    /// <returns>200 with the rows, 404 <c>not-found</c> for an unknown LOV, or 422 naming a missing or overlong item or a missing operator header.</returns>
+    /// <returns>200 with the rows, each <c>OFFERS</c> row's <c>OFERID</c> as decimal text; 404 <c>not-found</c> for an unknown LOV; or 422 naming a missing or overlong item or a missing operator header.</returns>
     [HttpGet("lov/{name}")]
     [ProducesResponseType<LovResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound, ProblemJson)]
@@ -97,7 +99,7 @@ public sealed class LookupsController : ControllerBase
             return await Rejected(response.Messages, [], null);
         }
 
-        return Ok(response);
+        return Ok(WithOfferIdText(response));
     }
 
     /// <summary>Returns the invoice-type list items.</summary>
@@ -131,6 +133,33 @@ public sealed class LookupsController : ControllerBase
     {
         await _problems.WriteAsync(HttpContext, OperatorHeaders);
         return new EmptyResult();
+    }
+
+    /// <summary>Returns the <c>OFFERS</c> list with each row's <c>OFERID</c> as invariant decimal text; any other list unchanged.</summary>
+    /// <param name="response">Rows of the requested list.</param>
+    /// <returns>A copy of an <c>OFFERS</c> response with new rows, or <paramref name="response"/> itself.</returns>
+    private static LovResponse WithOfferIdText(LovResponse response)
+    {
+        if (!string.Equals(response.Name, OffersLov, StringComparison.Ordinal))
+        {
+            return response;
+        }
+
+        var rows = new List<IReadOnlyDictionary<string, object?>>(response.Rows.Count);
+        foreach (var row in response.Rows)
+        {
+            var copy = new Dictionary<string, object?>(row.Count, StringComparer.OrdinalIgnoreCase);
+            foreach (var (column, value) in row)
+            {
+                copy[column] = string.Equals(column, OferIdColumn, StringComparison.OrdinalIgnoreCase) && value is not null
+                    ? Convert.ToString(value, CultureInfo.InvariantCulture)
+                    : value;
+            }
+
+            rows.Add(copy);
+        }
+
+        return response with { Rows = rows };
     }
 
     /// <summary>Returns whether any message is blocking.</summary>

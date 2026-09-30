@@ -660,6 +660,7 @@ public static class FakeOracleFailures
     private const string PreviewProcedure = "BIL_INVOICE_API.CALCULATE_PREVIEW";
     private const string PreviewOperation = "CalculatePreview";
     private const string EngineFrameName = "HIS.BIL_INVOICE_ENGINE";
+    private const string ApiFrameName = "HIS.BIL_INVOICE_API";
 
     private static readonly ConstructorInfo? OracleExceptionConstructor = typeof(OracleException).GetConstructor(
         BindingFlags.Instance | BindingFlags.NonPublic,
@@ -675,6 +676,11 @@ public static class FakeOracleFailures
     public static OracleException DiscountRefused() =>
         PreviewRefusal(20906, "Invoice create failed: discount percent cannot be negative on line 1.", 575);
 
+    /// <summary>Returns the preview's BIL_INVOICE_API -20978 refusal of a bundled-offer component that does not match its offer definition.</summary>
+    public static OracleException BundledOfferRowsInvalid() =>
+        PreviewRefusal(
+            20978, "Bundled Offer invoice rows are invalid. Component evidence does not match the current offer definition.", ApiFrameName, 442);
+
     /// <summary>Returns the ORA-12541 connectivity failure of a lookup.</summary>
     public static OracleException NoListener() => Driver(12541, "ORA-12541: TNS:no listener", string.Empty);
 
@@ -682,11 +688,14 @@ public static class FakeOracleFailures
     public static OracleException LookupApplicationError() =>
         Driver(20001, "ORA-20001: Lookup refused by a database trigger.\nORA-06512: at \"HIS.SERVICES_GUARD\", line 7", string.Empty);
 
-    private static OracleException PreviewRefusal(int number, string text, int engineLine)
+    private static OracleException PreviewRefusal(int number, string text, int engineLine) =>
+        PreviewRefusal(number, text, EngineFrameName, engineLine);
+
+    private static OracleException PreviewRefusal(int number, string text, string frameName, int frameLine)
     {
         var failure = Driver(
             number,
-            string.Create(CultureInfo.InvariantCulture, $"ORA-{number}: {text}\nORA-06512: at \"{EngineFrameName}\", line {engineLine}"),
+            string.Create(CultureInfo.InvariantCulture, $"ORA-{number}: {text}\nORA-06512: at \"{frameName}\", line {frameLine}"),
             PreviewProcedure);
         failure.Data[OracleErrorParser.OperationKey] = PreviewOperation;
         return failure;

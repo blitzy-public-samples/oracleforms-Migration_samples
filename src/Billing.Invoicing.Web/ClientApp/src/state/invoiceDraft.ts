@@ -728,13 +728,12 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
       if (state.draft !== null && !state.readOnly) {
         const merged = applyAdjusted(state.draft, state.display, response.adjusted, lineIndex);
         next = { ...next, draft: merged.draft, display: merged.display };
-        const judged = action.lineIndex !== null ? state.draft.lines[action.lineIndex] : undefined;
-        if (response.priceEditable != null && judged != null && judged.clientId != null && judged.clientId !== '') {
+        if (response.priceEditable != null && lineClientId !== null && lineIndex !== null) {
           next = {
             ...next,
             priceEditable: {
               ...state.priceEditable,
-              [judged.clientId]: {
+              [lineClientId]: {
                 serviceId: response.priceJudgedServiceId ?? null,
                 patientNo: response.priceJudgedPatientNo ?? null,
                 compCode: response.priceJudgedCompCode ?? null,

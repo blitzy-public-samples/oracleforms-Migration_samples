@@ -4,6 +4,7 @@ import {
   ApiError,
   buildDocument,
   createInvoice,
+  getCoverage,
   getInvoice,
   getLastInvoiceNo,
   importBundledOffer,
@@ -17,6 +18,7 @@ import {
 } from '../api/client';
 import type {
   DocumentKind,
+  DraftDto,
   ImportResponse,
   ImportResultRow,
   InvoiceLineDraft,
@@ -160,6 +162,16 @@ function rowValue(row: Record<string, unknown>, column: string): unknown {
   }
   const key = Object.keys(row).find((candidate) => candidate.toUpperCase() === column);
   return key === undefined ? undefined : row[key];
+}
+
+/** OFERID of an OFFERS row as decimal text: its trimmed text, or a safe integer's digits; null when blank or not exact. */
+function offerIdText(row: Record<string, unknown>): string | null {
+  const value = rowValue(row, 'OFERID');
+  if (typeof value === 'string') {
+    const text = value.trim();
+    return text === '' ? null : text;
+  }
+  return typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : null;
 }
 
 /** Oracle error number in `ORA-nnnnn` form. */
@@ -308,7 +320,25 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
     }
   }
 
-  /** POST /api/drafts/validate for one target, with a PATIENTNO target's coverage, then the visit line or preview it leads to. */
+  /** GET /api/patients/{patientNo}/coverage for the draft's patient number as entered; a blank number or a failed read stores no coverage; resolves false when Oracle is unavailable. */
+  async function readCoverage(draft: DraftDto, origin: RequestOrigin): Promise<boolean> {
+    const patientNo = draft.header.patientNo;
+    if (patientNo == null || patientNo.trim() === '') {
+      dispatch({ type: 'coverageApplied', response: null, origin });
+      return true;
+    }
+    try {
+      const response = await getCoverage(patientNo, draft.draftDate, draft.parameters);
+      dispatch({ type: 'coverageApplied', response, origin });
+      return true;
+    } catch (error) {
+      dispatch({ type: 'coverageApplied', response: null, origin });
+      handleError(error, 'COVERAGE', origin);
+      return !(error instanceof ApiError && (error.status === 503 || error.type === 'oracle-unavailable'));
+    }
+  }
+
+  /** POST /api/drafts/validate for one target, after the coverage GET for a PATIENTNO target (none when that GET finds Oracle unavailable), then the visit line or preview it leads to. */
   async function validate(target: ValidateTarget, lineIndex: number | null): Promise<void> {
     const current = latest.current;
     const draft = current.draft;
@@ -317,11 +347,14 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
     }
     const lineClientId = lineIndex === null ? null : (draft.lines[lineIndex]?.clientId ?? null);
     const origin = requestOrigin(draft, target === 'PATIENTNO');
+    if (target === 'PATIENTNO') {
+      const reachable = await readCoverage(draft, origin);
+      if (!reachable || isSuperseded(latest.current, origin)) {
+        return;
+      }
+    }
     try {
       const response = await validateDraft({ draft, target, lineIndex });
-      if (target === 'PATIENTNO') {
-        dispatch({ type: 'coverageApplied', response: response.coverage ?? null, origin });
-      }
       dispatch({ type: 'validationApplied', target, lineIndex, lineClientId, response, origin });
       if (isSuperseded(latest.current, origin)) {
         return;
@@ -338,9 +371,6 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
       }
     } catch (error) {
       if (isFieldValidation(error)) {
-        if (target === 'PATIENTNO') {
-          dispatch({ type: 'coverageApplied', response: null, origin });
-        }
         dispatch({ type: 'validationFailed', target, lineIndex, lineClientId, error, origin });
         return;
       }
@@ -348,7 +378,7 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
     }
   }
 
-  /** Clears the previous patient's context, then queues the PATIENTNO validation, which also returns the new patient's coverage. */
+  /** Clears the previous patient's context, then queues the PATIENTNO step: the new patient's coverage GET, then its validation. */
   async function patientChanged(): Promise<void> {
     const current = latest.current;
     const draft = current.draft;
@@ -412,7 +442,7 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
       return;
     }
     try {
-      const view = await getInvoice(invNo);
+      const view = await getInvoice(invNo, window.location.search);
       dispatch({ type: 'invoiceLoaded', invNo, response: view, origin });
     } catch (error) {
       handleError(error, 'SAVED', origin);
@@ -509,10 +539,23 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
       return;
     }
     const origin = requestOrigin(draft, true);
+    const offerId = offerIdText(row);
+    if (offerId === null) {
+      const text = 'Offer id must be a positive whole number.';
+      const error = new ApiError({
+        status: 422,
+        type: 'field-validation',
+        title: 'Validation failed',
+        message: text,
+        messages: [{ field: 'OFERID', text, severity: 'Blocking', rule: null }],
+      });
+      dispatch({ type: 'validationFailed', target: IMPORT_SOURCE, lineIndex: null, error, origin });
+      return;
+    }
     try {
       const response = await importBundledOffer({
         draft,
-        offerId: Number(rowValue(row, 'OFERID')),
+        offerId,
         bundleQty: quantity.text,
       });
       dispatch({ type: 'linesImported', source: IMPORT_SOURCE, response, origin });
@@ -578,10 +621,6 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
       const value: unknown = response?.invNo;
       invNo = typeof value === 'number' && Number.isFinite(value) ? value : null;
     } catch (error) {
-      if (error instanceof ApiError && error.status === 404) {
-        dispatch({ type: 'connectivityRestored' });
-        return;
-      }
       handleError(error, 'SAVED');
       return;
     }
@@ -590,7 +629,7 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
       return;
     }
     try {
-      const view = await getInvoice(invNo);
+      const view = await getInvoice(invNo, window.location.search);
       dispatch({ type: 'invoiceLoaded', invNo, response: view });
     } catch (error) {
       handleError(error, 'SAVED');

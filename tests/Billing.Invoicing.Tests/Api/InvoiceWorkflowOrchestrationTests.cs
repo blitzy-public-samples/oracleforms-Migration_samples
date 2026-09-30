@@ -41,6 +41,8 @@ public sealed class InvoiceWorkflowOrchestrationTests
     private const string LineField = "LINE";
     private const int BundledOfferType = 0;
     private const int BundledOfferId = 7;
+    private const string OfferInstance = "OFR-1";
+    private const string NoManualDiscount = "N";
     private const string DraftSealText = "Draft date does not match the date issued with this draft; start a new draft.";
     private const string CreateRequestEntry = $"{nameof(IInvoiceQueries)}.{nameof(IInvoiceQueries.GetCreateRequest)}";
     private const string SessionCommitEntry = $"{nameof(IOracleSession)}.{CommitEvent}";
@@ -70,6 +72,7 @@ public sealed class InvoiceWorkflowOrchestrationTests
     private const string SecondService = "S2";
     private const string ThirdService = "S3";
     private const string UnrequestedService = "S9";
+    private const string UnlistedService = "S7";
     private const string PaddedLowerCaseOrdinaryService = " s1 ";
     private const string SecondPackageService = "PKG2";
     private const string FirstPackageInstance = "PKGI-A";
@@ -679,6 +682,54 @@ public sealed class InvoiceWorkflowOrchestrationTests
         Assert.Equal(77m, packageCall.Arg<decimal>());
         Assert.Contains(PreviewedLines(fakes), lines => lines.Any(line => line.ServiceId == OrdinaryService));
         Assert.DoesNotContain(PreviewedLines(fakes), lines => lines.Any(IsPackageParent));
+    }
+
+    [Fact]
+    [Trait("Rule", "PR-17")]
+    public async Task ImportBundledOffer_ComponentLines_KeepPackageDiscountTypeThroughPreviewAndCreate()
+    {
+        var cash = await CashDraft();
+        var fakes = Arrange(cash);
+        var components = new[] { OfferComponent(FirstComponent, 71L, 40m), OfferComponent(SecondComponent, 72L, 60m) };
+        var clientIds = components.Select(component => component.ClientId).ToArray();
+        fakes.InvoiceApi.BundledOfferLines = (_, _, _) => components;
+        fakes.InvoiceApi.PreviewFailure = RefuseAlteredOfferComponent;
+        var service = fakes.CreateService();
+
+        var imported = await service.ImportBundledOffer(new BundledOfferRequest { Draft = cash }, Operator);
+
+        Assert.Equal(clientIds, imported.Lines.Select(line => line.ClientId));
+        Assert.All(imported.Lines, AssertUnalteredOfferComponent);
+        foreach (var (component, line) in components.Zip(imported.Lines))
+        {
+            Assert.Equal(component.ServiceId, line.ServiceId);
+            Assert.Equal(component.Qty, line.Qty);
+            Assert.Equal(component.Price, line.Price);
+            Assert.Equal(component.OfferId, line.OfferId);
+            Assert.Equal(component.OfferDtlId, line.OfferDtlId);
+            Assert.Equal(component.OfferType, line.OfferType);
+            Assert.Equal(component.OfferInstanceId, line.OfferInstanceId);
+            Assert.Equal(component.OfferLineRole, line.OfferLineRole);
+            Assert.Equal(component.OfferParentLineId, line.OfferParentLineId);
+            Assert.Equal(component.OfferPriceApplied, line.OfferPriceApplied);
+            Assert.Equal(component.OfferDisApplied, line.OfferDisApplied);
+            Assert.Equal(component.OfferNameSnapshot, line.OfferNameSnapshot);
+            Assert.Equal(component.OfferObjectVersionNumber, line.OfferObjectVersionNumber);
+            Assert.Equal(component.OfferDtlObjectVersionNumber, line.OfferDtlObjectVersionNumber);
+        }
+
+        var draft = cash with { Lines = cash.Lines.Concat(imported.Lines).ToArray() };
+        var preview = await service.Preview(draft, Operator);
+        var created = await service.Create(CreateRequest(draft), Operator);
+
+        Assert.DoesNotContain(preview.Messages, IsBlocking);
+        Assert.DoesNotContain(created.Messages, IsBlocking);
+        Assert.Equal(1, CreateCalls(fakes));
+        Assert.Contains(PreviewedLines(fakes), lines => clientIds.All(clientId => lines.Any(line => line.ClientId == clientId)));
+        Assert.All(PreviewedLines(fakes).SelectMany(lines => lines).Where(line => clientIds.Contains(line.ClientId)), AssertUnalteredOfferComponent);
+        var createdComponents = CreateCall(fakes).Arg<IReadOnlyList<InvoiceLineDraft>>().Where(line => clientIds.Contains(line.ClientId)).ToArray();
+        Assert.Equal(clientIds, createdComponents.Select(line => line.ClientId));
+        Assert.All(createdComponents, AssertUnalteredOfferComponent);
     }
 
     [Fact]
@@ -1987,7 +2038,7 @@ public sealed class InvoiceWorkflowOrchestrationTests
 
         Assert.DoesNotContain(response.Messages, IsBlocking);
         Assert.Contains(PreviewedLines(fakes), lines => lines.Any(line => line.PriceOverride == OverriddenPrice));
-        Assert.False(Called(fakes.Lookups.Calls, nameof(ILookupQueries.GetServiceProfile)));
+        Assert.False(Called(fakes.Lookups.Calls, nameof(ILookupQueries.GetServiceProfiles)));
         var reads = ProfileReadKeys(fakes);
         Assert.Equal(reads.Distinct().ToArray(), reads);
         Assert.Equal(new[] { OrdinaryService, SecondService }, ServicesReadOn(reads, DefaultListId));
@@ -2017,6 +2068,77 @@ public sealed class InvoiceWorkflowOrchestrationTests
         Assert.Equal(2, ProfileReadCalls(fakes).Length);
         Assert.Equal(new[] { OrdinaryService, ThirdService }, ServicesReadOn(reads, DefaultListId));
         Assert.Equal(new[] { SecondService }, ServicesReadOn(reads, SecondListId));
+        var single = Assert.Single(ProfileReadCalls(fakes, nameof(ILookupQueries.GetServiceProfile)));
+        Assert.Equal(SecondService, single.Arg<string>());
+        Assert.Equal(SecondListId, single.Arg<decimal>());
+        var batched = Assert.Single(ProfileReadCalls(fakes, nameof(ILookupQueries.GetServiceProfiles)));
+        Assert.Equal(DefaultListId, batched.Arg<decimal>());
+    }
+
+    [Fact]
+    [Trait("Decision", "D-80")]
+    public async Task Create_OneLineDraft_ReadsItsProfileThroughTheSingleRowLookup()
+    {
+        var draft = await CashDraft();
+        var fakes = Arrange(draft);
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        Assert.Equal(1, CreateCalls(fakes));
+        Assert.False(Called(fakes.Lookups.Calls, nameof(ILookupQueries.GetServiceProfiles)));
+        var read = Assert.Single(ProfileReadCalls(fakes));
+        Assert.Equal(nameof(ILookupQueries.GetServiceProfile), read.Method);
+        Assert.Equal(new object?[] { OrdinaryService, DefaultListId }, read.Args);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-80")]
+    public async Task Create_ServiceNotOnItsList_ReadAloneGivesTheBatchedOutcome()
+    {
+        var lone = await PlainLinesDraft(UnlistedService);
+        var batched = await PlainLinesDraft(UnlistedService, OrdinaryService);
+        var loneFakes = UnlistedServiceFakes(lone);
+        var batchedFakes = UnlistedServiceFakes(batched);
+
+        var loneResponse = await loneFakes.CreateService().Create(CreateRequest(lone), Operator);
+        var batchedResponse = await batchedFakes.CreateService().Create(CreateRequest(batched), Operator);
+
+        var loneRead = Assert.Single(ProfileReadCalls(loneFakes));
+        Assert.Equal(nameof(ILookupQueries.GetServiceProfile), loneRead.Method);
+        Assert.Equal(UnlistedService, loneRead.Arg<string>());
+        var batchedRead = Assert.Single(ProfileReadCalls(batchedFakes));
+        Assert.Equal(nameof(ILookupQueries.GetServiceProfiles), batchedRead.Method);
+        Assert.Contains(UnlistedService, batchedRead.Arg<IReadOnlyCollection<string>>());
+        Assert.DoesNotContain(loneResponse.Messages, IsBlocking);
+        Assert.Equal(batchedResponse.Messages, loneResponse.Messages);
+        Assert.Equal(batchedResponse.OpenItems, loneResponse.OpenItems);
+        Assert.Equal(1, CreateCalls(loneFakes));
+        Assert.Equal(1, CreateCalls(batchedFakes));
+        Assert.Equal(
+            CreateCall(batchedFakes).Arg<InvoiceHeaderDraft>().AddToList,
+            CreateCall(loneFakes).Arg<InvoiceHeaderDraft>().AddToList);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-80")]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task Create_BlankServiceLine_NeverReachesTheSingleRowLookup(string? serviceId)
+    {
+        var draft = (await CashDraft()) with
+        {
+            Lines = new[] { Line(OrdinaryService, "c1") with { ServiceId = serviceId }, Line(OrdinaryService, "c2") },
+        };
+        var fakes = Arrange(draft);
+
+        await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.DoesNotContain(ProfileReadKeys(fakes), read => string.IsNullOrWhiteSpace(read.ServiceId));
+        var read = Assert.Single(ProfileReadCalls(fakes));
+        Assert.Equal(nameof(ILookupQueries.GetServiceProfile), read.Method);
+        Assert.Equal(new object?[] { OrdinaryService, DefaultListId }, read.Args);
     }
 
     [Theory]
@@ -2062,6 +2184,14 @@ public sealed class InvoiceWorkflowOrchestrationTests
 
         Assert.DoesNotContain(response.Messages, IsBlocking);
         Assert.Equal((int?)addToList, CreateCall(fakes).Arg<InvoiceHeaderDraft>().AddToList);
+    }
+
+    private static FakeDataPorts UnlistedServiceFakes(DraftDto draft)
+    {
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = serviceId =>
+            string.Equals(serviceId, UnlistedService, StringComparison.Ordinal) ? null : Profile(serviceId);
+        return fakes;
     }
 
     private static async Task<DraftDto> ThreeLineDraft() => (await CashDraft()) with
@@ -2217,6 +2347,54 @@ public sealed class InvoiceWorkflowOrchestrationTests
     private static Exception? RefuseUnexpandedParent(InvoiceHeaderDraft header, IReadOnlyList<InvoiceLineDraft> lines) =>
         lines.Any(IsPackageParent) ? FakeOracleFailures.UnexpandedParent() : null;
 
+    /// <summary>Bundled-offer component line as GET_BUNDLED_OFFER_IG_LINES returns it: no manual discount, no price override, the offer's price.</summary>
+    private static EditablePreviewLine OfferComponent(string serviceId, long offerDtlId, decimal price) => new()
+    {
+        ClientId = $"{OfferInstance}:{offerDtlId}",
+        ServiceId = serviceId,
+        Qty = 1m,
+        Price = price,
+        ManualDiscountType = NoManualDiscount,
+        ManualDiscountPct = 0m,
+        ManualDiscountAmount = 0m,
+        Disc = 0m,
+        MyDisc = 0m,
+        OfferId = BundledOfferId,
+        OfferDtlId = offerDtlId,
+        OfferType = BundledOfferType,
+        OfferInstanceId = OfferInstance,
+        OfferLineRole = ComponentRole,
+        OfferParentLineId = -1L,
+        OfferPriceApplied = price,
+        OfferDisApplied = 0m,
+        OfferObjectVersionNumber = 3L,
+        OfferDtlObjectVersionNumber = 5L,
+    };
+
+    /// <summary>The package's -20978 refusal when any bundled-offer component carries a manual discount or a price override.</summary>
+    private static Exception? RefuseAlteredOfferComponent(InvoiceHeaderDraft header, IReadOnlyList<InvoiceLineDraft> lines) =>
+        lines.Any(IsAlteredOfferComponent) ? FakeOracleFailures.BundledOfferRowsInvalid() : null;
+
+    /// <summary>True for a bundled-offer component the package's has_manual_discount or uses_price_override holds for.</summary>
+    private static bool IsAlteredOfferComponent(InvoiceLineDraft line) =>
+        line.OfferType == BundledOfferType
+        && string.Equals(line.OfferLineRole?.Trim(), ComponentRole, StringComparison.OrdinalIgnoreCase)
+        && (!string.Equals((line.DiscountType ?? NoManualDiscount).Trim(), NoManualDiscount, StringComparison.OrdinalIgnoreCase)
+            || (line.Disc ?? 0m) != 0m
+            || (line.MyDisc ?? 0m) != 0m
+            || line.PriceOverride is not null
+            || line.UsePriceOverride?.Trim().ToUpperInvariant() is "Y" or "YES" or "1" or "TRUE");
+
+    private static void AssertUnalteredOfferComponent(InvoiceLineDraft line)
+    {
+        Assert.Equal(NoManualDiscount, line.DiscountType);
+        Assert.Equal(0m, line.Disc);
+        Assert.Equal(0m, line.MyDisc);
+        Assert.Null(line.PriceOverride);
+        Assert.NotEqual("Y", line.UsePriceOverride);
+        Assert.False(IsAlteredOfferComponent(line));
+    }
+
     private static (InvoiceHeaderDraft Header, decimal? ListId, decimal? MaxDeductable, int? CardId)? PreloadWithList(string claimNo) =>
         string.Equals(claimNo, ClaimNumber, StringComparison.Ordinal)
             ? (new InvoiceHeaderDraft { PatientNo = PatientNo, CompCode = CashCompany, PayType = 1 }, 55m, null, null)
@@ -2238,13 +2416,22 @@ public sealed class InvoiceWorkflowOrchestrationTests
 
     private static FakeCall[] ProfileReadCalls(FakeDataPorts fakes) =>
         fakes.Lookups.Calls
-            .Where(call => call.Method == nameof(ILookupQueries.GetServiceProfiles))
+            .Where(call => call.Method is nameof(ILookupQueries.GetServiceProfile) or nameof(ILookupQueries.GetServiceProfiles))
             .ToArray();
+
+    private static FakeCall[] ProfileReadCalls(FakeDataPorts fakes, string method) =>
+        ProfileReadCalls(fakes).Where(call => call.Method == method).ToArray();
 
     private static (decimal ListId, string ServiceId)[] ProfileReadKeys(FakeDataPorts fakes) =>
         ProfileReadCalls(fakes)
-            .SelectMany(call => call.Arg<IReadOnlyCollection<string>>().Select(serviceId => (call.Arg<decimal>(), serviceId)))
+            .SelectMany(call => ProfileReadIds(call).Select(serviceId => (call.Arg<decimal>(), serviceId)))
             .ToArray();
+
+    /// <summary>Service ids of one profile read: the id of a GetServiceProfile call, or the ids of a GetServiceProfiles call.</summary>
+    private static IReadOnlyCollection<string> ProfileReadIds(FakeCall call) =>
+        call.Method == nameof(ILookupQueries.GetServiceProfile)
+            ? new[] { call.Arg<string>() }
+            : call.Arg<IReadOnlyCollection<string>>();
 
     private static string[] ServicesReadOn(IEnumerable<(decimal ListId, string ServiceId)> reads, decimal listId) =>
         reads.Where(read => read.ListId == listId).Select(read => read.ServiceId).Order(StringComparer.Ordinal).ToArray();

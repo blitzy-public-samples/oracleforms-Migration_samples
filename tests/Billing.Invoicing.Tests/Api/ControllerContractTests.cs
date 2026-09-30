@@ -1,5 +1,8 @@
+using System.ComponentModel.DataAnnotations;
 using System.Diagnostics;
+using System.Globalization;
 using System.Reflection;
+using System.Text;
 using System.Text.Json;
 using Billing.Invoicing.Api.Context;
 using Billing.Invoicing.Api.Contracts;
@@ -24,7 +27,13 @@ public sealed class ControllerContractTests
     private const string InvalidInvoiceNumberText = "Invoice number must be a positive whole number.";
     private const string DocumentKindText = "Document kind must be invoice, patient-card, barcode-sms or iqama-check.";
     private const string RequestIdText = "Request id must be 32 upper-case hexadecimal characters.";
+    private const string OfferIdText = "Offer id must be a positive whole number.";
     private const string PatientNo = "P100";
+
+    /// <summary>2^53 + 1, the smallest positive integer a JSON number read as a double cannot hold.</summary>
+    private const decimal LargeOfferId = 9007199254740993m;
+
+    private static readonly JsonSerializerOptions WebJson = new(JsonSerializerDefaults.Web);
 
     private static readonly Type[] Controllers =
     [
@@ -322,6 +331,93 @@ public sealed class ControllerContractTests
         Assert.Empty(fakes.Journal);
     }
 
+    [Fact]
+    public async Task Lov_Offers_ReturnsEachOferIdAsItsExactDecimalText()
+    {
+        var fakes = new FakeDataPorts();
+        fakes.Lovs.Rows =
+        [
+            new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase) { ["OFERID"] = LargeOfferId, ["OFFER_NAME"] = "Bundle" },
+            new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase) { ["OFERID"] = null, ["OFFER_NAME"] = "Unnumbered" },
+        ];
+
+        var result = await Controller<LookupsController>(fakes, NewContext()).Lov("OFFERS", null, null, null, null, 1, DraftDate);
+
+        var value = Assert.IsType<LovResponse>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Equal("OFFERS", value.Name);
+        Assert.Equal(2, value.Rows.Count);
+        Assert.Equal("9007199254740993", Assert.IsType<string>(value.Rows[0]["oferid"]));
+        Assert.Equal("Bundle", value.Rows[0]["OFFER_NAME"]);
+        Assert.Null(value.Rows[1]["OFERID"]);
+        Assert.Equal("Unnumbered", value.Rows[1]["OFFER_NAME"]);
+        Assert.Equal(LargeOfferId, fakes.Lovs.Rows[0]["OFERID"]);
+        var json = JsonSerializer.Serialize(value, WebJson);
+        Assert.Contains("\"OFERID\":\"9007199254740993\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"OFERID\":null", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Lov_OtherList_KeepsItsRowsAndNumbersUnchanged()
+    {
+        var fakes = new FakeDataPorts();
+        fakes.Lovs.Rows =
+        [
+            new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase) { ["OFERID"] = LargeOfferId, ["CATID"] = 3m },
+        ];
+
+        var result = await Controller<LookupsController>(fakes, NewContext()).Lov("CAT", null, null, null, null, null, null);
+
+        var value = Assert.IsType<LovResponse>(Assert.IsType<OkObjectResult>(result.Result).Value);
+        Assert.Same(fakes.Lovs.Rows, value.Rows);
+        Assert.Equal(LargeOfferId, Assert.IsType<decimal>(value.Rows[0]["OFERID"]));
+        Assert.Contains("\"OFERID\":9007199254740993", JsonSerializer.Serialize(value, WebJson), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("""{"offerId":"9007199254740993"}""", true)]
+    [InlineData("""{"offerId":9007199254740993}""", true)]
+    [InlineData("""{"OfferId":"9007199254740993"}""", false)]
+    [InlineData("""{"OfferId":9007199254740993}""", false)]
+    public void BundledOfferRequest_ReadsTheOfferIdExactlyFromDecimalTextOrANumber(string json, bool webDefaults)
+    {
+        var request = JsonSerializer.Deserialize<BundledOfferRequest>(json, webDefaults ? WebJson : new JsonSerializerOptions());
+
+        Assert.NotNull(request);
+        Assert.Equal(LargeOfferId, request.OfferId);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("1.5")]
+    [InlineData("9007199254740993.5")]
+    public void BundledOfferRequest_RejectsAnOfferIdThatIsNotAPositiveWholeNumberOnOferId(string offerId)
+    {
+        var request = new BundledOfferRequest { Draft = CashDraft(), OfferId = decimal.Parse(offerId, CultureInfo.InvariantCulture) };
+        var results = new List<ValidationResult>();
+
+        Assert.False(Validator.TryValidateObject(request, new ValidationContext(request), results, validateAllProperties: true));
+
+        var result = Assert.Single(results);
+        Assert.Equal(OfferIdText, result.ErrorMessage);
+        var member = Assert.Single(result.MemberNames);
+        Assert.Equal("OFERID", member);
+        Assert.Equal("OFERID", ModelStateFieldMap.FieldOf(member));
+    }
+
+    [Theory]
+    [InlineData("1")]
+    [InlineData("5.0")]
+    [InlineData("9007199254740993")]
+    public void BundledOfferRequest_AcceptsAPositiveWholeOfferId(string offerId)
+    {
+        var request = new BundledOfferRequest { Draft = CashDraft(), OfferId = decimal.Parse(offerId, CultureInfo.InvariantCulture) };
+        var results = new List<ValidationResult>();
+
+        Assert.True(Validator.TryValidateObject(request, new ValidationContext(request), results, validateAllProperties: true));
+        Assert.Empty(results);
+    }
+
     [Theory]
     [InlineData("bogus")]
     [InlineData("receipt")]
@@ -409,8 +505,42 @@ public sealed class ControllerContractTests
         Assert.Equal(42L, body.GetProperty("invNo").GetInt64());
     }
 
-    /// <summary>Sends one request with the operator headers through the controllers, the exception handler and the operator-context middleware, in-process.</summary>
-    private static async Task<(int Status, string? ContentType, JsonElement Body)> SendAsync(FakeDataPorts fakes, string method, string path)
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("1.5")]
+    public async Task Pipeline_BundledOfferWithAnInvalidOfferId_IsRejectedOnOferIdWithoutReads(string offerId)
+    {
+        var fakes = new FakeDataPorts();
+
+        var (status, _, body) = await SendAsync(fakes, "POST", "/api/imports/bundled-offer", $$"""{"draft":{},"offerId":"{{offerId}}"}""");
+
+        Assert.Equal(StatusCodes.Status400BadRequest, status);
+        var error = Assert.Single(body.GetProperty("errors").EnumerateObject());
+        Assert.Equal("OFERID", ModelStateFieldMap.FieldOf(error.Name));
+        Assert.Equal(OfferIdText, Assert.Single(error.Value.EnumerateArray()).GetString());
+        Assert.Empty(fakes.Journal);
+    }
+
+    [Theory]
+    [InlineData("\"9007199254740993\"")]
+    [InlineData("9007199254740993")]
+    public async Task Pipeline_BundledOffer_PassesTheExactOfferIdToThePackage(string offerId)
+    {
+        var fakes = new FakeDataPorts();
+        fakes.Lookups.PatientCoverage = new PatientCoverageSnapshot { PatientNo = PatientNo, CompCode = "0" };
+        var draft = JsonSerializer.Serialize(CashDraft(), WebJson);
+
+        var (status, _, _) = await SendAsync(fakes, "POST", "/api/imports/bundled-offer", $$"""{"draft":{{draft}},"offerId":{{offerId}},"bundleQty":"2"}""");
+
+        Assert.Equal(StatusCodes.Status200OK, status);
+        var call = Assert.Single(fakes.InvoiceApi.Calls, candidate => candidate.Method == "GetBundledOfferLines");
+        Assert.Equal(LargeOfferId, Assert.IsType<decimal>(call.Args[3]));
+        Assert.Equal(2m, Assert.IsType<decimal>(call.Args[4]));
+    }
+
+    /// <summary>Sends one request with the operator headers and an optional JSON body through the controllers, the exception handler and the operator-context middleware, in-process.</summary>
+    private static async Task<(int Status, string? ContentType, JsonElement Body)> SendAsync(FakeDataPorts fakes, string method, string path, string? json = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -440,6 +570,11 @@ public sealed class ControllerContractTests
         context.Request.Headers["X-His-Machine"] = "clone23";
         context.Request.Headers["X-His-Session-Id"] = Operator.SessionId;
         context.Response.Body = new MemoryStream();
+        if (json is not null)
+        {
+            context.Request.ContentType = "application/json";
+            context.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        }
 
         await pipeline(context);
 
