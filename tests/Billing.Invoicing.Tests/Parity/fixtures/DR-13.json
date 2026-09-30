@@ -9,19 +9,19 @@
     {
       "name": "credit-value-discount-blocks",
       "status": "derivable",
-      "input": { "classCode": "C1", "discountType": "V" },
+      "input": { "classCode": "1", "discountType": "V" },
       "expected": { "outcome": "Blocking", "messages": [{ "field": "LDISCT", "text": "You cant use value disocunt for credit invoices", "severity": "Blocking" }], "values": { "LDISCT": "R" } }
     },
     {
       "name": "credit-rate-discount-passes",
       "status": "derivable",
-      "input": { "classCode": "C1", "discountType": "R" },
+      "input": { "classCode": "1", "discountType": "R" },
       "expected": { "outcome": "Pass", "messages": [] }
     },
     {
       "name": "credit-no-discount-passes",
       "status": "derivable",
-      "input": { "classCode": "C1", "discountType": "N" },
+      "input": { "classCode": "1", "discountType": "N" },
       "expected": { "outcome": "Pass", "messages": [] }
     },
     {

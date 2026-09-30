@@ -3,6 +3,7 @@
   "class": "domain",
   "source": [
     { "construct": "T015 T_INV WHEN-CREATE-RECORD", "locator": "05_Complex/Inv_Small_Cash.xml:367" },
+    { "construct": "T_INV.INVTYPEID item InitializeValue", "locator": "05_Complex/Inv_Small_Cash.xml:11" },
     { "construct": "T022 INVTYPEID WHEN-VALIDATE-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:13" },
     { "construct": "T003 FORM WHEN-NEW-FORM-INSTANCE", "locator": "05_Complex/Inv_Small_Cash.xml:1096" },
     { "construct": "T023 PATIENTNO WHEN-VALIDATE-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:18" }
@@ -17,7 +18,7 @@
         "claimPreload": null,
         "visitDoctorId": null
       },
-      "expected": { "outcome": "Pass", "messages": [], "values": { "INVTYPEID": 7, "SUB_PAYTYPE": 1, "DRAFT_DATE": "2026-09-28T10:00:00" } }
+      "expected": { "outcome": "Pass", "messages": [], "values": { "INVTYPEID": 7, "SUB_PAYTYPE": 1, "DRAFT_DATE": "2026-09-28T10:00:00", "INV_DATE": "2026-09-28T10:00:00", "CLAIM_FLAG": null } }
     },
     {
       "name": "draft-date-kept-across-midnight",
@@ -28,7 +29,19 @@
         "claimPreload": null,
         "visitDoctorId": null
       },
-      "expected": { "outcome": "Pass", "messages": [], "values": { "DRAFT_DATE": "2026-09-28T23:59:59", "SUB_PAYTYPE": 1 } },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "INVTYPEID": 0, "DRAFT_DATE": "2026-09-28T23:59:59", "INV_DATE": "2026-09-28T23:59:59", "SUB_PAYTYPE": 1, "CLAIM_FLAG": null } },
+      "decision": "D-39"
+    },
+    {
+      "name": "claim-flag-copied-with-full-database-time",
+      "status": "derivable",
+      "input": {
+        "parameters": { "claimNo": "0", "claimFlag": "R" },
+        "databaseTime": "2026-09-28T14:37:52",
+        "claimPreload": null,
+        "visitDoctorId": null
+      },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "INVTYPEID": 0, "SUB_PAYTYPE": 1, "DRAFT_DATE": "2026-09-28T14:37:52", "INV_DATE": "2026-09-28T14:37:52", "CLAIM_FLAG": "R", "DOCIDX": null, "PATIENTNO": null } },
       "decision": "D-39"
     },
     {
@@ -40,7 +53,7 @@
         "claimPreload": null,
         "visitDoctorId": null
       },
-      "expected": { "outcome": "Pass", "messages": [], "values": { "DOCIDX": 10 } }
+      "expected": { "outcome": "Pass", "messages": [], "values": { "INVTYPEID": 0, "INV_DATE": "2026-09-28T10:00:00", "DOCIDX": 10 } }
     },
     {
       "name": "independent-claim-zero-no-preload",
@@ -51,7 +64,7 @@
         "claimPreload": null,
         "visitDoctorId": null
       },
-      "expected": { "outcome": "Pass", "messages": [], "values": { "DOCIDX": null, "PATIENTNO": null } }
+      "expected": { "outcome": "Pass", "messages": [], "values": { "INVTYPEID": 0, "INV_DATE": "2026-09-28T10:00:00", "DOCIDX": null, "PATIENTNO": null } }
     },
     {
       "name": "independent-service-claim-two-no-preload",
@@ -62,7 +75,7 @@
         "claimPreload": null,
         "visitDoctorId": null
       },
-      "expected": { "outcome": "Pass", "messages": [], "values": { "PATIENTNO": null } }
+      "expected": { "outcome": "Pass", "messages": [], "values": { "INVTYPEID": 0, "INV_DATE": "2026-09-28T10:00:00", "PATIENTNO": null } }
     },
     {
       "name": "claim-preload-credit-copies-coverage",
@@ -73,7 +86,7 @@
         "claimPreload": { "claimNo": "C-7788", "patientNo": "1001", "clinicId": 14, "docId": 33, "compCode": "205", "subCompCode": "305", "classCode": 4, "payType": 2 },
         "visitDoctorId": null
       },
-      "expected": { "outcome": "Pass", "messages": [], "values": { "CLAIM_NO": "C-7788", "PATIENTNO": "1001", "CLINICID": 14, "COMP_CODE": "205", "SUB_COMP_CODE": "305", "CLASS_CODE": 4, "PAYTYPE": 2, "DOCIDX": null } }
+      "expected": { "outcome": "Pass", "messages": [], "values": { "INVTYPEID": 0, "INV_DATE": "2026-09-28T10:00:00", "CLAIM_NO": "C-7788", "PATIENTNO": "1001", "CLINICID": 14, "COMP_CODE": "205", "SUB_COMP_CODE": "305", "CLASS_CODE": 4, "PAYTYPE": 2, "DOCIDX": null } }
     },
     {
       "name": "claim-preload-cash-or-credit-1-company-zero",
@@ -84,7 +97,7 @@
         "claimPreload": { "claimNo": "C-7788", "patientNo": "1001", "clinicId": 14, "compCode": "0", "subCompCode": null, "classCode": null, "payType": 1 },
         "visitDoctorId": null
       },
-      "expected": { "outcome": "Pass", "messages": [], "values": { "CLAIM_NO": "C-7788", "PATIENTNO": "1001", "CLINICID": 14, "COMP_CODE": "0", "SUB_COMP_CODE": null, "CLASS_CODE": null, "PAYTYPE": 1 } }
+      "expected": { "outcome": "Pass", "messages": [], "values": { "INVTYPEID": 0, "INV_DATE": "2026-09-28T10:00:00", "CLAIM_NO": "C-7788", "PATIENTNO": "1001", "CLINICID": 14, "COMP_CODE": "0", "SUB_COMP_CODE": null, "CLASS_CODE": null, "PAYTYPE": 1 } }
     },
     {
       "name": "claim-preload-cash-or-credit-1-direct-company",
@@ -95,7 +108,7 @@
         "claimPreload": { "claimNo": "C-7788", "patientNo": "1001", "clinicId": 14, "compCode": "205", "subCompCode": null, "classCode": null, "payType": 2 },
         "visitDoctorId": null
       },
-      "expected": { "outcome": "Pass", "messages": [], "values": { "CLAIM_NO": "C-7788", "PATIENTNO": "1001", "CLINICID": 14, "COMP_CODE": "205", "SUB_COMP_CODE": null, "CLASS_CODE": null, "PAYTYPE": 1 } }
+      "expected": { "outcome": "Pass", "messages": [], "values": { "INVTYPEID": 0, "INV_DATE": "2026-09-28T10:00:00", "CLAIM_NO": "C-7788", "PATIENTNO": "1001", "CLINICID": 14, "COMP_CODE": "205", "SUB_COMP_CODE": null, "CLASS_CODE": null, "PAYTYPE": 1 } }
     },
     {
       "name": "claim-preload-cash-or-credit-1-insured-becomes-cash",
@@ -106,7 +119,7 @@
         "claimPreload": { "claimNo": "C-7788", "patientNo": "1001", "clinicId": 14, "compCode": "205", "subCompCode": "305", "classCode": 4, "payType": 2 },
         "visitDoctorId": null
       },
-      "expected": { "outcome": "Pass", "messages": [], "values": { "CLAIM_NO": "C-7788", "PATIENTNO": "1001", "CLINICID": 14, "COMP_CODE": "0", "SUB_COMP_CODE": null, "CLASS_CODE": null, "PAYTYPE": 1 } }
+      "expected": { "outcome": "Pass", "messages": [], "values": { "INVTYPEID": 0, "INV_DATE": "2026-09-28T10:00:00", "CLAIM_NO": "C-7788", "PATIENTNO": "1001", "CLINICID": 14, "COMP_CODE": "0", "SUB_COMP_CODE": null, "CLASS_CODE": null, "PAYTYPE": 1 } }
     },
     {
       "name": "claim-preload-with-visit-doctor",
@@ -117,8 +130,8 @@
         "claimPreload": { "claimNo": "C-7788", "patientNo": "1001", "clinicId": 14, "docId": 33, "compCode": "205", "subCompCode": "305", "classCode": 4, "payType": 2 },
         "visitDoctorId": 12
       },
-      "expected": { "outcome": "Pass", "messages": [], "values": { "DOCIDX": 12, "PATIENTNO": "1001", "CLINICID": 14, "PAYTYPE": 2 } }
+      "expected": { "outcome": "Pass", "messages": [], "values": { "INVTYPEID": 0, "INV_DATE": "2026-09-28T10:00:00", "DOCIDX": 12, "PATIENTNO": "1001", "CLINICID": 14, "PAYTYPE": 2 } }
     }
   ],
-  "compare": { "moneyDecimals": 2, "exact": ["outcome", "messages", "DRAFT_DATE"] }
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "messages", "INVTYPEID", "DRAFT_DATE", "INV_DATE"] }
 }

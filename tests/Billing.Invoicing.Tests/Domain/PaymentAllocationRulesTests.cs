@@ -240,6 +240,43 @@ public sealed class PaymentAllocationRulesTests
         ParityFixture.AssertExact(expected.Outcome, actualOutcome);
         ParityFixture.AssertMessages(expectedMessages, actualMessages);
         ParityFixture.AssertValues(expectedValues, actualValues, fixture.Compare);
+        AssertExactValues(fixture, fixtureCase, expectedValues, actualValues);
+    }
+
+    /// <summary>Asserts that the actual keys equal the expected ones and that each expected number equals its actual decimal unrounded.</summary>
+    private static void AssertExactValues(
+        FixtureDocument fixture,
+        FixtureCase fixtureCase,
+        JsonElement expectedValues,
+        IReadOnlyDictionary<string, object?> actualValues)
+    {
+        var label = $"Fixture '{fixture.Id}', case '{fixtureCase.Name}'";
+        var expectedKeys = expectedValues.EnumerateObject().Select(property => property.Name).ToHashSet(StringComparer.Ordinal);
+        Assert.True(
+            expectedKeys.SetEquals(actualValues.Keys),
+            $"{label}: actual value keys [{string.Join(", ", actualValues.Keys.Order(StringComparer.Ordinal))}] differ from expected.values keys [{string.Join(", ", expectedKeys.Order(StringComparer.Ordinal))}].");
+
+        foreach (var property in expectedValues.EnumerateObject())
+        {
+            var actual = actualValues[property.Name];
+            switch (property.Value.ValueKind)
+            {
+                case JsonValueKind.Number:
+                    Assert.True(
+                        property.Value.TryGetDecimal(out var expectedAmount),
+                        $"{label}: expected.values.{property.Name} {property.Value.GetRawText()} is outside the decimal range.");
+                    Assert.True(
+                        actual is decimal actualAmount && actualAmount == expectedAmount,
+                        $"{label}: {property.Name} expected exactly {expectedAmount}, actual {actual ?? "null"}.");
+                    break;
+                case JsonValueKind.Null:
+                    Assert.True(actual is null, $"{label}: {property.Name} expected null, actual {actual}.");
+                    break;
+                default:
+                    Assert.Fail($"{label}: expected.values.{property.Name} must be a JSON number or null, not {property.Value.ValueKind}.");
+                    break;
+            }
+        }
     }
 
     private static void AssertDomainFixture(string ruleId, FixtureDocument fixture, string locator)

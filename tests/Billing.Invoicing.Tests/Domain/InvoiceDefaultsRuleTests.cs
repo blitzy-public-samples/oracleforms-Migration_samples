@@ -15,6 +15,7 @@ public sealed class InvoiceDefaultsRuleTests
     private const string PassOutcome = "Pass";
     private const string DatabaseTimeFormat = "yyyy-MM-dd'T'HH:mm:ss";
     private const string T015Locator = "05_Complex/Inv_Small_Cash.xml:367";
+    private const string InvTypeIdItemLocator = "05_Complex/Inv_Small_Cash.xml:11";
     private const string T022Locator = "05_Complex/Inv_Small_Cash.xml:13";
     private const string T003Locator = "05_Complex/Inv_Small_Cash.xml:1096";
 
@@ -49,7 +50,7 @@ public sealed class InvoiceDefaultsRuleTests
         ParityFixture.AssertValues(expectedValues, Project(draft), fixture.Compare);
     }
 
-    /// <summary>Checks that the DR-20 fixture is a domain fixture traced to T015, T022 and T003 whose cases reach each default and preload branch.</summary>
+    /// <summary>Checks that the DR-20 fixture is a domain fixture traced to T015, the INVTYPEID item, T022 and T003 whose cases reach each default and preload branch.</summary>
     [Fact]
     [Trait("Rule", "DR-20")]
     public void Fixture_DR_20_is_a_domain_fixture_covering_each_default_branch()
@@ -60,7 +61,7 @@ public sealed class InvoiceDefaultsRuleTests
         Assert.Equal(ParityFixture.DomainClass, fixture.Class);
         Assert.NotEmpty(fixture.Cases);
         Assert.All(fixture.Cases, fixtureCase => Assert.True(ParityFixture.IsDerivable(fixtureCase), fixtureCase.Name));
-        foreach (var locator in new[] { T015Locator, T022Locator, T003Locator })
+        foreach (var locator in new[] { T015Locator, InvTypeIdItemLocator, T022Locator, T003Locator })
         {
             Assert.Contains(fixture.Source, source => string.Equals(source.Locator, locator, StringComparison.Ordinal));
         }
@@ -69,6 +70,7 @@ public sealed class InvoiceDefaultsRuleTests
 
         Assert.Contains(inputs, input => input.Parameters.IsHomeCare == "Y");
         Assert.Contains(inputs, input => input.Parameters.IsHomeCare != "Y");
+        Assert.Contains(inputs, input => input.Parameters.ClaimFlag is not null);
         Assert.Contains(inputs, input => input.DatabaseTime.TimeOfDay >= LastMinuteBeforeMidnight);
         Assert.Contains(inputs, input => input.Parameters.ClaimNo == "1" && input.Parameters.NewDoc is not null);
         Assert.Contains(inputs, input => input.Parameters.ClaimNo == "0");
@@ -121,6 +123,8 @@ public sealed class InvoiceDefaultsRuleTests
             ["INVTYPEID"] = d.InvTypeId,
             ["SUB_PAYTYPE"] = d.SubPayType,
             ["DRAFT_DATE"] = d.DraftDate,
+            ["INV_DATE"] = d.InvDate,
+            ["CLAIM_FLAG"] = d.ClaimFlag,
             ["DOCIDX"] = d.DocId,
             ["CLAIM_NO"] = d.ClaimNo,
             ["PATIENTNO"] = d.PatientNo,

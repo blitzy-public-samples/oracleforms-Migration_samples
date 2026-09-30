@@ -15,7 +15,7 @@ public sealed class PackageImportRulesTests
     private const string PassOutcome = "Pass";
     private const string T089Locator = "05_Complex/Inv_Small_Cash.xml:771";
 
-    /// <summary>Compares <see cref="PackageImportRules.Evaluate"/> with one DR-19 fixture case.</summary>
+    /// <summary>Compares <see cref="PackageImportRules.Evaluate"/>, including its exact adjusted values, with one DR-19 fixture case.</summary>
     /// <param name="caseName">Fixture case name.</param>
     [Theory]
     [Trait("Rule", "DR-19")]
@@ -37,6 +37,18 @@ public sealed class PackageImportRulesTests
             result.Messages.Select(message => (message.Field, message.Text, message.Severity)));
         Assert.All(result.Messages, message => Assert.Equal(RuleId, message.Rule));
         Assert.False(result.IsBlocking);
+
+        if (fixtureCase.Expected.Values is { } values)
+        {
+            var expectedKeys = values.EnumerateObject().Select(property => property.Name.ToUpperInvariant()).Order(StringComparer.Ordinal).ToList();
+            var actualKeys = result.Adjusted.Keys.Select(key => key.ToUpperInvariant()).Order(StringComparer.Ordinal).ToList();
+            Assert.Equal(expectedKeys, actualKeys);
+            ParityFixture.AssertValues(values, result.Adjusted, ParityFixture.Load(RuleId).Compare);
+        }
+        else
+        {
+            Assert.Empty(result.Adjusted);
+        }
     }
 
     /// <summary>Checks that the DR-19 fixture is a domain fixture traced to T089 holding a zero-line warning case and a pass case.</summary>

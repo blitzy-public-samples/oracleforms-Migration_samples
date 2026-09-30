@@ -30,6 +30,12 @@
       "expected": { "outcome": "Warning", "messages": [{ "field": "SERVICEID", "text": "1001 Rejected ", "severity": "Warning" }] }
     },
     {
+      "name": "notices-rejected-row-needing-approval-rejected-only",
+      "status": "derivable",
+      "input": { "method": "Notices", "rows": [{ "serviceId": "1001", "reqAStatus": 3, "reqNeedA": 1, "approvRefNo": null }], "x422ApprovCheck": 1, "payType": 2 },
+      "expected": { "outcome": "Warning", "messages": [{ "field": "SERVICEID", "text": "1001 Rejected ", "severity": "Warning" }] }
+    },
+    {
       "name": "notices-credit-row-needs-approval",
       "status": "derivable",
       "input": { "method": "Notices", "rows": [{ "serviceId": "1002", "reqAStatus": 0, "reqNeedA": 1, "approvRefNo": null }], "x422ApprovCheck": 1, "payType": 2 },

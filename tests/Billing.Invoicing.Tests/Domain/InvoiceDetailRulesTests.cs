@@ -21,13 +21,14 @@ public sealed class InvoiceDetailRulesTests
 
     private const string T009Locator = "05_Complex/Inv_Small_Cash.xml:1102";
 
-    /// <summary>Each fixture case yields its expected outcome and messages from <see cref="InvoiceDetailRules.RequireDetails"/>.</summary>
+    /// <summary>Each fixture case yields its expected outcome, messages and exact adjusted values from <see cref="InvoiceDetailRules.RequireDetails"/>.</summary>
     /// <param name="caseName">Fixture case name.</param>
     [Theory]
     [Trait("Rule", RuleId)]
     [MemberData(nameof(ParityFixture.CaseNames), RuleId, MemberType = typeof(ParityFixture))]
     public void RequireDetails_matches_DR_02(string caseName)
     {
+        var fixture = ParityFixture.Load(RuleId);
         var fixtureCase = ParityFixture.Case(RuleId, caseName);
         Assert.True(ParityFixture.IsDerivable(fixtureCase), $"Fixture '{RuleId}', case '{caseName}' is not derivable.");
 
@@ -40,6 +41,17 @@ public sealed class InvoiceDetailRulesTests
             expected.Messages,
             result.Messages.Select(message => (message.Field, message.Text, message.Severity)));
         Assert.All(result.Messages, message => Assert.Equal(RuleId, message.Rule));
+
+        var expectedKeys = expected.Values is { } listed
+            ? listed.EnumerateObject().Select(property => property.Name.ToUpperInvariant()).Order(StringComparer.Ordinal).ToList()
+            : [];
+        var actualKeys = result.Adjusted.Keys.Select(key => key.ToUpperInvariant()).Order(StringComparer.Ordinal).ToList();
+        Assert.Equal(expectedKeys, actualKeys);
+
+        if (expected.Values is { } values)
+        {
+            ParityFixture.AssertValues(values, result.Adjusted, fixture.Compare);
+        }
     }
 
     /// <summary>The DR-02 fixture is a domain fixture derived from T009 with at least one derivable case.</summary>

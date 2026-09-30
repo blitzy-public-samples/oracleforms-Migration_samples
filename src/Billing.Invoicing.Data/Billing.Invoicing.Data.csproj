@@ -9,4 +9,8 @@
     <PackageReference Include="Dapper" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Billing.Invoicing.Tests" />
+  </ItemGroup>
+
 </Project>

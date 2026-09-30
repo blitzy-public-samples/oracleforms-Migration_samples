@@ -7,6 +7,7 @@ public static class InvoiceDefaultsRule
 {
     private const string HomeCareFlag = "Y";
     private const int HomeCareInvoiceType = 7;
+    private const int DefaultInvoiceType = 0;
     private const int DefaultSubPayType = 1;
     private const int CashOrCreditCash = 1;
     private const string CashCompanyCode = "0";
@@ -14,7 +15,7 @@ public static class InvoiceDefaultsRule
     private const string NewConsultationClaimParameter = "1";
     private const string IndependentServiceClaimParameter = "2";
 
-    /// <summary>Returns a new draft header carrying the WHEN-CREATE-RECORD defaults and preloads.</summary>
+    /// <summary>Returns a new draft header carrying the INVTYPEID item initial value and the WHEN-CREATE-RECORD defaults and preloads.</summary>
     /// <param name="parameters">Entry parameters supplying IS_HOME_CARE, CLAIM_FLAG, CLAIM_NO, NEW_DOC, CASH_OR_CREDIT and VISIT_UNIQUE.</param>
     /// <param name="databaseTime">Database <c>SYSDATE</c> read when the draft is created; becomes the draft date and invoice date.</param>
     /// <param name="claimPreload">Header of the claim's first invoice, or null when the claim has no invoice.</param>
@@ -32,7 +33,7 @@ public static class InvoiceDefaultsRule
         {
             DraftDate = databaseTime,
             InvDate = databaseTime,
-            InvTypeId = parameters.IsHomeCare == HomeCareFlag ? HomeCareInvoiceType : null,
+            InvTypeId = parameters.IsHomeCare == HomeCareFlag ? HomeCareInvoiceType : DefaultInvoiceType,
             SubPayType = DefaultSubPayType,
             ClaimFlag = parameters.ClaimFlag,
         };

@@ -83,7 +83,7 @@ public sealed class FinalDiscountLimitRuleTests
         }
     }
 
-    /// <summary>The DR-06 fixture is a derivable domain fixture covering both methods, both modes, the offer bypass and both choices.</summary>
+    /// <summary>The DR-06 fixture is a derivable domain fixture covering both methods, both modes, the offer bypass, both choices, a null limit and a value-mode percent rounded down to the limit.</summary>
     [Fact]
     [Trait("Rule", RuleId)]
     public void Fixture_DR_06_covers_both_methods_modes_offer_and_choices()
@@ -105,6 +105,11 @@ public sealed class FinalDiscountLimitRuleTests
         Assert.Contains(cases, c => c.Input.Method == EvaluateMethod && c.Input.Header.DiscT == PercentMode && c.Input.Header.OferId is null);
         Assert.Contains(cases, c => c.Input.Method == EvaluateMethod && c.Input.Header.DiscT == ValueMode && c.Input.Header.OferId is null);
         Assert.Contains(cases, c => c.Input.Method == EvaluateMethod && c.Input.Header.OferId is not null);
+        Assert.Contains(cases, c => c.Input.Method == EvaluateMethod && c.Input.MaxDisc is null && c.Input.Header.OferId is null
+            && ((c.Input.Header.DiscT == PercentMode && c.Input.Header.FinalDiscPerc > 0m) || (c.Input.Header.DiscT == ValueMode && c.Input.Header.FinalDisc > 0m)));
+        Assert.Contains(cases, c => c.Input.Method == EvaluateMethod && c.Input.Header.DiscT == ValueMode && c.Input.Header.OferId is null
+            && c.Input is { MaxDisc: { } limit, PatPay: { } share, Header.FinalDisc: { } amount } && share > 0m
+            && amount / share * 100m > limit && decimal.Round(amount / share * 100m, 2, MidpointRounding.AwayFromZero) == limit);
         Assert.Contains(cases, c => c.Input.Method == ApplyChoiceMethod && ParseChoice(c.Name, c.Input.Choice) == DiscountLimitChoice.MaximumDiscount);
         Assert.Contains(cases, c => c.Input.Method == ApplyChoiceMethod && ParseChoice(c.Name, c.Input.Choice) == DiscountLimitChoice.Cancel);
     }

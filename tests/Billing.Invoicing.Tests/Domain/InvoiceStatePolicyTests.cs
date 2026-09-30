@@ -62,7 +62,14 @@ public sealed class InvoiceStatePolicyTests
                 Assert.All(result.Messages, message => ParityFixture.AssertExact(RuleId, message.Rule));
                 if (fixtureCase.Expected.Values is { } deleteValues)
                 {
+                    var expectedKeys = deleteValues.EnumerateObject().Select(property => property.Name.ToUpperInvariant()).Order(StringComparer.Ordinal).ToList();
+                    var actualKeys = result.Adjusted.Keys.Select(key => key.ToUpperInvariant()).Order(StringComparer.Ordinal).ToList();
+                    Assert.Equal(expectedKeys, actualKeys);
                     ParityFixture.AssertValues(deleteValues, result.Adjusted, document.Compare);
+                }
+                else
+                {
+                    Assert.Empty(result.Adjusted);
                 }
 
                 break;

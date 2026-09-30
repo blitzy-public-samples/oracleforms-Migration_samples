@@ -184,7 +184,7 @@ public sealed class LineEntryRulesTests
         return fixtureCase;
     }
 
-    /// <summary>Asserts the outcome, the messages byte for byte, their rule id and the adjusted item values of one case.</summary>
+    /// <summary>Asserts the outcome, the messages byte for byte, their rule id and the exact adjusted item keys and values of one case.</summary>
     /// <param name="ruleId">Rule id of the fixture.</param>
     /// <param name="fixtureCase">Fixture case.</param>
     /// <param name="result">Actual rule result.</param>
@@ -200,6 +200,9 @@ public sealed class LineEntryRulesTests
 
         if (expected.Values is { } values)
         {
+            var expectedKeys = values.EnumerateObject().Select(property => property.Name.ToUpperInvariant()).Order(StringComparer.Ordinal).ToList();
+            var actualKeys = result.Adjusted.Keys.Select(key => key.ToUpperInvariant()).Order(StringComparer.Ordinal).ToList();
+            Assert.Equal(expectedKeys, actualKeys);
             ParityFixture.AssertValues(values, result.Adjusted, ParityFixture.Load(ruleId).Compare);
         }
         else

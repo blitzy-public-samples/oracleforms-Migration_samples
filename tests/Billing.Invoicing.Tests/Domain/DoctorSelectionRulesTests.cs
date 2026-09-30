@@ -21,7 +21,7 @@ public sealed class DoctorSelectionRulesTests
 
     private const string T029Locator = "05_Complex/Inv_Small_Cash.xml:43";
 
-    /// <summary>Each fixture case yields its expected outcome, messages and DOCIDX reset, and never blocks.</summary>
+    /// <summary>Each fixture case yields its expected outcome, messages and exact adjusted values (only the DOCIDX reset), and never blocks.</summary>
     /// <param name="caseName">Fixture case name.</param>
     [Theory]
     [Trait("Rule", RuleId)]
@@ -44,16 +44,15 @@ public sealed class DoctorSelectionRulesTests
         Assert.All(result.Messages, message => ParityFixture.AssertExact(RuleId, message.Rule));
         Assert.False(result.IsBlocking);
 
+        var expectedKeys = expected.Values is { } listed
+            ? listed.EnumerateObject().Select(property => property.Name.ToUpperInvariant()).Order(StringComparer.Ordinal).ToList()
+            : [];
+        var actualKeys = result.Adjusted.Keys.Select(key => key.ToUpperInvariant()).Order(StringComparer.Ordinal).ToList();
+        Assert.Equal(expectedKeys, actualKeys);
+
         if (expected.Values is { } values)
         {
             ParityFixture.AssertValues(values, result.Adjusted, fixture.Compare);
-        }
-
-        if (!ExpectsReset(fixtureCase))
-        {
-            Assert.DoesNotContain(
-                result.Adjusted.Keys,
-                key => string.Equals(key, DoctorKey, StringComparison.OrdinalIgnoreCase));
         }
     }
 

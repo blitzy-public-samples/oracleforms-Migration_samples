@@ -31,6 +31,18 @@
       "expected": { "outcome": "Pass", "messages": [], "values": { "REUND": 20 } }
     },
     {
+      "name": "negative-cash-first-amount-ignored",
+      "status": "derivable",
+      "input": { "allocation": { "amount1": -10, "subPayType": 1, "amount2": 40, "subPayType2": 1, "cashPayed": 50 } },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "REUND": 10 } }
+    },
+    {
+      "name": "sub-cent-cash-paid-unrounded",
+      "status": "derivable",
+      "input": { "allocation": { "amount1": 30, "subPayType": 1, "amount2": null, "subPayType2": null, "cashPayed": 50.005 } },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "REUND": 20.005 } }
+    },
+    {
       "name": "no-cash-paid-zero",
       "status": "derivable",
       "input": { "allocation": { "amount1": 60, "subPayType": 1, "amount2": null, "subPayType2": null, "cashPayed": 0 } },

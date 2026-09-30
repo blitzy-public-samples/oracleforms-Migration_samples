@@ -64,6 +64,25 @@
       "expected": { "outcome": "Pass", "messages": [], "values": { "FINALDISC_PERC": 15 } }
     },
     {
+      "name": "evaluate-value-rounded-percent-at-limit-passes",
+      "status": "derivable",
+      "input": { "method": "Evaluate", "header": { "discT": 0, "finalDiscPerc": null, "finalDisc": 7.817, "oferId": null }, "maxDisc": 15.63, "patPay": 50 },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "FINALDISC_PERC": 15.63 } },
+      "decision": "D-23"
+    },
+    {
+      "name": "evaluate-percent-null-limit-blocks",
+      "status": "derivable",
+      "input": { "method": "Evaluate", "header": { "discT": 1, "finalDiscPerc": 5, "finalDisc": null, "oferId": null }, "maxDisc": null, "patPay": 200 },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "FINALDISC_PERC", "text": "Maximum discount allawed is0", "severity": "Blocking" }] }
+    },
+    {
+      "name": "evaluate-value-null-limit-blocks",
+      "status": "derivable",
+      "input": { "method": "Evaluate", "header": { "discT": 0, "finalDiscPerc": null, "finalDisc": 10, "oferId": null }, "maxDisc": null, "patPay": 200 },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "FINALDISC", "text": "Maximum discount allawed is0", "severity": "Blocking" }] }
+    },
+    {
       "name": "apply-choice-maximum-discount-value-mode",
       "status": "derivable",
       "input": { "method": "ApplyChoice", "header": { "discT": 0, "finalDiscPerc": 15, "finalDisc": 30, "oferId": null }, "maxDisc": 10, "patPay": null, "choice": "MaximumDiscount" },

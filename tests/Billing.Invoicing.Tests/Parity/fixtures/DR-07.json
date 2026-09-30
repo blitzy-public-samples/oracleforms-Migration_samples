@@ -42,6 +42,12 @@
       "expected": { "outcome": "Pass", "messages": [], "values": { "AMOUNT_2": -30 } }
     },
     {
+      "name": "allocate-second-amount-sub-cent-unrounded",
+      "status": "derivable",
+      "input": { "method": "AllocateSecondAmount", "amountDue": 10.01, "amount1": 3.005 },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "AMOUNT_2": 7.005 } }
+    },
+    {
       "name": "reset-after-discount-change",
       "status": "derivable",
       "input": { "method": "ResetAfterDiscountChange", "amountDue": 180.5 },
@@ -65,6 +71,12 @@
       "status": "derivable",
       "input": { "method": "DefaultFirstAmount", "amountDue": null },
       "expected": { "outcome": "Pass", "messages": [], "values": { "AMOUNT_1": null } }
+    },
+    {
+      "name": "default-first-amount-sub-cent-unrounded",
+      "status": "derivable",
+      "input": { "method": "DefaultFirstAmount", "amountDue": 3.005 },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "AMOUNT_1": 3.005 } }
     },
     {
       "name": "default-first-amount-credit-null-patient-vat-uses-package-due",

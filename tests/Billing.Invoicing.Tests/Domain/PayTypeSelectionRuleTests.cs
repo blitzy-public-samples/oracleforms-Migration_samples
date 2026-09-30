@@ -20,6 +20,7 @@ public sealed class PayTypeSelectionRuleTests
     [
         "05_Complex/Inv_Small_Cash.xml:18",
         "05_Complex/Inv_Small_Cash.xml:27",
+        "05_Complex/Inv_Small_Cash.xml:33",
         "05_Complex/Inv_Small_Cash.xml:367",
     ];
 
@@ -55,7 +56,7 @@ public sealed class PayTypeSelectionRuleTests
             fixture.Compare);
     }
 
-    /// <summary>Checks that the DR-24 fixture is a domain fixture traced to T015, T023 and T026 whose cases expect both cash and credit.</summary>
+    /// <summary>Checks that the DR-24 fixture is a domain fixture traced to T015, T023, T026 and the PAYTYPE item whose cases expect both cash and credit.</summary>
     [Fact]
     [Trait("Rule", RuleId)]
     public void Fixture_DR_24_expects_cash_and_credit()

@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.Json;
 using Billing.Invoicing.Domain.Model;
 using Billing.Invoicing.Domain.Rules;
@@ -16,9 +15,11 @@ public sealed class PatientEligibilityRulesTests
 
     private const string T023Locator = "05_Complex/Inv_Small_Cash.xml:18";
 
-    private static readonly DateTime DraftDate = new(2026, 9, 28);
+    private const string InvDateItemLocator = "05_Complex/Inv_Small_Cash.xml:16";
 
-    private static readonly string[] DraftTimesOfDay = ["00:00:01", "10:15:00", "12:00:00", "18:30:00", "23:59:59"];
+    private const string T015Locator = "05_Complex/Inv_Small_Cash.xml:367";
+
+    private static readonly DateTime DraftDate = new(2026, 9, 28);
 
     /// <summary>Each fixture case yields its expected outcome and PATIENTNO messages, in order and verbatim.</summary>
     /// <param name="caseName">Fixture case name.</param>
@@ -41,31 +42,7 @@ public sealed class PatientEligibilityRulesTests
         Assert.Empty(result.Adjusted);
     }
 
-    /// <summary>Each midnight-dated fixture case yields its expected outcome and messages at any time of the same draft day.</summary>
-    /// <param name="caseName">Fixture case name.</param>
-    /// <param name="timeOfDay">Time of day added to the case's draft date, as <c>HH:mm:ss</c>.</param>
-    [Theory]
-    [Trait("Rule", RuleId)]
-    [MemberData(nameof(CaseNamesAtDraftTimesOfDay))]
-    public void Evaluate_matches_DR_03_at_any_time_of_the_draft_day(string caseName, string timeOfDay)
-    {
-        var fixtureCase = ParityFixture.Case(RuleId, caseName);
-        Assert.True(ParityFixture.IsDerivable(fixtureCase), $"Fixture '{RuleId}', case '{caseName}' is not derivable.");
-        var expectedMessages = fixtureCase.Expected.Messages
-            ?? throw new InvalidDataException($"Fixture '{RuleId}', case '{caseName}': expected.messages is missing.");
-        var (coverage, parameters, draftDate) = ReadInput(fixtureCase);
-        Assert.Equal(TimeSpan.Zero, draftDate.TimeOfDay);
-        var draftTime = draftDate + TimeSpan.ParseExact(timeOfDay, @"hh\:mm\:ss", CultureInfo.InvariantCulture);
-
-        var result = PatientEligibilityRules.Evaluate(coverage, parameters, draftTime);
-
-        ParityFixture.AssertExact(fixtureCase.Expected.Outcome, Outcome(result));
-        ParityFixture.AssertMessages(expectedMessages, result.Messages.Select(m => (m.Field, m.Text, m.Severity)));
-        Assert.All(result.Messages, m => Assert.Equal(RuleId, m.Rule));
-        Assert.Empty(result.Adjusted);
-    }
-
-    /// <summary>The DR-03 fixture is a domain fixture derived from T023 with at least one derivable case.</summary>
+    /// <summary>The DR-03 fixture is a domain fixture derived from T023, INVDATE and T015, with derivable and daytime cases.</summary>
     [Fact]
     [Trait("Rule", RuleId)]
     public void Fixture_is_a_domain_fixture_with_derivable_cases()
@@ -76,7 +53,10 @@ public sealed class PatientEligibilityRulesTests
         Assert.Equal(ParityFixture.DomainClass, fixture.Class);
         Assert.NotEmpty(fixture.Cases);
         Assert.All(fixture.Cases, fixtureCase => Assert.True(ParityFixture.IsDerivable(fixtureCase), fixtureCase.Name));
-        Assert.Contains(fixture.Source, source => string.Equals(source.Locator, T023Locator, StringComparison.Ordinal));
+        Assert.All(
+            new[] { T023Locator, InvDateItemLocator, T015Locator },
+            locator => Assert.Contains(fixture.Source, source => string.Equals(source.Locator, locator, StringComparison.Ordinal)));
+        Assert.Contains(fixture.Cases, fixtureCase => ReadInput(fixtureCase).DraftDate.TimeOfDay != TimeSpan.Zero);
     }
 
     /// <summary>A card company without a sub-company or class skips the policy and class checks of T023.</summary>
@@ -119,58 +99,6 @@ public sealed class PatientEligibilityRulesTests
         ParityFixture.AssertExact(PassOutcome, Outcome(result));
         Assert.Empty(result.Messages);
     }
-
-    /// <summary>A daytime draft compares the contract, card and policy end dates as read against the draft day, with T023's texts.</summary>
-    /// <param name="endField">Coverage end date varied from the valid card-company coverage.</param>
-    /// <param name="endDate">That end date as read, in the sortable <c>s</c> format.</param>
-    /// <param name="draftTime">Draft date and time, in the sortable <c>s</c> format.</param>
-    /// <param name="invDateAdmin"><c>INV_DATE_ADMIN</c>: 1 date admin, 2 normal user.</param>
-    /// <param name="outcome">Expected outcome, also the severity of the expected message.</param>
-    /// <param name="text">Expected <c>PATIENTNO</c> text, verbatim; null when no message is expected.</param>
-    [Theory]
-    [Trait("Rule", RuleId)]
-    [InlineData(nameof(PatientCoverageSnapshot.ContractEnd), "2026-09-28T00:00:00", "2026-09-28T15:30:00", 2, PassOutcome, null)]
-    [InlineData(nameof(PatientCoverageSnapshot.ContractEnd), "2026-09-27T00:00:00", "2026-09-28T00:00:01", 2, ValidationMessage.Blocking, "Contract  Ended 27/09/2026")]
-    [InlineData(nameof(PatientCoverageSnapshot.CardEnd), "2026-09-28T00:00:00", "2026-09-28T18:30:00", 2, ValidationMessage.Warning, "Card Expired 28/09/2026 , Today last Date")]
-    [InlineData(nameof(PatientCoverageSnapshot.CardEnd), "2026-09-28T00:00:00", "2026-09-28T18:30:00", 1, ValidationMessage.Warning, "Card Expired 28/09/2026 , Today last Date")]
-    [InlineData(nameof(PatientCoverageSnapshot.CardEnd), "2026-09-27T00:00:00", "2026-09-28T00:00:01", 2, ValidationMessage.Blocking, "Card Expired 27/09/2026")]
-    [InlineData(nameof(PatientCoverageSnapshot.CardEnd), "2026-09-28T18:00:00", "2026-09-28T10:15:00", 2, PassOutcome, null)]
-    [InlineData(nameof(PatientCoverageSnapshot.SubCompanyContractEnd), "2026-09-28T00:00:00", "2026-09-28T23:59:59", 2, PassOutcome, null)]
-    [InlineData(nameof(PatientCoverageSnapshot.SubCompanyContractEnd), "2026-09-27T00:00:00", "2026-09-28T23:59:59", 2, ValidationMessage.Blocking, "Policy  Ended 27/09/2026 Patient well treated as cash patient ")]
-    public void Evaluate_compares_end_dates_against_the_draft_day(
-        string endField,
-        string endDate,
-        string draftTime,
-        int invDateAdmin,
-        string outcome,
-        string? text)
-    {
-        var end = DateTime.ParseExact(endDate, "s", CultureInfo.InvariantCulture);
-        var coverage = endField switch
-        {
-            nameof(PatientCoverageSnapshot.ContractEnd) => CardCompanyCoverage() with { ContractEnd = end },
-            nameof(PatientCoverageSnapshot.CardEnd) => CardCompanyCoverage() with { CardEnd = end },
-            nameof(PatientCoverageSnapshot.SubCompanyContractEnd) => CardCompanyCoverage() with { SubCompanyContractEnd = end },
-            _ => throw new ArgumentOutOfRangeException(nameof(endField), endField, "Not a DR-03 coverage end date."),
-        };
-        var parameters = new InvoiceEntryParameters { InvDateAdmin = invDateAdmin };
-
-        var result = PatientEligibilityRules.Evaluate(coverage, parameters, DateTime.ParseExact(draftTime, "s", CultureInfo.InvariantCulture));
-
-        ParityFixture.AssertExact(outcome, Outcome(result));
-        ParityFixture.AssertMessages(
-            text is null ? [] : [new FixtureMessage("PATIENTNO", text, outcome)],
-            result.Messages.Select(m => (m.Field, m.Text, m.Severity)));
-        Assert.All(result.Messages, m => Assert.Equal(RuleId, m.Rule));
-        Assert.Empty(result.Adjusted);
-    }
-
-    /// <summary>Theory rows pairing each DR-03 fixture case name with each draft time of day, in file order.</summary>
-    /// <returns>One row per case and time, holding the case name and the time as <c>HH:mm:ss</c>.</returns>
-    public static IEnumerable<object[]> CaseNamesAtDraftTimesOfDay() =>
-        ParityFixture.CaseNames(RuleId)
-            .SelectMany(row => DraftTimesOfDay.Select(time => new object[] { row[0], time }))
-            .ToArray();
 
     private static string Outcome(RuleResult result) =>
         result.IsBlocking

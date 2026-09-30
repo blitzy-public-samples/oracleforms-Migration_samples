@@ -12,6 +12,12 @@
       "expected": { "outcome": "Pass", "messages": [], "values": { "TOTAL_COLLECTED": 120.75 } }
     },
     {
+      "name": "sub-cent-amount-unrounded",
+      "status": "derivable",
+      "input": { "amount1": 1.005, "amount2": 2 },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "TOTAL_COLLECTED": 3.005 } }
+    },
+    {
       "name": "first-null",
       "status": "derivable",
       "input": { "amount1": null, "amount2": 30 },

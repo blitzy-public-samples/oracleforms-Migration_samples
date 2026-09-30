@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Globalization;
 using System.Net.Sockets;
 using System.Reflection;
@@ -48,17 +49,17 @@ public sealed class OracleFailureTranslatorTests
         1033, 1034, 1089,
     };
 
-    public static TheoryData<int> CatalogueRowIndexes
+    public static TheoryData<string, int, string> CatalogueRows
     {
         get
         {
-            var indexes = new TheoryData<int>();
-            for (int index = 0; index < OracleErrorCatalog.Rows.Count; index++)
+            var rows = new TheoryData<string, int, string>();
+            foreach (var (package, number, messagePrefix, _, _, _) in OracleErrorCatalog.Rows)
             {
-                indexes.Add(index);
+                rows.Add(package, number, messagePrefix);
             }
 
-            return indexes;
+            return rows;
         }
     }
 
@@ -169,10 +170,14 @@ public sealed class OracleFailureTranslatorTests
     }
 
     [Theory]
-    [MemberData(nameof(CatalogueRowIndexes))]
-    public void Translate_CatalogueRow_CarriesPackageKindFieldAndLegacyText(int index)
+    [MemberData(nameof(CatalogueRows))]
+    public void Translate_CatalogueRow_CarriesPackageKindFieldAndLegacyText(string package, int number, string messagePrefix)
     {
-        var row = OracleErrorCatalog.Rows[index];
+        var row = Assert.Single(
+            OracleErrorCatalog.Rows,
+            r => string.Equals(r.Package, package, StringComparison.Ordinal)
+                && r.Number == number
+                && string.Equals(r.MessagePrefix, messagePrefix, StringComparison.Ordinal));
         string text = row.MessagePrefix + "tail";
 
         DataFailure failure = translator.Translate(Err(-row.Number, text));
@@ -511,7 +516,14 @@ public sealed class OracleFailureTranslatorTests
     [Fact]
     public void Translate_ConfigurationFault_Is500WithFixedMessage()
     {
-        const string connectionString = "Data Source=HISDB;User Id=his;Password=secret;Pooling=maybe";
+        string password = "synthetic-" + Guid.NewGuid().ToString("N");
+        string connectionString = new DbConnectionStringBuilder
+        {
+            ["Data Source"] = "HISDB",
+            ["User Id"] = "his",
+            ["Password"] = password,
+            ["Pooling"] = "maybe",
+        }.ConnectionString;
         var invalid = new InvalidOperationException("ORA-50029: OracleConnection.ConnectionString is invalid");
         invalid.Data[OracleFailureTranslator.ConfigurationFaultKey] = true;
         var malformed = new ArgumentException("ORA-50007: " + connectionString);
@@ -526,7 +538,7 @@ public sealed class OracleFailureTranslatorTests
             new InvalidOperationException("open failed", wrappedMalformed),
         })
         {
-            AssertConfigurationFault(translator.Translate(exception), connectionString);
+            AssertConfigurationFault(translator.Translate(exception), connectionString, password);
         }
     }
 
@@ -558,7 +570,7 @@ public sealed class OracleFailureTranslatorTests
 
         Assert.True(thrown.Data[OracleFailureTranslator.ConfigurationFaultKey] is true);
         Assert.Null(thrown.InnerException);
-        AssertConfigurationFault(translator.Translate(thrown), connectionString: null);
+        AssertConfigurationFault(translator.Translate(thrown), connectionString: null, password: null);
     }
 
     [Fact]
@@ -813,7 +825,8 @@ public sealed class OracleFailureTranslatorTests
     /// <summary>Asserts a 500 oracle-error failure with no number or package and the fixed connection-string message.</summary>
     /// <param name="failure">The translated failure.</param>
     /// <param name="connectionString">Connection string the message must not contain, or null.</param>
-    private static void AssertConfigurationFault(DataFailure? failure, string? connectionString)
+    /// <param name="password">Password the message must not contain, or null.</param>
+    private static void AssertConfigurationFault(DataFailure? failure, string? connectionString, string? password)
     {
         Assert.NotNull(failure);
         Assert.Equal(500, failure.Status);
@@ -827,7 +840,11 @@ public sealed class OracleFailureTranslatorTests
         if (connectionString is not null)
         {
             Assert.DoesNotContain(connectionString, failure.Message, StringComparison.Ordinal);
-            Assert.DoesNotContain("secret", failure.Message, StringComparison.Ordinal);
+        }
+
+        if (password is not null)
+        {
+            Assert.DoesNotContain(password, failure.Message, StringComparison.Ordinal);
         }
     }
 

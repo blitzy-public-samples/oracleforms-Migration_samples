@@ -25,7 +25,7 @@ public sealed class RequestImportRulesTests
 
     private const string PassOutcome = "Pass";
 
-    /// <summary>Runs the DR-18 method a fixture case names and compares its outcome and messages.</summary>
+    /// <summary>Runs the DR-18 method a fixture case names and compares its outcome, messages and exact adjusted values.</summary>
     /// <param name="caseName">Fixture case name.</param>
     [Theory]
     [Trait("Rule", "DR-18")]
@@ -60,6 +60,18 @@ public sealed class RequestImportRulesTests
         ParityFixture.AssertExact(fixtureCase.Expected.Outcome, Outcome(result));
         ParityFixture.AssertMessages(expectedMessages, result.Messages.Select(m => (m.Field, m.Text, m.Severity)));
         Assert.All(result.Messages, message => ParityFixture.AssertExact(RuleId, message.Rule));
+
+        if (fixtureCase.Expected.Values is { } values)
+        {
+            var expectedKeys = values.EnumerateObject().Select(property => property.Name.ToUpperInvariant()).Order(StringComparer.Ordinal).ToList();
+            var actualKeys = result.Adjusted.Keys.Select(key => key.ToUpperInvariant()).Order(StringComparer.Ordinal).ToList();
+            Assert.Equal(expectedKeys, actualKeys);
+            ParityFixture.AssertValues(values, result.Adjusted, ParityFixture.Load(RuleId).Compare);
+        }
+        else
+        {
+            Assert.Empty(result.Adjusted);
+        }
     }
 
     /// <summary>Checks that the DR-18 fixture is a derivable domain fixture traced to T085 exercising both methods.</summary>

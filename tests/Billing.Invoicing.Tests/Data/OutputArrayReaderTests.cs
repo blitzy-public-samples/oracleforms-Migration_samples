@@ -1,4 +1,5 @@
 using System.Data;
+using System.Text.RegularExpressions;
 using Billing.Invoicing.Data.Oracle;
 using Billing.Invoicing.Data.Plsql;
 using Oracle.ManagedDataAccess.Client;
@@ -12,6 +13,8 @@ public sealed class OutputArrayReaderTests
 {
     private const string PreviewLineCount = "pl_count";
     private const string EngineLineCount = "el_count";
+    private const int RegistrationCapacity = 7;
+    private const int DefaultTextWidth = 4000;
 
     private static readonly int Capacity = new InvoicingDataOptions().MaxOutputLines;
 
@@ -83,6 +86,22 @@ public sealed class OutputArrayReaderTests
     };
 
     private static readonly HashSet<string> DateFields = new(StringComparer.Ordinal) { "el_approv_date", "fr_invdate" };
+
+    private static readonly Dictionary<string, int> NarrowTextWidths = new(StringComparer.Ordinal)
+    {
+        ["pl_manual_discount_type"] = 1,
+        ["pl_discount_source"] = 20,
+        ["pl_allow_manual_discount"] = 1,
+        ["pl_allow_price_override"] = 1,
+        ["pl_package_definition_token"] = 64,
+        ["pt_payment_status"] = 30,
+        ["el_use_price_override"] = 1,
+        ["el_discount_type"] = 1,
+        ["el_package_definition_token"] = 64,
+        ["ir_source_type"] = 30,
+    };
+
+    private static readonly string[] OutputPrefixes = ["pl_", "pt_", "el_", "ir_", "fr_"];
 
     [Fact]
     public void ReadPreviewLines_CountBelowPopulatedSlots_ReadsOnlyCountedSlotsFieldByField()
@@ -677,6 +696,180 @@ public sealed class OutputArrayReaderTests
         Assert.Throws<ArgumentNullException>(() => OutputArrayReader.ReadFullInvoiceResult(null!));
     }
 
+    [Theory]
+    [InlineData(nameof(OutputArrayReader.AddPreviewLineOutputs))]
+    [InlineData(nameof(OutputArrayReader.AddPreviewTotalsOutputs))]
+    [InlineData(nameof(OutputArrayReader.AddEngineLineOutputs))]
+    [InlineData(nameof(OutputArrayReader.AddImportResultOutputs))]
+    [InlineData(nameof(OutputArrayReader.AddFullInvoiceResultOutputs))]
+    public void Register_FreshCollection_AddsExactlyTheExpectedOutBinds(string registration)
+    {
+        using OracleCommand command = new();
+
+        Register(registration, command.Parameters, RegistrationCapacity);
+
+        Dictionary<string, OutBindShape> expected = ExpectedOutBinds(registration);
+        List<OutBindShape> actual = [.. command.Parameters.Cast<OracleParameter>().Select(ShapeOf)];
+        Assert.Equal(expected.Count, actual.Count);
+        Assert.Equal(
+            expected.Keys.Order(StringComparer.Ordinal),
+            actual.Select(shape => shape.Name).Order(StringComparer.Ordinal));
+        foreach (OutBindShape shape in actual)
+        {
+            Assert.Equal(expected[shape.Name], shape);
+        }
+    }
+
+    [Theory]
+    [InlineData(RegistrationCapacity)]
+    [InlineData(3)]
+    public void RegisteredPreviewOutputs_Populated_ReadBackFieldByField(int count)
+    {
+        using OracleCommand command = new();
+        OutputArrayReader.AddPreviewLineOutputs(command.Parameters, RegistrationCapacity);
+        OutputArrayReader.AddPreviewTotalsOutputs(command.Parameters);
+        AssignRegisteredArrays(command.Parameters, PreviewLineCount, count, PreviewLineFields);
+        AssignRegisteredScalars(command.Parameters, PreviewTotalsFields);
+
+        IReadOnlyList<EditablePreviewLine> lines = OutputArrayReader.ReadPreviewLines(command.Parameters);
+        PreviewTotalsRow totals = OutputArrayReader.ReadPreviewTotals(command.Parameters);
+
+        Assert.Equal(Enumerable.Range(0, count).Select(ExpectedPreviewLine), lines);
+        Assert.Equal(ExpectedPreviewTotals(), totals);
+    }
+
+    [Theory]
+    [InlineData(RegistrationCapacity)]
+    [InlineData(2)]
+    public void RegisteredEngineAndImportOutputs_Populated_ReadBackFieldByField(int count)
+    {
+        using OracleCommand command = new();
+        OutputArrayReader.AddEngineLineOutputs(command.Parameters, RegistrationCapacity);
+        OutputArrayReader.AddImportResultOutputs(command.Parameters);
+        AssignRegisteredArrays(command.Parameters, EngineLineCount, count, EngineLineFields);
+        AssignRegisteredScalars(command.Parameters, ImportResultFields);
+
+        IReadOnlyList<EngineLineInput> lines = OutputArrayReader.ReadEngineLines(command.Parameters);
+        ImportResultRow result = OutputArrayReader.ReadImportResult(command.Parameters);
+
+        Assert.Equal(Enumerable.Range(0, count).Select(ExpectedEngineLine), lines);
+        Assert.Equal(ExpectedImportResult(), result);
+    }
+
+    [Fact]
+    public void RegisteredFullInvoiceResultOutputs_Populated_ReadBackFieldByField()
+    {
+        using OracleCommand command = new();
+        OutputArrayReader.AddFullInvoiceResultOutputs(command.Parameters);
+        AssignRegisteredScalars(command.Parameters, FullInvoiceResultFields);
+
+        FullInvoiceResultRow result = OutputArrayReader.ReadFullInvoiceResult(command.Parameters);
+
+        Assert.Equal(ExpectedFullInvoiceResult(), result);
+    }
+
+    [Theory]
+    [InlineData(nameof(PlsqlBlocks.Preview), nameof(OutputArrayReader.AddPreviewLineOutputs), nameof(OutputArrayReader.AddPreviewTotalsOutputs))]
+    [InlineData(nameof(PlsqlBlocks.Create), nameof(OutputArrayReader.AddFullInvoiceResultOutputs), null)]
+    [InlineData(nameof(PlsqlBlocks.RequestImport), nameof(OutputArrayReader.AddEngineLineOutputs), nameof(OutputArrayReader.AddImportResultOutputs))]
+    [InlineData(nameof(PlsqlBlocks.VisitLine), nameof(OutputArrayReader.AddEngineLineOutputs), nameof(OutputArrayReader.AddImportResultOutputs))]
+    [InlineData(nameof(PlsqlBlocks.PackageLines), nameof(OutputArrayReader.AddEngineLineOutputs), nameof(OutputArrayReader.AddImportResultOutputs))]
+    [InlineData(nameof(PlsqlBlocks.BundledOffer), nameof(OutputArrayReader.AddPreviewLineOutputs), null)]
+    public void PlsqlBlock_OutPlaceholders_EqualTheRegisteredOutBinds(string blockName, string registration, string? secondRegistration)
+    {
+        using OracleCommand command = new();
+        Register(registration, command.Parameters, RegistrationCapacity);
+        if (secondRegistration is not null)
+        {
+            Register(secondRegistration, command.Parameters, RegistrationCapacity);
+        }
+
+        List<string> registered =
+        [
+            .. command.Parameters.Cast<OracleParameter>()
+                .Select(parameter => parameter.ParameterName)
+                .Order(StringComparer.Ordinal),
+        ];
+
+        Assert.Equal(OutPlaceholders(Block(blockName)), registered);
+    }
+
+    [Theory]
+    [InlineData(nameof(OutputArrayReader.AddPreviewLineOutputs), 0)]
+    [InlineData(nameof(OutputArrayReader.AddPreviewLineOutputs), -1)]
+    [InlineData(nameof(OutputArrayReader.AddEngineLineOutputs), 0)]
+    [InlineData(nameof(OutputArrayReader.AddEngineLineOutputs), -1)]
+    public void RegisterArrays_CapacityBelowOne_ThrowsAndAddsNothing(string registration, int capacity)
+    {
+        using OracleCommand command = new();
+
+        ArgumentOutOfRangeException error = Assert.Throws<ArgumentOutOfRangeException>(
+            () => Register(registration, command.Parameters, capacity));
+
+        Assert.Equal("capacity", error.ParamName);
+        Assert.Equal(capacity, error.ActualValue);
+        Assert.Empty(command.Parameters);
+    }
+
+    [Theory]
+    [InlineData(nameof(OutputArrayReader.AddPreviewLineOutputs))]
+    [InlineData(nameof(OutputArrayReader.AddPreviewTotalsOutputs))]
+    [InlineData(nameof(OutputArrayReader.AddEngineLineOutputs))]
+    [InlineData(nameof(OutputArrayReader.AddImportResultOutputs))]
+    [InlineData(nameof(OutputArrayReader.AddFullInvoiceResultOutputs))]
+    public void Register_NullCollection_ThrowsArgumentNull(string registration)
+    {
+        ArgumentNullException error = Assert.Throws<ArgumentNullException>(
+            () => Register(registration, null!, RegistrationCapacity));
+
+        Assert.Equal("parameters", error.ParamName);
+    }
+
+    [Theory]
+    [InlineData(nameof(OutputArrayReader.AddPreviewLineOutputs))]
+    [InlineData(nameof(OutputArrayReader.AddPreviewTotalsOutputs))]
+    [InlineData(nameof(OutputArrayReader.AddEngineLineOutputs))]
+    [InlineData(nameof(OutputArrayReader.AddImportResultOutputs))]
+    [InlineData(nameof(OutputArrayReader.AddFullInvoiceResultOutputs))]
+    public void Register_Twice_ThrowsAndAddsNothing(string registration)
+    {
+        using OracleCommand command = new();
+        Register(registration, command.Parameters, RegistrationCapacity);
+        List<OutBindShape> registered = [.. command.Parameters.Cast<OracleParameter>().Select(ShapeOf)];
+        (string? countName, string[] fields) = Outputs(registration);
+
+        InvalidOperationException error = Assert.Throws<InvalidOperationException>(
+            () => Register(registration, command.Parameters, RegistrationCapacity));
+
+        Assert.Contains($"OUT parameter '{countName ?? fields[0]}' is already in the parameter collection", error.Message, StringComparison.Ordinal);
+        Assert.Equal(registered, command.Parameters.Cast<OracleParameter>().Select(ShapeOf));
+    }
+
+    [Theory]
+    [InlineData(nameof(OutputArrayReader.AddPreviewLineOutputs), "pl_offer_dtl_object_version_number")]
+    [InlineData(nameof(OutputArrayReader.AddPreviewLineOutputs), ":pl_count")]
+    [InlineData(nameof(OutputArrayReader.AddPreviewTotalsOutputs), "pt_payment_status")]
+    [InlineData(nameof(OutputArrayReader.AddPreviewTotalsOutputs), ":pt_remaining_amount")]
+    [InlineData(nameof(OutputArrayReader.AddEngineLineOutputs), "el_offer_dtl_object_version_number")]
+    [InlineData(nameof(OutputArrayReader.AddEngineLineOutputs), ":el_approv_date")]
+    [InlineData(nameof(OutputArrayReader.AddImportResultOutputs), "ir_message")]
+    [InlineData(nameof(OutputArrayReader.AddImportResultOutputs), ":ir_has_price_overrides")]
+    [InlineData(nameof(OutputArrayReader.AddFullInvoiceResultOutputs), "fr_message_text")]
+    [InlineData(nameof(OutputArrayReader.AddFullInvoiceResultOutputs), ":fr_invdate")]
+    public void Register_NameAlreadyPresent_ThrowsAndAddsNothing(string registration, string existingName)
+    {
+        using OracleCommand command = new();
+        command.Parameters.Add(new OracleParameter(existingName, OracleDbType.Varchar2) { Direction = ParameterDirection.Input });
+
+        InvalidOperationException error = Assert.Throws<InvalidOperationException>(
+            () => Register(registration, command.Parameters, RegistrationCapacity));
+
+        Assert.Contains($"OUT parameter '{existingName.TrimStart(':')}' is already in the parameter collection", error.Message, StringComparison.Ordinal);
+        OracleParameter remaining = Assert.Single(command.Parameters.Cast<OracleParameter>());
+        Assert.Equal(existingName, remaining.ParameterName);
+        Assert.Equal(ParameterDirection.Input, remaining.Direction);
+    }
+
     private static void AddArray(OracleParameterCollection parameters, string name, OracleDbType type, Array values) =>
         parameters.Add(new OracleParameter(name, type)
         {
@@ -780,6 +973,132 @@ public sealed class OutputArrayReaderTests
         ArgumentOutOfRangeException.ThrowIfNegative(index, field);
         return index + 1 + (100 * slot);
     }
+
+    private static void Register(string registration, OracleParameterCollection parameters, int capacity)
+    {
+        switch (registration)
+        {
+            case nameof(OutputArrayReader.AddPreviewLineOutputs):
+                OutputArrayReader.AddPreviewLineOutputs(parameters, capacity);
+                break;
+            case nameof(OutputArrayReader.AddPreviewTotalsOutputs):
+                OutputArrayReader.AddPreviewTotalsOutputs(parameters);
+                break;
+            case nameof(OutputArrayReader.AddEngineLineOutputs):
+                OutputArrayReader.AddEngineLineOutputs(parameters, capacity);
+                break;
+            case nameof(OutputArrayReader.AddImportResultOutputs):
+                OutputArrayReader.AddImportResultOutputs(parameters);
+                break;
+            case nameof(OutputArrayReader.AddFullInvoiceResultOutputs):
+                OutputArrayReader.AddFullInvoiceResultOutputs(parameters);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(registration), registration, "Unknown OUT registration.");
+        }
+    }
+
+    private static (string? CountName, string[] Fields) Outputs(string registration) => registration switch
+    {
+        nameof(OutputArrayReader.AddPreviewLineOutputs) => (PreviewLineCount, PreviewLineFields),
+        nameof(OutputArrayReader.AddPreviewTotalsOutputs) => (null, PreviewTotalsFields),
+        nameof(OutputArrayReader.AddEngineLineOutputs) => (EngineLineCount, EngineLineFields),
+        nameof(OutputArrayReader.AddImportResultOutputs) => (null, ImportResultFields),
+        nameof(OutputArrayReader.AddFullInvoiceResultOutputs) => (null, FullInvoiceResultFields),
+        _ => throw new ArgumentOutOfRangeException(nameof(registration), registration, "Unknown OUT registration."),
+    };
+
+    private static Dictionary<string, OutBindShape> ExpectedOutBinds(string registration)
+    {
+        (string? countName, string[] fields) = Outputs(registration);
+        var expected = new Dictionary<string, OutBindShape>(StringComparer.Ordinal);
+        if (countName is not null)
+        {
+            expected.Add(countName, new OutBindShape(countName, OracleDbType.Decimal, ParameterDirection.Output, OracleCollectionType.None, 0, null));
+        }
+
+        foreach (string field in fields)
+        {
+            OracleDbType type = TypeOf(field);
+            int? width = type == OracleDbType.Varchar2 ? TextWidth(field) : null;
+            expected.Add(field, countName is null
+                ? new OutBindShape(field, type, ParameterDirection.Output, OracleCollectionType.None, width ?? 0, null)
+                : new OutBindShape(
+                    field,
+                    type,
+                    ParameterDirection.Output,
+                    OracleCollectionType.PLSQLAssociativeArray,
+                    RegistrationCapacity,
+                    width is { } elementWidth ? string.Join(",", Enumerable.Repeat(elementWidth, RegistrationCapacity)) : null));
+        }
+
+        return expected;
+    }
+
+    private static int TextWidth(string field) => NarrowTextWidths.GetValueOrDefault(field, DefaultTextWidth);
+
+    private static OutBindShape ShapeOf(OracleParameter parameter) => new(
+        parameter.ParameterName,
+        parameter.OracleDbType,
+        parameter.Direction,
+        parameter.CollectionType,
+        parameter.Size,
+        parameter.ArrayBindSize is null ? null : string.Join(",", parameter.ArrayBindSize));
+
+    private static OracleParameter Registered(OracleParameterCollection parameters, string name)
+    {
+        int index = parameters.IndexOf(name);
+        Assert.True(index >= 0, $"OUT parameter '{name}' is not registered.");
+        return parameters[index];
+    }
+
+    private static void AssignRegisteredArrays(OracleParameterCollection parameters, string countName, int count, string[] fields)
+    {
+        Registered(parameters, countName).Value = new OracleDecimal(count);
+        foreach (string field in fields)
+        {
+            OracleDbType type = TypeOf(field);
+            Array values = type switch
+            {
+                OracleDbType.Varchar2 => new OracleString[RegistrationCapacity],
+                OracleDbType.Date => new OracleDate[RegistrationCapacity],
+                _ => new OracleDecimal[RegistrationCapacity],
+            };
+            for (int slot = 0; slot < RegistrationCapacity; slot++)
+            {
+                values.SetValue(OracleValue(type, Generated(fields, field, slot)), slot);
+            }
+
+            Registered(parameters, field).Value = values;
+        }
+    }
+
+    private static void AssignRegisteredScalars(OracleParameterCollection parameters, string[] fields)
+    {
+        foreach (string field in fields)
+        {
+            Registered(parameters, field).Value = OracleValue(TypeOf(field), Generated(fields, field, 0));
+        }
+    }
+
+    private static string Block(string blockName) => blockName switch
+    {
+        nameof(PlsqlBlocks.Preview) => PlsqlBlocks.Preview,
+        nameof(PlsqlBlocks.Create) => PlsqlBlocks.Create,
+        nameof(PlsqlBlocks.RequestImport) => PlsqlBlocks.RequestImport,
+        nameof(PlsqlBlocks.VisitLine) => PlsqlBlocks.VisitLine,
+        nameof(PlsqlBlocks.PackageLines) => PlsqlBlocks.PackageLines,
+        nameof(PlsqlBlocks.BundledOffer) => PlsqlBlocks.BundledOffer,
+        _ => throw new ArgumentOutOfRangeException(nameof(blockName), blockName, "Unknown PL/SQL block."),
+    };
+
+    private static List<string> OutPlaceholders(string block) =>
+    [
+        .. Regex.Matches(block, @"=>\s*:(\w+)", RegexOptions.CultureInvariant)
+            .Select(match => match.Groups[1].Value)
+            .Where(name => OutputPrefixes.Any(prefix => name.StartsWith(prefix, StringComparison.Ordinal)))
+            .Order(StringComparer.Ordinal),
+    ];
 
 
     private static EditablePreviewLine ExpectedPreviewLine(int slot)
@@ -892,6 +1211,23 @@ public sealed class OutputArrayReaderTests
         };
     }
 
+    private static ImportResultRow ExpectedImportResult()
+    {
+        string T(string field) => Text(field, 0);
+        decimal N(string field) => Number(ImportResultFields, field, 0);
+        return new ImportResultRow
+        {
+            SourceType = T("ir_source_type"),
+            SourceCount = (int)N("ir_source_count"),
+            ImportedCount = (int)N("ir_imported_count"),
+            SkippedRejectedCount = (int)N("ir_skipped_rejected_count"),
+            SkippedNeedApprovalCount = (int)N("ir_skipped_need_approval_count"),
+            SkippedInvalidCount = (int)N("ir_skipped_invalid_count"),
+            HasPriceOverrides = T("ir_has_price_overrides"),
+            Message = T("ir_message"),
+        };
+    }
+
     private static EngineLineInput ExpectedEngineLine(int slot)
     {
         string T(string field) => Text(field, slot);
@@ -935,4 +1271,13 @@ public sealed class OutputArrayReaderTests
             OfferDtlObjectVersionNumber = (long)N("el_offer_dtl_object_version_number"),
         };
     }
+
+    /// <summary>The registration settings of one OUT bind.</summary>
+    private readonly record struct OutBindShape(
+        string Name,
+        OracleDbType Type,
+        ParameterDirection Direction,
+        OracleCollectionType CollectionType,
+        int Size,
+        string? ArrayBindSizes);
 }

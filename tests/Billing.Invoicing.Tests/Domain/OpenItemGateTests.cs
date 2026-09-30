@@ -63,7 +63,7 @@ public sealed class OpenItemGateTests
     [Trait("OpenItem", "OI-32")]
     public void Queued_service_without_sub_company_returns_no_OI32()
     {
-        Assert.DoesNotContain(OpenItemIds.OI32, Eval(Header(), [Service(addToQue: 1)]));
+        Assert.Empty(Eval(Header(), [Service(addToQue: 1)]));
     }
 
     [Theory]
@@ -183,14 +183,14 @@ public sealed class OpenItemGateTests
     [Trait("OpenItem", "OI-23")]
     public void D51_credit_without_deductible_or_advanced_class_returns_no_OI23()
     {
-        Assert.DoesNotContain(OpenItemIds.OI23, Eval(Header(payType: 2), [Service()], maxDeductable: 0m, useAdvanced: 1));
+        Assert.Empty(Eval(Header(payType: 2), [Service()], maxDeductable: 0m, useAdvanced: 1));
     }
 
     [Fact]
     [Trait("OpenItem", "OI-23")]
     public void D51_cash_with_deductible_returns_no_OI23()
     {
-        Assert.DoesNotContain(OpenItemIds.OI23, Eval(Header(payType: 1), [Service()], maxDeductable: 50m, useAdvanced: 2));
+        Assert.Empty(Eval(Header(payType: 1), [Service()], maxDeductable: 50m, useAdvanced: 2));
     }
 
     [Fact]

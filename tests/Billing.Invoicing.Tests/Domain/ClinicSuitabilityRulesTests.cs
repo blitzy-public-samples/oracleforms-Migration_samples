@@ -29,13 +29,14 @@ public sealed class ClinicSuitabilityRulesTests
 
     private const string PassOutcome = "Pass";
 
-    /// <summary>Runs the check named by the case and compares outcome and messages; DR-04 never blocks.</summary>
+    /// <summary>Runs the check named by the case and compares outcome, messages and exact adjusted values; DR-04 never blocks.</summary>
     /// <param name="caseName">Fixture case name.</param>
     [Theory]
     [Trait("Rule", RuleId)]
     [MemberData(nameof(ParityFixture.CaseNames), RuleId, MemberType = typeof(ParityFixture))]
     public void Clinic_suitability_matches_DR_04(string caseName)
     {
+        var fixture = ParityFixture.Load(RuleId);
         var fixtureCase = ParityFixture.Case(RuleId, caseName);
         Assert.True(ParityFixture.IsDerivable(fixtureCase), $"Fixture '{RuleId}', case '{caseName}' is not {ParityFixture.Derivable}.");
         var expectedMessages = fixtureCase.Expected.Messages
@@ -64,6 +65,17 @@ public sealed class ClinicSuitabilityRulesTests
             expectedMessages,
             result.Messages.Select(message => (message.Field, message.Text, message.Severity)));
         Assert.All(result.Messages, message => ParityFixture.AssertExact(RuleId, message.Rule));
+
+        var expectedKeys = fixtureCase.Expected.Values is { } listed
+            ? listed.EnumerateObject().Select(property => property.Name.ToUpperInvariant()).Order(StringComparer.Ordinal).ToList()
+            : [];
+        var actualKeys = result.Adjusted.Keys.Select(key => key.ToUpperInvariant()).Order(StringComparer.Ordinal).ToList();
+        Assert.Equal(expectedKeys, actualKeys);
+
+        if (fixtureCase.Expected.Values is { } values)
+        {
+            ParityFixture.AssertValues(values, result.Adjusted, fixture.Compare);
+        }
     }
 
     /// <summary>The DR-04 fixture is a derivable domain fixture traced to T031 with Pass and Warning cases for both checks.</summary>
@@ -91,7 +103,7 @@ public sealed class ClinicSuitabilityRulesTests
         }
     }
 
-    /// <summary>With no clinic selected T031 returns before both checks, so neither raises a message.</summary>
+    /// <summary>With no clinic selected T031 returns before both checks, so neither raises a message nor adjusts a value.</summary>
     [Fact]
     [Trait("Rule", RuleId)]
     public void No_clinic_selected_raises_no_DR_04_message()
@@ -101,8 +113,10 @@ public sealed class ClinicSuitabilityRulesTests
 
         ParityFixture.AssertExact(PassOutcome, Outcome(sex));
         Assert.Empty(sex.Messages);
+        Assert.Empty(sex.Adjusted);
         ParityFixture.AssertExact(PassOutcome, Outcome(age));
         Assert.Empty(age.Messages);
+        Assert.Empty(age.Adjusted);
     }
 
     private static string Outcome(RuleResult result) =>
