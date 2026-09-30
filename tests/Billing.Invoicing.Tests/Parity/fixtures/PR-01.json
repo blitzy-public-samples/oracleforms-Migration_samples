@@ -1,0 +1,198 @@
+{
+  "id": "PR-01",
+  "class": "package",
+  "source": [
+    { "construct": "BIL_INVOICE_ENGINE.line_uses_price_override", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1039" },
+    { "construct": "BIL_INVOICE_ENGINE.get_effective_line_price", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1053" },
+    { "construct": "BIL_INVOICE_ENGINE.get_effective_line_price -20780", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1065" },
+    { "construct": "BIL_INVOICE_ENGINE.get_effective_line_price -20781", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1072" },
+    { "construct": "BIL_INVOICE_ENGINE.get_effective_line_price round", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1078" },
+    { "construct": "BIL_INVOICE_ENGINE.append_calc_line price", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1763" },
+    { "construct": "BIL_INVOICE_ENGINE.append_calc_line my_price", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1779" },
+    { "construct": "BIL_INVOICE_ENGINE.append_calc_line total_gross", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1832" },
+    { "construct": "BIL_INVOICE_ENGINE.calculate_financial_line allow_price_override", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1873" },
+    { "construct": "BIL_INVOICE_ENGINE.calculate_lines -20963", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1925" },
+    { "construct": "BIL_INVOICE_ENGINE.calculate_lines gross", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1946" },
+    { "construct": "BIL_INVOICE_API.calculate_editable_invoice_preview my_price", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:879" },
+    { "construct": "BIL_INVOICE_API.calculate_editable_invoice_preview total_gross", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:916" },
+    { "construct": "PU10 SMALL_CALC", "locator": "05_Complex/Inv_Small_Cash.xml:969" },
+    { "construct": "T067 PRICE WHEN-VALIDATE-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:393" }
+  ],
+  "cases": [
+    {
+      "name": "gross-from-billing-price",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [{ "clientId": "L1", "serviceId": "1001", "qty": 3, "discountType": "N" }],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "7C9E6679742540DE944BE07FC1F90AE7" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "CARD_ID": null, "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "IS_PACKAGE": 0 } }
+        ],
+        "context": [
+          { "name": "bil_patient_context.list_id", "value": 1 },
+          { "name": "bil_service_context.list_id", "value": 1 },
+          { "name": "bil_service_context.curr_code", "value": "SAR" },
+          { "name": "bil_service_context.is_package", "value": 0 },
+          { "name": "bil_service_context.plan_price_disc", "value": 0 },
+          { "name": "bil_service_context.vat_rate", "value": 0 },
+          { "name": "bil_price_rule.billing_price", "value": 45.5 },
+          { "name": "bil_price_rule.allow_manual_price", "value": "N" },
+          { "name": "bil_price_rule.allow_discount", "value": "N" },
+          { "name": "bil_offer_rule.matched", "value": "N" },
+          { "name": "bil_class_rule.the_pay", "value": 136.5 },
+          { "name": "bil_class_rule.the_comp", "value": 0 }
+        ]
+      },
+      "expected": {
+        "outcome": "Pass",
+        "values": {
+          "line_count": 1,
+          "total_gross": 136.5,
+          "lines": [{ "serviceid": "1001", "qty": 3, "price": 45.5, "my_price": 136.5, "allow_price_override": "N" }]
+        }
+      }
+    },
+    {
+      "name": "gross-rounds-half-up",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [{ "clientId": "L1", "serviceId": "1001", "qty": 1, "discountType": "N" }],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "7C9E6679742540DE944BE07FC1F90AE7" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "CARD_ID": null, "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "IS_PACKAGE": 0 } }
+        ],
+        "context": [
+          { "name": "bil_patient_context.list_id", "value": 1 },
+          { "name": "bil_service_context.list_id", "value": 1 },
+          { "name": "bil_service_context.curr_code", "value": "SAR" },
+          { "name": "bil_service_context.is_package", "value": 0 },
+          { "name": "bil_service_context.plan_price_disc", "value": 0 },
+          { "name": "bil_service_context.vat_rate", "value": 0 },
+          { "name": "bil_price_rule.billing_price", "value": 10.005 },
+          { "name": "bil_price_rule.allow_manual_price", "value": "N" },
+          { "name": "bil_price_rule.allow_discount", "value": "N" },
+          { "name": "bil_offer_rule.matched", "value": "N" },
+          { "name": "bil_class_rule.the_pay", "value": 10.01 },
+          { "name": "bil_class_rule.the_comp", "value": 0 }
+        ]
+      },
+      "expected": {
+        "outcome": "Pass",
+        "values": {
+          "line_count": 1,
+          "total_gross": 10.01,
+          "lines": [{ "serviceid": "1001", "qty": 1, "price": 10.005, "my_price": 10.01, "allow_price_override": "N" }]
+        }
+      }
+    },
+    {
+      "name": "override-rounded-to-three-decimals",
+      "status": "derivable",
+      "decision": "D-42",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [{ "clientId": "L1", "serviceId": "1001", "qty": 3, "priceOverride": 10.1234, "usePriceOverride": "Y", "discountType": "N" }],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "7C9E6679742540DE944BE07FC1F90AE7" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "CARD_ID": null, "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "IS_PACKAGE": 0 } }
+        ],
+        "context": [
+          { "name": "bil_patient_context.list_id", "value": 1 },
+          { "name": "bil_service_context.list_id", "value": 1 },
+          { "name": "bil_service_context.curr_code", "value": "SAR" },
+          { "name": "bil_service_context.is_package", "value": 0 },
+          { "name": "bil_service_context.plan_price_disc", "value": 0 },
+          { "name": "bil_service_context.vat_rate", "value": 0 },
+          { "name": "bil_price_rule.billing_price", "value": 9.5 },
+          { "name": "bil_price_rule.allow_manual_price", "value": "Y" },
+          { "name": "bil_price_rule.allow_discount", "value": "N" },
+          { "name": "bil_offer_rule.matched", "value": "N" },
+          { "name": "bil_class_rule.the_pay", "value": 30.37 },
+          { "name": "bil_class_rule.the_comp", "value": 0 }
+        ]
+      },
+      "expected": {
+        "outcome": "Pass",
+        "values": {
+          "line_count": 1,
+          "total_gross": 30.37,
+          "lines": [{ "serviceid": "1001", "qty": 3, "price": 10.123, "my_price": 30.37, "allow_price_override": "Y" }]
+        }
+      }
+    },
+    {
+      "name": "negative-override-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [{ "clientId": "L1", "serviceId": "1001", "qty": 1, "priceOverride": -5, "usePriceOverride": "Y", "discountType": "N" }],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "7C9E6679742540DE944BE07FC1F90AE7" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "CARD_ID": null, "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "IS_PACKAGE": 0 } }
+        ],
+        "context": [
+          { "name": "bil_patient_context.list_id", "value": 1 },
+          { "name": "bil_service_context.curr_code", "value": "SAR" },
+          { "name": "bil_service_context.is_package", "value": 0 },
+          { "name": "bil_price_rule.billing_price", "value": 10 },
+          { "name": "bil_price_rule.allow_manual_price", "value": "Y" },
+          { "name": "bil_offer_rule.matched", "value": "N" }
+        ]
+      },
+      "expected": {
+        "error": { "package": "BIL_INVOICE_ENGINE", "number": -20781, "messagePrefix": "Invoice line " }
+      }
+    },
+    {
+      "name": "override-not-allowed-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [{ "clientId": "L1", "serviceId": "1001", "qty": 1, "priceOverride": 12, "usePriceOverride": "Y", "discountType": "N" }],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "7C9E6679742540DE944BE07FC1F90AE7" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "CARD_ID": null, "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "IS_PACKAGE": 0 } }
+        ],
+        "context": [
+          { "name": "bil_patient_context.list_id", "value": 1 },
+          { "name": "bil_service_context.curr_code", "value": "SAR" },
+          { "name": "bil_service_context.is_package", "value": 0 },
+          { "name": "bil_price_rule.billing_price", "value": 10 },
+          { "name": "bil_price_rule.allow_manual_price", "value": "N" },
+          { "name": "bil_offer_rule.matched", "value": "N" }
+        ]
+      },
+      "expected": {
+        "error": { "package": "BIL_INVOICE_ENGINE", "number": -20963, "messagePrefix": "Invoice create failed: service " }
+      }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome"] }
+}

@@ -1,0 +1,180 @@
+{
+  "id": "PR-19",
+  "class": "package",
+  "source": [
+    { "construct": "BIL_IMPORT.GET_INVOICE_REQUEST_LINES", "locator": "05_Complex/APEX_Reference/backend/BIL_IMPORT.sql:567" },
+    { "construct": "BIL_IMPORT.GET_REQUEST_LINES", "locator": "05_Complex/APEX_Reference/backend/BIL_IMPORT.sql:389" },
+    { "construct": "BIL_IMPORT.get_request_lines selection join", "locator": "05_Complex/APEX_Reference/backend/BIL_IMPORT.sql:467" },
+    { "construct": "BIL_IMPORT.get_request_lines rejected skip", "locator": "05_Complex/APEX_Reference/backend/BIL_IMPORT.sql:485" },
+    { "construct": "BIL_IMPORT.get_request_lines approval check", "locator": "05_Complex/APEX_Reference/backend/BIL_IMPORT.sql:494" },
+    { "construct": "BIL_IMPORT.get_request_lines -20764", "locator": "05_Complex/APEX_Reference/backend/BIL_IMPORT.sql:501" },
+    { "construct": "BIL_IMPORT.get_request_lines -20771", "locator": "05_Complex/APEX_Reference/backend/BIL_IMPORT.sql:519" },
+    { "construct": "BIL_IMPORT.resolve_request_price_override", "locator": "05_Complex/APEX_Reference/backend/BIL_IMPORT.sql:288" },
+    { "construct": "BIL_IMPORT.get_invoice_request_lines non-package append", "locator": "05_Complex/APEX_Reference/backend/BIL_IMPORT.sql:657" },
+    { "construct": "BIL_IMPORT.get_invoice_request_lines message", "locator": "05_Complex/APEX_Reference/backend/BIL_IMPORT.sql:761" },
+    { "construct": "BIL_IMPORT.SET_REQUEST_LINE_SELECTION", "locator": "05_Complex/APEX_Reference/backend/BIL_IMPORT.sql:94" },
+    { "construct": "BIL_IMPORT.TO_ENGINE_LINES", "locator": "05_Complex/APEX_Reference/backend/BIL_IMPORT.sql:1340" },
+    { "construct": "T085 DO_IMP2 WHEN-BUTTON-PRESSED", "locator": "05_Complex/Inv_Small_Cash.xml:755" }
+  ],
+  "cases": [
+    {
+      "name": "credit-import-approval-mode-1",
+      "status": "derivable",
+      "decision": "D-12",
+      "input": {
+        "operation": "BilImportGateway.ImportRequestLines",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 2 },
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "7C9E6679742540DE944BE07FC1F90AE7" },
+        "visitUnique": "V-900",
+        "patServReqRowIds": [7001, 7002, 7003],
+        "approvalMode": 1
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "V_SERVICES_REQ", "key": { "PAT_SERV_REQ_ROW_ID": 7001 }, "columns": { "PATIENTNO": "990000001", "VISIT_UNIQUE": "V-900", "PAY_TYPE": "Credit", "SERVICEID": "1001", "QTY": 1, "PRICE": null, "REQ_A_STATUS": 0, "REQ_NEED_A": 0, "APPROV_REF_NO": null, "D_INV_ROW_ID": null, "SELECT_TO_INV": 1 } },
+          { "table": "V_SERVICES_REQ", "key": { "PAT_SERV_REQ_ROW_ID": 7002 }, "columns": { "PATIENTNO": "990000001", "VISIT_UNIQUE": "V-900", "PAY_TYPE": "Credit", "SERVICEID": "1002", "QTY": 1, "PRICE": null, "REQ_A_STATUS": 3, "REQ_NEED_A": 0, "APPROV_REF_NO": null, "D_INV_ROW_ID": null, "SELECT_TO_INV": 1 } },
+          { "table": "V_SERVICES_REQ", "key": { "PAT_SERV_REQ_ROW_ID": 7003 }, "columns": { "PATIENTNO": "990000001", "VISIT_UNIQUE": "V-900", "PAY_TYPE": "Credit", "SERVICEID": "1003", "QTY": 1, "PRICE": null, "REQ_A_STATUS": 0, "REQ_NEED_A": 1, "APPROV_REF_NO": null, "D_INV_ROW_ID": null, "SELECT_TO_INV": 1 } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "IS_PACKAGE": 0 } }
+        ],
+        "context": [
+          { "name": "ins_comp_util.get_cash_comp_code", "value": "0" },
+          { "name": "bil_patient_context.is_cash", "value": "N" },
+          { "name": "bil_patient_context.comp_code", "value": "100" },
+          { "name": "bil_patient_context.list_id", "value": 1 },
+          { "name": "bil_service_context.is_package", "value": 0 },
+          { "name": "bil_price_rule.billing_price", "value": 50 }
+        ]
+      },
+      "expected": {
+        "outcome": "Pass",
+        "values": {
+          "source_type": "REQUEST",
+          "source_count": 3,
+          "imported_count": 1,
+          "skipped_rejected_count": 1,
+          "skipped_need_approval_count": 1,
+          "skipped_invalid_count": 0,
+          "has_price_overrides": "N",
+          "message": "Invoice request import completed. Expanded 3 request rows into 1 invoice lines.",
+          "lines": [
+            { "serviceid": "1001", "qty": 1, "pat_serv_req_row_id": 7001, "price_override": null, "use_price_override": "N", "req_need_a": 0, "req_a_status": 0 }
+          ]
+        }
+      }
+    },
+    {
+      "name": "credit-import-approval-mode-0",
+      "status": "derivable",
+      "input": {
+        "operation": "BilImportGateway.ImportRequestLines",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 2 },
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "7C9E6679742540DE944BE07FC1F90AE7" },
+        "visitUnique": "V-900",
+        "patServReqRowIds": [7001, 7002, 7003],
+        "approvalMode": 0
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "V_SERVICES_REQ", "key": { "PAT_SERV_REQ_ROW_ID": 7001 }, "columns": { "PATIENTNO": "990000001", "VISIT_UNIQUE": "V-900", "PAY_TYPE": "Credit", "SERVICEID": "1001", "QTY": 1, "PRICE": null, "REQ_A_STATUS": 0, "REQ_NEED_A": 0, "APPROV_REF_NO": null, "D_INV_ROW_ID": null, "SELECT_TO_INV": 1 } },
+          { "table": "V_SERVICES_REQ", "key": { "PAT_SERV_REQ_ROW_ID": 7002 }, "columns": { "PATIENTNO": "990000001", "VISIT_UNIQUE": "V-900", "PAY_TYPE": "Credit", "SERVICEID": "1002", "QTY": 1, "PRICE": null, "REQ_A_STATUS": 3, "REQ_NEED_A": 0, "APPROV_REF_NO": null, "D_INV_ROW_ID": null, "SELECT_TO_INV": 1 } },
+          { "table": "V_SERVICES_REQ", "key": { "PAT_SERV_REQ_ROW_ID": 7003 }, "columns": { "PATIENTNO": "990000001", "VISIT_UNIQUE": "V-900", "PAY_TYPE": "Credit", "SERVICEID": "1003", "QTY": 1, "PRICE": null, "REQ_A_STATUS": 0, "REQ_NEED_A": 1, "APPROV_REF_NO": null, "D_INV_ROW_ID": null, "SELECT_TO_INV": 1 } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "IS_PACKAGE": 0 } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1003" }, "columns": { "IS_PACKAGE": 0 } }
+        ],
+        "context": [
+          { "name": "ins_comp_util.get_cash_comp_code", "value": "0" },
+          { "name": "bil_patient_context.is_cash", "value": "N" },
+          { "name": "bil_patient_context.comp_code", "value": "100" },
+          { "name": "bil_patient_context.list_id", "value": 1 },
+          { "name": "bil_service_context.is_package", "value": 0 },
+          { "name": "bil_price_rule.billing_price", "value": 50 }
+        ]
+      },
+      "expected": {
+        "outcome": "Pass",
+        "values": {
+          "source_type": "REQUEST",
+          "source_count": 3,
+          "imported_count": 2,
+          "skipped_rejected_count": 1,
+          "skipped_need_approval_count": 0,
+          "skipped_invalid_count": 0,
+          "has_price_overrides": "N",
+          "message": "Invoice request import completed. Expanded 3 request rows into 2 invoice lines.",
+          "lines": [
+            { "serviceid": "1001", "qty": 1, "pat_serv_req_row_id": 7001, "price_override": null, "use_price_override": "N", "req_need_a": 0, "req_a_status": 0 },
+            { "serviceid": "1003", "qty": 1, "pat_serv_req_row_id": 7003, "price_override": null, "use_price_override": "N", "req_need_a": 1, "req_a_status": 0 }
+          ]
+        }
+      }
+    },
+    {
+      "name": "cash-import-need-approval-row-imported",
+      "status": "derivable",
+      "input": {
+        "operation": "BilImportGateway.ImportRequestLines",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1 },
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "7C9E6679742540DE944BE07FC1F90AE7" },
+        "visitUnique": "V-900",
+        "patServReqRowIds": [7013],
+        "approvalMode": 1
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "V_SERVICES_REQ", "key": { "PAT_SERV_REQ_ROW_ID": 7013 }, "columns": { "PATIENTNO": "990000001", "VISIT_UNIQUE": "V-900", "PAY_TYPE": "Cash", "SERVICEID": "1003", "QTY": 1, "PRICE": null, "REQ_A_STATUS": 0, "REQ_NEED_A": 1, "APPROV_REF_NO": null, "D_INV_ROW_ID": null, "SELECT_TO_INV": 1 } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1003" }, "columns": { "IS_PACKAGE": 0 } }
+        ],
+        "context": [
+          { "name": "ins_comp_util.get_cash_comp_code", "value": "0" },
+          { "name": "bil_patient_context.is_cash", "value": "Y" },
+          { "name": "bil_patient_context.comp_code", "value": "0" },
+          { "name": "bil_patient_context.list_id", "value": 1 },
+          { "name": "bil_service_context.is_package", "value": 0 },
+          { "name": "bil_price_rule.billing_price", "value": 50 }
+        ]
+      },
+      "expected": {
+        "outcome": "Pass",
+        "values": {
+          "source_type": "REQUEST",
+          "source_count": 1,
+          "imported_count": 1,
+          "skipped_rejected_count": 0,
+          "skipped_need_approval_count": 0,
+          "skipped_invalid_count": 0,
+          "has_price_overrides": "N",
+          "message": "Invoice request import completed. Expanded 1 request rows into 1 invoice lines.",
+          "lines": [
+            { "serviceid": "1003", "qty": 1, "pat_serv_req_row_id": 7013, "price_override": null, "use_price_override": "N", "req_need_a": 1, "req_a_status": 0 }
+          ]
+        }
+      }
+    },
+    {
+      "name": "invalid-quantity-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilImportGateway.ImportRequestLines",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1 },
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "7C9E6679742540DE944BE07FC1F90AE7" },
+        "visitUnique": "V-900",
+        "patServReqRowIds": [7004],
+        "approvalMode": 1
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "V_SERVICES_REQ", "key": { "PAT_SERV_REQ_ROW_ID": 7004 }, "columns": { "PATIENTNO": "990000001", "VISIT_UNIQUE": "V-900", "PAY_TYPE": "Cash", "SERVICEID": "1004", "QTY": 0, "PRICE": null, "REQ_A_STATUS": 0, "REQ_NEED_A": 0, "APPROV_REF_NO": null, "D_INV_ROW_ID": null, "SELECT_TO_INV": 1 } }
+        ],
+        "context": []
+      },
+      "expected": {
+        "error": { "package": "BIL_IMPORT", "number": -20771, "messagePrefix": "Request import failed: selected request line " }
+      }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome"] }
+}

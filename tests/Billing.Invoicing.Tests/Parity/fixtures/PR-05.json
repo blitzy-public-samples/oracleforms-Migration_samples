@@ -1,0 +1,355 @@
+{
+  "id": "PR-05",
+  "class": "package",
+  "source": [
+    { "construct": "BIL_INVOICE_ENGINE.calc_vat_for_line", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1175" },
+    { "construct": "BIL_INVOICE_ENGINE.calc_vat_for_line -20912", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1192" },
+    { "construct": "BIL_INVOICE_ENGINE.calculate_financial_line calc_vat_for_line call", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2026" },
+    { "construct": "BIL_INVOICE_ENGINE.append_calc_line vat_total_pat / vat_total_co", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1837" },
+    { "construct": "PU10 SMALL_CALC", "locator": "05_Complex/Inv_Small_Cash.xml:969" }
+  ],
+  "cases": [
+    {
+      "name": "patient-vat-charged",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [{ "serviceId": "1001", "qty": 1, "discountType": "N" }],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000005" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001" } }
+        ],
+        "context": [
+          { "name": "bil_price_rule.billing_price", "field": "price", "value": 100 },
+          { "name": "bil_price_rule.curr_code", "field": "curr_code", "value": "SAR" },
+          { "name": "bil_service_context.vat_rate", "field": "vat_rate", "value": 15 },
+          { "name": "bil_service_context.non_medical", "value": 0 },
+          { "name": "bil_patient_context.pay_vat", "value": 1 },
+          { "name": "bil_patient_context.pay_vat_co", "value": 1 },
+          { "name": "bil_class_rule.patient_share", "field": "the_pay", "value": 100 },
+          { "name": "bil_class_rule.company_share", "field": "the_comp", "value": 0 }
+        ]
+      },
+      "expected": {
+        "values": {
+          "lines": [{ "vat_rate": 15, "vat_val_pat": 15, "vat_val_co": 0, "vat_val_pat_ex": 0 }],
+          "vat_total_pat": 15,
+          "vat_total_co": 0
+        }
+      }
+    },
+    {
+      "name": "company-vat-charged",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 2, "discT": 0 },
+        "lines": [{ "serviceId": "1001", "qty": 1, "discountType": "N" }],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000005" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001" } }
+        ],
+        "context": [
+          { "name": "bil_price_rule.billing_price", "field": "price", "value": 400 },
+          { "name": "bil_price_rule.curr_code", "field": "curr_code", "value": "SAR" },
+          { "name": "bil_service_context.vat_rate", "field": "vat_rate", "value": 15 },
+          { "name": "bil_service_context.non_medical", "value": 0 },
+          { "name": "bil_patient_context.pay_vat", "value": 1 },
+          { "name": "bil_patient_context.pay_vat_co", "value": 1 },
+          { "name": "bil_class_rule.patient_share", "field": "the_pay", "value": 100 },
+          { "name": "bil_class_rule.company_share", "field": "the_comp", "value": 300 }
+        ]
+      },
+      "expected": {
+        "values": {
+          "lines": [{ "vat_rate": 15, "vat_val_pat": 15, "vat_val_co": 45, "vat_val_pat_ex": 0 }],
+          "vat_total_pat": 15,
+          "vat_total_co": 45
+        }
+      }
+    },
+    {
+      "name": "patient-exempt-medical-service",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [{ "serviceId": "1001", "qty": 1, "discountType": "N" }],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000005" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001" } }
+        ],
+        "context": [
+          { "name": "bil_price_rule.billing_price", "field": "price", "value": 100 },
+          { "name": "bil_price_rule.curr_code", "field": "curr_code", "value": "SAR" },
+          { "name": "bil_service_context.vat_rate", "field": "vat_rate", "value": 15 },
+          { "name": "bil_service_context.non_medical", "value": 0 },
+          { "name": "bil_patient_context.pay_vat", "value": 0 },
+          { "name": "bil_patient_context.pay_vat_co", "value": 1 },
+          { "name": "bil_class_rule.patient_share", "field": "the_pay", "value": 100 },
+          { "name": "bil_class_rule.company_share", "field": "the_comp", "value": 0 }
+        ]
+      },
+      "expected": {
+        "values": {
+          "lines": [{ "vat_rate": 15, "vat_val_pat": 0, "vat_val_co": 0, "vat_val_pat_ex": 15 }],
+          "vat_total_pat": 0,
+          "vat_total_co": 0
+        }
+      }
+    },
+    {
+      "name": "patient-exempt-non-medical-service",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [{ "serviceId": "1001", "qty": 1, "discountType": "N" }],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000005" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001" } }
+        ],
+        "context": [
+          { "name": "bil_price_rule.billing_price", "field": "price", "value": 100 },
+          { "name": "bil_price_rule.curr_code", "field": "curr_code", "value": "SAR" },
+          { "name": "bil_service_context.vat_rate", "field": "vat_rate", "value": 15 },
+          { "name": "bil_service_context.non_medical", "value": 1 },
+          { "name": "bil_patient_context.pay_vat", "value": 0 },
+          { "name": "bil_patient_context.pay_vat_co", "value": 1 },
+          { "name": "bil_class_rule.patient_share", "field": "the_pay", "value": 100 },
+          { "name": "bil_class_rule.company_share", "field": "the_comp", "value": 0 }
+        ]
+      },
+      "expected": {
+        "values": {
+          "lines": [{ "vat_rate": 15, "vat_val_pat": 15, "vat_val_co": 0, "vat_val_pat_ex": 0 }],
+          "vat_total_pat": 15,
+          "vat_total_co": 0
+        }
+      }
+    },
+    {
+      "name": "company-exempt-medical-service",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 2, "discT": 0 },
+        "lines": [{ "serviceId": "1001", "qty": 1, "discountType": "N" }],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000005" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001" } }
+        ],
+        "context": [
+          { "name": "bil_price_rule.billing_price", "field": "price", "value": 400 },
+          { "name": "bil_price_rule.curr_code", "field": "curr_code", "value": "SAR" },
+          { "name": "bil_service_context.vat_rate", "field": "vat_rate", "value": 15 },
+          { "name": "bil_service_context.non_medical", "value": 0 },
+          { "name": "bil_patient_context.pay_vat", "value": 1 },
+          { "name": "bil_patient_context.pay_vat_co", "value": 0 },
+          { "name": "bil_class_rule.patient_share", "field": "the_pay", "value": 100 },
+          { "name": "bil_class_rule.company_share", "field": "the_comp", "value": 300 }
+        ]
+      },
+      "expected": {
+        "values": {
+          "lines": [{ "vat_rate": 15, "vat_val_pat": 15, "vat_val_co": 0, "vat_val_pat_ex": 0 }],
+          "vat_total_pat": 15,
+          "vat_total_co": 0
+        }
+      }
+    },
+    {
+      "name": "company-exempt-non-medical-service",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 2, "discT": 0 },
+        "lines": [{ "serviceId": "1001", "qty": 1, "discountType": "N" }],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000005" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001" } }
+        ],
+        "context": [
+          { "name": "bil_price_rule.billing_price", "field": "price", "value": 400 },
+          { "name": "bil_price_rule.curr_code", "field": "curr_code", "value": "SAR" },
+          { "name": "bil_service_context.vat_rate", "field": "vat_rate", "value": 15 },
+          { "name": "bil_service_context.non_medical", "value": 1 },
+          { "name": "bil_patient_context.pay_vat", "value": 1 },
+          { "name": "bil_patient_context.pay_vat_co", "value": 0 },
+          { "name": "bil_class_rule.patient_share", "field": "the_pay", "value": 100 },
+          { "name": "bil_class_rule.company_share", "field": "the_comp", "value": 300 }
+        ]
+      },
+      "expected": {
+        "values": {
+          "lines": [{ "vat_rate": 15, "vat_val_pat": 15, "vat_val_co": 45, "vat_val_pat_ex": 0 }],
+          "vat_total_pat": 15,
+          "vat_total_co": 45
+        }
+      }
+    },
+    {
+      "name": "zero-rate-no-vat",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 2, "discT": 0 },
+        "lines": [{ "serviceId": "1001", "qty": 1, "discountType": "N" }],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000005" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001" } }
+        ],
+        "context": [
+          { "name": "bil_price_rule.billing_price", "field": "price", "value": 400 },
+          { "name": "bil_price_rule.curr_code", "field": "curr_code", "value": "SAR" },
+          { "name": "bil_service_context.vat_rate", "field": "vat_rate", "value": 0 },
+          { "name": "bil_service_context.non_medical", "value": 0 },
+          { "name": "bil_patient_context.pay_vat", "value": 1 },
+          { "name": "bil_patient_context.pay_vat_co", "value": 1 },
+          { "name": "bil_class_rule.patient_share", "field": "the_pay", "value": 100 },
+          { "name": "bil_class_rule.company_share", "field": "the_comp", "value": 300 }
+        ]
+      },
+      "expected": {
+        "values": {
+          "lines": [{ "vat_rate": 0, "vat_val_pat": 0, "vat_val_co": 0, "vat_val_pat_ex": 0 }],
+          "vat_total_pat": 0,
+          "vat_total_co": 0
+        }
+      }
+    },
+    {
+      "name": "vat-rounds-half-up",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [{ "serviceId": "1001", "qty": 1, "discountType": "N" }],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000005" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001" } }
+        ],
+        "context": [
+          { "name": "bil_price_rule.billing_price", "field": "price", "value": 33.3 },
+          { "name": "bil_price_rule.curr_code", "field": "curr_code", "value": "SAR" },
+          { "name": "bil_service_context.vat_rate", "field": "vat_rate", "value": 15 },
+          { "name": "bil_service_context.non_medical", "value": 0 },
+          { "name": "bil_patient_context.pay_vat", "value": 1 },
+          { "name": "bil_patient_context.pay_vat_co", "value": 1 },
+          { "name": "bil_class_rule.patient_share", "field": "the_pay", "value": 33.3 },
+          { "name": "bil_class_rule.company_share", "field": "the_comp", "value": 0 }
+        ]
+      },
+      "expected": {
+        "values": {
+          "lines": [{ "vat_rate": 15, "vat_val_pat": 5.00, "vat_val_co": 0, "vat_val_pat_ex": 0 }],
+          "vat_total_pat": 5.00,
+          "vat_total_co": 0
+        }
+      }
+    },
+    {
+      "name": "vat-rate-out-of-range-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [{ "serviceId": "1001", "qty": 1, "discountType": "N" }],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000005" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001" } }
+        ],
+        "context": [
+          { "name": "bil_price_rule.billing_price", "value": 100 },
+          { "name": "bil_price_rule.curr_code", "value": "SAR" },
+          { "name": "bil_service_context.vat_rate", "value": 120 },
+          { "name": "bil_service_context.non_medical", "value": 0 },
+          { "name": "bil_patient_context.pay_vat", "value": 1 },
+          { "name": "bil_patient_context.pay_vat_co", "value": 1 },
+          { "name": "bil_class_rule.patient_share", "value": 100 },
+          { "name": "bil_class_rule.company_share", "value": 0 }
+        ]
+      },
+      "expected": {
+        "error": {
+          "package": "BIL_INVOICE_ENGINE",
+          "number": -20912,
+          "messagePrefix": "Invoice create failed: VAT rate must be between 0 and 100 for service "
+        }
+      }
+    },
+    {
+      "name": "vat-rate-negative-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [{ "serviceId": "1001", "qty": 1, "discountType": "N" }],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000005" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001" } }
+        ],
+        "context": [
+          { "name": "bil_price_rule.billing_price", "value": 100 },
+          { "name": "bil_price_rule.curr_code", "value": "SAR" },
+          { "name": "bil_service_context.vat_rate", "value": -5 },
+          { "name": "bil_service_context.non_medical", "value": 0 },
+          { "name": "bil_patient_context.pay_vat", "value": 1 },
+          { "name": "bil_patient_context.pay_vat_co", "value": 1 },
+          { "name": "bil_class_rule.patient_share", "value": 100 },
+          { "name": "bil_class_rule.company_share", "value": 0 }
+        ]
+      },
+      "expected": {
+        "error": {
+          "package": "BIL_INVOICE_ENGINE",
+          "number": -20912,
+          "messagePrefix": "Invoice create failed: VAT rate must be between 0 and 100 for service "
+        }
+      }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome"] }
+}
+

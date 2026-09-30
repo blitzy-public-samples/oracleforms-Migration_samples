@@ -1,0 +1,108 @@
+{
+  "id": "PR-04",
+  "class": "package",
+  "source": [
+    { "construct": "BIL_INVOICE_ENGINE.calculate_lines bil_class_rule.resolve_share", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2016" },
+    { "construct": "BIL_INVOICE_ENGINE.calculate_lines p_patient_paid_so_far", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2023" },
+    { "construct": "PU23 CHK_ADV_CLASS", "locator": "05_Complex/Inv_Small_Cash.xml:982" },
+    { "construct": "PU10 SMALL_CALC", "locator": "05_Complex/Inv_Small_Cash.xml:969" },
+    { "construct": "T054 D_INV WHEN-CREATE-RECORD", "locator": "05_Complex/Inv_Small_Cash.xml:561" },
+    { "construct": "T052 D_INV WHEN-VALIDATE-RECORD", "locator": "05_Complex/Inv_Small_Cash.xml:559" },
+    { "construct": "T026 COMP_CODE WHEN-VALIDATE-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:27" }
+  ],
+  "cases": [
+    {
+      "name": "pending-oi-06-credit-class-patient-share",
+      "status": "pending-evidence",
+      "pendingOn": "OI-06",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 2, "clinicId": 9904, "compCode": "9901", "subCompCode": "9902", "classCode": 1 },
+        "lines": [
+          { "clientId": "PR04-L1", "serviceId": "PARITY-SRV-04", "qty": 1, "discountType": "N" }
+        ],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "8c1f4b2a6d3e4f5a9b7c0d1e2f3a4b04" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null, "CARD_ID": null } },
+          { "table": "COMPANYS", "key": { "COMP_CODE": "9901" }, "columns": { "COMP_TYPE": 2, "DIRECT_COMP_SHARE": null } },
+          { "table": "COMPANYS", "key": { "COMP_CODE": "9902" }, "columns": { "COMP_TYPE": 3, "PARENT_COMP": "9901", "DIRECT_COMP_SHARE": null } },
+          { "table": "DISC_CLASSES", "key": { "COMP_CODE": "9902", "CLASS_CODE": 1 }, "columns": { "CLASS_NAME": "C1", "USE_ADVANCED": 1, "OUT_PAT_SHAREF": 0, "OUT_PAT_SHARER": 20, "MAX_DEDUCTABLE": 0 } },
+          { "table": "CLINICS", "key": { "CLINICID": 9904 }, "columns": { "SYS_CAT_TYPE": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "PARITY-SRV-04", "LIST_ID": 1 }, "columns": { "CONS_REV": 0, "IS_PACKAGE": 0, "ADD_TO_QUE": 0 } }
+        ],
+        "context": [
+          { "name": "bil_patient_context.list_id", "value": 1 },
+          { "name": "bil_patient_context.is_cash", "value": "N" },
+          { "name": "bil_patient_context.comp_code", "value": "9901" },
+          { "name": "bil_patient_context.sub_comp_code", "value": "9902" },
+          { "name": "bil_patient_context.class_code", "value": 1 },
+          { "name": "bil_service_context.price", "value": 200 },
+          { "name": "bil_class_rule.patient_share_pct", "value": 20 }
+        ]
+      },
+      "expected": {}
+    },
+    {
+      "name": "pending-oi-06-direct-company-share",
+      "status": "pending-evidence",
+      "pendingOn": "OI-06",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 2, "compCode": "9903", "subCompCode": null, "classCode": null },
+        "lines": [
+          { "clientId": "PR04-L1", "serviceId": "PARITY-SRV-04", "qty": 1, "discountType": "N" }
+        ],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "8c1f4b2a6d3e4f5a9b7c0d1e2f3a4b04" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null, "CARD_ID": null } },
+          { "table": "COMPANYS", "key": { "COMP_CODE": "9903" }, "columns": { "COMP_TYPE": 1, "DIRECT_COMP_SHARE": 80 } },
+          { "table": "SERVICES", "key": { "SERVICEID": "PARITY-SRV-04", "LIST_ID": 1 }, "columns": { "CONS_REV": 0, "IS_PACKAGE": 0, "ADD_TO_QUE": 0 } }
+        ],
+        "context": [
+          { "name": "bil_patient_context.list_id", "value": 1 },
+          { "name": "bil_patient_context.is_cash", "value": "N" },
+          { "name": "bil_patient_context.comp_code", "value": "9903" },
+          { "name": "bil_service_context.price", "value": 200 },
+          { "name": "bil_class_rule.patient_share_pct", "value": 80 }
+        ]
+      },
+      "expected": {}
+    },
+    {
+      "name": "pending-oi-06-cash-full-patient-share",
+      "status": "pending-evidence",
+      "pendingOn": "OI-06",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "compCode": "0", "subCompCode": null, "classCode": null },
+        "lines": [
+          { "clientId": "PR04-L1", "serviceId": "PARITY-SRV-04", "qty": 1, "discountType": "N" }
+        ],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "8c1f4b2a6d3e4f5a9b7c0d1e2f3a4b04" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null, "CARD_ID": null } },
+          { "table": "COMPANYS", "key": { "COMP_CODE": "0" }, "columns": { "DIRECT_COMP_SHARE": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "PARITY-SRV-04", "LIST_ID": 1 }, "columns": { "CONS_REV": 0, "IS_PACKAGE": 0, "ADD_TO_QUE": 0 } }
+        ],
+        "context": [
+          { "name": "bil_patient_context.list_id", "value": 1 },
+          { "name": "bil_patient_context.is_cash", "value": "Y" },
+          { "name": "bil_patient_context.comp_code", "value": "0" },
+          { "name": "bil_service_context.price", "value": 200 },
+          { "name": "bil_class_rule.patient_share_pct", "value": 100 }
+        ]
+      },
+      "expected": {}
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome"] }
+}

@@ -1,0 +1,150 @@
+{
+  "id": "PR-17",
+  "class": "package",
+  "source": [
+    { "construct": "BIL_INVOICE_API.get_bundled_offer_ig_lines", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:264" },
+    { "construct": "BIL_INVOICE_API.get_bundled_offer_ig_lines -20979 required", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:296" },
+    { "construct": "BIL_INVOICE_API.get_bundled_offer_ig_lines -20979 quantity", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:306" },
+    { "construct": "BIL_INVOICE_API.get_bundled_offer_ig_lines -20871", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:313" },
+    { "construct": "BIL_INVOICE_API.get_bundled_offer_ig_lines component quantity", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:365" },
+    { "construct": "BIL_INVOICE_API.get_bundled_offer_ig_lines component rows returned", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:410" },
+    { "construct": "BIL_INVOICE_API.expand_bundled_offer_ig_lines raise_ig_mismatch -20978", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:442" },
+    { "construct": "T093 ITEM1151 WHEN-BUTTON-PRESSED", "locator": "05_Complex/Inv_Small_Cash.xml:783" }
+  ],
+  "cases": [
+    {
+      "name": "patient-missing-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.GetBundledOfferLines",
+        "header": { "patientNo": null, "payType": 1, "draftDate": "2026-09-28T10:00:00" },
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000017" },
+        "offerId": 7001,
+        "bundleQty": 1
+      },
+      "requires": { "rows": [], "context": [] },
+      "expected": {
+        "error": { "package": "BIL_INVOICE_API", "number": -20979, "messagePrefix": "Patient, payer type, invoice date, info center and Bundled Offer are required." }
+      }
+    },
+    {
+      "name": "zero-bundle-quantity-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.GetBundledOfferLines",
+        "header": { "patientNo": "990000001", "payType": 1, "draftDate": "2026-09-28T10:00:00" },
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000017" },
+        "offerId": 7001,
+        "bundleQty": 0
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } }
+        ],
+        "context": []
+      },
+      "expected": {
+        "error": { "package": "BIL_INVOICE_API", "number": -20979, "messagePrefix": "Bundled Offer quantity must be a positive whole number." }
+      }
+    },
+    {
+      "name": "fractional-bundle-quantity-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.GetBundledOfferLines",
+        "header": { "patientNo": "990000001", "payType": 1, "draftDate": "2026-09-28T10:00:00" },
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000017" },
+        "offerId": 7001,
+        "bundleQty": 1.5
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } }
+        ],
+        "context": []
+      },
+      "expected": {
+        "error": { "package": "BIL_INVOICE_API", "number": -20979, "messagePrefix": "Bundled Offer quantity must be a positive whole number." }
+      }
+    },
+    {
+      "name": "credit-invoice-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.GetBundledOfferLines",
+        "header": { "patientNo": "990000001", "payType": 2, "draftDate": "2026-09-28T10:00:00" },
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000017" },
+        "offerId": 7001,
+        "bundleQty": 1
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } }
+        ],
+        "context": []
+      },
+      "expected": {
+        "error": { "package": "BIL_INVOICE_API", "number": -20871, "messagePrefix": "Bundled Offers are available only for Cash invoices." }
+      }
+    },
+    {
+      "name": "component-quantity-multiplied",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.GetBundledOfferLines",
+        "header": { "patientNo": "990000001", "payType": 1, "draftDate": "2026-09-28T10:00:00" },
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000017" },
+        "offerId": 7001,
+        "bundleQty": 2
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "OFFERS", "key": { "OFERID": 7001 }, "columns": { "OFFER_TYPE": 0, "IS_DELETED": "N", "LIST_ID": 1 } },
+          { "table": "OFFERS_DTL", "key": { "OFERID": 7001, "SERVICEID": "2001" }, "columns": { "LIST_ID": 1, "QTY": 3, "OFFER_PRICE": 40, "IS_DELETED": "N" } },
+          { "table": "OFFERS_DTL", "key": { "OFERID": 7001, "SERVICEID": "2002" }, "columns": { "LIST_ID": 1, "QTY": 1, "OFFER_PRICE": 20, "IS_DELETED": "N" } }
+        ],
+        "context": [
+          { "bil_patient_context.list_id": 1 },
+          { "serviceid": "2001", "bil_offer_rule.bundle_detail_qty": 3, "bil_offer_rule.offer_price": 40 },
+          { "serviceid": "2002", "bil_offer_rule.bundle_detail_qty": 1, "bil_offer_rule.offer_price": 20 }
+        ]
+      },
+      "expected": {
+        "values": {
+          "lines": [
+            { "serviceid": "2001", "qty": 6 },
+            { "serviceid": "2002", "qty": 2 }
+          ]
+        }
+      }
+    },
+    {
+      "name": "pending-oi-07-bundled-offer-price-applied",
+      "status": "pending-evidence",
+      "pendingOn": "OI-07",
+      "input": {
+        "operation": "BilInvoiceApiGateway.GetBundledOfferLines",
+        "header": { "patientNo": "990000001", "payType": 1, "draftDate": "2026-09-28T10:00:00" },
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000017" },
+        "offerId": 7001,
+        "bundleQty": 1
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "OFFERS", "key": { "OFERID": 7001 }, "columns": { "OFFER_TYPE": 0, "IS_DELETED": "N", "LIST_ID": 1 } },
+          { "table": "OFFERS_DTL", "key": { "OFERID": 7001, "SERVICEID": "2001" }, "columns": { "LIST_ID": 1, "QTY": 3, "OFFER_PRICE": 40, "IS_DELETED": "N" } },
+          { "table": "OFFERS_DTL", "key": { "OFERID": 7001, "SERVICEID": "2002" }, "columns": { "LIST_ID": 1, "QTY": 1, "OFFER_PRICE": 20, "IS_DELETED": "N" } }
+        ],
+        "context": [
+          { "bil_patient_context.list_id": 1 },
+          { "serviceid": "2001", "bil_offer_rule.bundle_detail_qty": 3, "bil_offer_rule.offer_price": 40 },
+          { "serviceid": "2002", "bil_offer_rule.bundle_detail_qty": 1, "bil_offer_rule.offer_price": 20 }
+        ]
+      },
+      "expected": {}
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome"] }
+}

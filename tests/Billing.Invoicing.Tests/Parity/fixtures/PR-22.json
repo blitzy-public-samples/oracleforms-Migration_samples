@@ -1,0 +1,115 @@
+{
+  "id": "PR-22",
+  "class": "package",
+  "source": [
+    { "construct": "BIL_INVOICE_API.CREATE_FULL_INVOICE request id", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:1303" },
+    { "construct": "BIL_INVOICE_API.CREATE_FULL_INVOICE -20847", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:1307" },
+    { "construct": "BIL_INVOICE_API.CREATE_FULL_INVOICE -20848 incomplete", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:1335" },
+    { "construct": "BIL_INVOICE_API.CREATE_FULL_INVOICE -20849", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:1345" },
+    { "construct": "BIL_INVOICE_API.CREATE_FULL_INVOICE load_existing_invoice_result -20848 unavailable invoice", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:1289" },
+    { "construct": "BIL_INVOICE_API.CREATE_FULL_INVOICE replay message", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:1371" },
+    { "construct": "BIL_INVOICE_API.CREATE_FULL_INVOICE -20848 completion", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:1467" }
+  ],
+  "cases": [
+    {
+      "name": "request-without-completed-invoice-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CreateFullInvoice",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [{ "serviceId": "1001", "qty": 1 }],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "5A1D3C7E9B2F4A6C8E0D1F3B5A7C9E22" },
+        "requestId": "A22E0000000000000000000000000003"
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
+          { "table": "BIL_INVOICE_CREATE_REQUEST", "key": { "REQUEST_ID": "A22E0000000000000000000000000003" }, "columns": { "INV_NO": null, "PATIENTNO": 990000001, "COMPLETED_AT": null } }
+        ],
+        "context": [
+          { "name": "BIL_INVOICE_CREATE_REQUEST unique key", "value": ["REQUEST_ID"] },
+          { "name": "price, currency and posting stages", "value": "not reached" }
+        ]
+      },
+      "expected": {
+        "error": { "package": "BIL_INVOICE_API", "number": -20848, "messagePrefix": "Invoice request A22E0000000000000000000000000003 exists but has no completed invoice." }
+      }
+    },
+    {
+      "name": "request-for-other-patient-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CreateFullInvoice",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [{ "serviceId": "1001", "qty": 1 }],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "5A1D3C7E9B2F4A6C8E0D1F3B5A7C9E22" },
+        "requestId": "A22E0000000000000000000000000004"
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
+          { "table": "BIL_INVOICE_CREATE_REQUEST", "key": { "REQUEST_ID": "A22E0000000000000000000000000004" }, "columns": { "INV_NO": 880000010, "PATIENTNO": 990000002, "COMPLETED_AT": "2026-09-28T10:05:00" } }
+        ],
+        "context": [
+          { "name": "BIL_INVOICE_CREATE_REQUEST unique key", "value": ["REQUEST_ID"] },
+          { "name": "price, currency and posting stages", "value": "not reached" }
+        ]
+      },
+      "expected": {
+        "error": { "package": "BIL_INVOICE_API", "number": -20849, "messagePrefix": "Invoice request A22E0000000000000000000000000004 already belongs to invoice 880000010 for another patient." }
+      }
+    },
+    {
+      "name": "request-pointing-at-missing-invoice-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CreateFullInvoice",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [{ "serviceId": "1001", "qty": 1 }],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "5A1D3C7E9B2F4A6C8E0D1F3B5A7C9E22" },
+        "requestId": "A22E0000000000000000000000000005"
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
+          { "table": "BIL_INVOICE_CREATE_REQUEST", "key": { "REQUEST_ID": "A22E0000000000000000000000000005" }, "columns": { "INV_NO": 880000011, "PATIENTNO": 990000001, "COMPLETED_AT": "2026-09-28T10:05:00" } },
+          { "table": "T_INV", "key": { "INV_NO": 880000011 }, "absent": true }
+        ],
+        "context": [
+          { "name": "BIL_INVOICE_CREATE_REQUEST unique key", "value": ["REQUEST_ID"] },
+          { "name": "price, currency and posting stages", "value": "not reached" }
+        ]
+      },
+      "expected": {
+        "error": { "package": "BIL_INVOICE_API", "number": -20848, "messagePrefix": "Invoice request A22E0000000000000000000000000005 refers to unavailable invoice 880000011." }
+      }
+    },
+    {
+      "name": "request-replay-returns-existing-invoice",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CreateFullInvoice",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [{ "serviceId": "1001", "qty": 1 }],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "5A1D3C7E9B2F4A6C8E0D1F3B5A7C9E22" },
+        "requestId": "A22E0000000000000000000000000006"
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
+          { "table": "BIL_INVOICE_CREATE_REQUEST", "key": { "REQUEST_ID": "A22E0000000000000000000000000006" }, "columns": { "INV_NO": 880000012, "PATIENTNO": 990000001, "COMPLETED_AT": "2026-09-28T10:05:00" } },
+          { "table": "T_INV", "key": { "INV_NO": 880000012 }, "columns": { "PATIENTNO": 990000001 } }
+        ],
+        "context": [
+          { "name": "BIL_INVOICE_CREATE_REQUEST unique key", "value": ["REQUEST_ID"] },
+          { "name": "price, currency and posting stages", "value": "not reached" }
+        ]
+      },
+      "expected": {
+        "values": { "invNo": 880000012, "message": "Invoice {inv_no} was already created for this request." }
+      },
+      "decision": "D-54"
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "message"] }
+}

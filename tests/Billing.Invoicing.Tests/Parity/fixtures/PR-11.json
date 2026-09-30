@@ -1,0 +1,72 @@
+{
+  "id": "PR-11",
+  "class": "package",
+  "source": [
+    { "construct": "BIL_INVOICE_ENGINE.get_old_or_new", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1104" },
+    { "construct": "BIL_INVOICE_ENGINE.insert_header old_or_new", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2686" },
+    { "construct": "T011 T_INV PRE-INSERT", "locator": "05_Complex/Inv_Small_Cash.xml:363" }
+  ],
+  "cases": [
+    {
+      "name": "first-invoice-for-patient-new",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CreateFullInvoice",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "subPayType": 1, "discT": 0 },
+        "lines": [
+          { "serviceId": "1001", "qty": 1 }
+        ],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "50415249545953455353494F4E303031" },
+        "requestId": "50523131000000000000000000000001"
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
+        ],
+        "context": [
+          { "package": "BIL_PATIENT_CONTEXT", "field": "patientno", "value": "990000001" },
+          { "package": "BIL_SERVICE_CONTEXT", "field": "list_id", "value": 1 },
+          { "package": "BIL_SERVICE_CONTEXT", "field": "curr_code", "value": "SAR" },
+          { "package": "BIL_PRICE_RULE", "field": "price", "value": 100.00 },
+          { "package": "BIL_PAYMENT", "field": "payment_posted", "value": "Y" },
+          { "package": "BIL_QUEUE_POSTING", "field": "queue_posted", "value": "Y" },
+          { "package": "BIL_STOCK_POSTING", "field": "stock_posted", "value": "Y" }
+        ]
+      },
+      "expected": { "outcome": "Pass", "values": { "old_or_new": "N" } }
+    },
+    {
+      "name": "returning-patient-old",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CreateFullInvoice",
+        "header": { "patientNo": "990000002", "draftDate": "2026-09-28T10:00:00", "payType": 1, "subPayType": 1, "discT": 0 },
+        "lines": [
+          { "serviceId": "1001", "qty": 1 }
+        ],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "50415249545953455353494F4E303031" },
+        "requestId": "50523131000000000000000000000002"
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } },
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000002" }, "columns": { "PHONE_H": null } },
+          { "table": "T_INV", "key": { "INV_NO": 880000001 }, "columns": { "PATIENTNO": "990000002" } }
+        ],
+        "context": [
+          { "package": "BIL_PATIENT_CONTEXT", "field": "patientno", "value": "990000002" },
+          { "package": "BIL_SERVICE_CONTEXT", "field": "list_id", "value": 1 },
+          { "package": "BIL_SERVICE_CONTEXT", "field": "curr_code", "value": "SAR" },
+          { "package": "BIL_PRICE_RULE", "field": "price", "value": 100.00 },
+          { "package": "BIL_PAYMENT", "field": "payment_posted", "value": "Y" },
+          { "package": "BIL_QUEUE_POSTING", "field": "queue_posted", "value": "Y" },
+          { "package": "BIL_STOCK_POSTING", "field": "stock_posted", "value": "Y" }
+        ]
+      },
+      "expected": { "outcome": "Pass", "values": { "old_or_new": "O" } }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "old_or_new"] }
+}

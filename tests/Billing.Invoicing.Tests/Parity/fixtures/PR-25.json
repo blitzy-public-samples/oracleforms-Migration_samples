@@ -1,0 +1,131 @@
+{
+  "id": "PR-25",
+  "class": "package",
+  "source": [
+    { "construct": "BIL_INVOICE_ENGINE.raise_offer_stale -20970", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1317" },
+    { "construct": "BIL_INVOICE_ENGINE.assert_expected_no_offer", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1344" },
+    { "construct": "BIL_INVOICE_ENGINE.calculate_lines standard-offer eligibility", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1877" },
+    { "construct": "BIL_INVOICE_ENGINE.calculate_lines not-eligible offer check", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1899" },
+    { "construct": "BIL_INVOICE_ENGINE.create_invoice p_validate_offer_versions", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:3217" },
+    { "construct": "BIL_INVOICE_API.expand_bundled_offer_ig_lines visible-row identity check", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:759" },
+    { "construct": "PU19 OKA", "locator": "05_Complex/Inv_Small_Cash.xml:978" },
+    { "construct": "T066 SERVICEID WHEN-VALIDATE-ITEM standard-offer branch", "locator": "05_Complex/Inv_Small_Cash.xml:389" }
+  ],
+  "cases": [
+    {
+      "name": "credit-line-with-stale-standard-offer-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CreateFullInvoice",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 2, "discT": 0 },
+        "lines": [
+          {
+            "serviceId": "1001",
+            "qty": 1,
+            "offerId": 501,
+            "offerDtlId": 5011,
+            "offerType": 1,
+            "offerLineRole": "SERVICE",
+            "offerPriceApplied": 80.00,
+            "offerDisApplied": 0,
+            "offerNameSnapshot": "PARITY OFFER",
+            "offerObjectVersionNumber": 1,
+            "offerDtlObjectVersionNumber": 1
+          }
+        ],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "50415249545953455353494F4E303235" },
+        "requestId": "50523235000000000000000000000001",
+        "packageArguments": { "p_send_sms": "N", "p_build_print_url": "N" }
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
+        ],
+        "context": [
+          { "name": "bil_patient_context.patientno", "value": "990000001" },
+          { "name": "bil_patient_context.coverage_type", "value": "CREDIT" },
+          { "name": "bil_patient_context.list_id", "value": 1 },
+          { "name": "bil_cashier_shift.shift_open", "value": true },
+          { "name": "bil_service_context.curr_code[1001]", "value": "SAR" },
+          { "name": "bil_price_rule.billing_price[1001]", "value": 100.00 },
+          { "name": "bil_offer_rule.matched", "value": "N" },
+          { "name": "bil_audit.log_error.raises", "value": false }
+        ]
+      },
+      "expected": {
+        "error": { "package": "BIL_INVOICE_ENGINE", "number": -20970, "messagePrefix": "The offer changed after the invoice was calculated. " }
+      }
+    },
+    {
+      "name": "line-with-orphan-offer-metadata-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CreateFullInvoice",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 2, "discT": 0 },
+        "lines": [
+          { "serviceId": "1001", "qty": 1, "offerId": 501, "offerType": null, "offerPriceApplied": 80.00 }
+        ],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "50415249545953455353494F4E303235" },
+        "requestId": "50523235000000000000000000000002",
+        "packageArguments": { "p_send_sms": "N", "p_build_print_url": "N" }
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
+        ],
+        "context": [
+          { "name": "bil_patient_context.patientno", "value": "990000001" },
+          { "name": "bil_patient_context.coverage_type", "value": "CREDIT" },
+          { "name": "bil_patient_context.list_id", "value": 1 },
+          { "name": "bil_cashier_shift.shift_open", "value": true },
+          { "name": "bil_service_context.curr_code[1001]", "value": "SAR" },
+          { "name": "bil_price_rule.billing_price[1001]", "value": 100.00 },
+          { "name": "bil_offer_rule.matched", "value": "N" },
+          { "name": "bil_audit.log_error.raises", "value": false }
+        ]
+      },
+      "expected": {
+        "error": { "package": "BIL_INVOICE_ENGINE", "number": -20970, "messagePrefix": "The offer changed after the invoice was calculated. " }
+      }
+    },
+    {
+      "name": "line-without-offer-metadata-passes",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CreateFullInvoice",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 2, "discT": 0 },
+        "lines": [
+          { "serviceId": "1001", "qty": 1 }
+        ],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "50415249545953455353494F4E303235" },
+        "requestId": "50523235000000000000000000000003",
+        "packageArguments": { "p_send_sms": "N", "p_build_print_url": "N" }
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
+        ],
+        "context": [
+          { "name": "bil_patient_context.patientno", "value": "990000001" },
+          { "name": "bil_patient_context.coverage_type", "value": "CREDIT" },
+          { "name": "bil_patient_context.list_id", "value": 1 },
+          { "name": "bil_cashier_shift.shift_open", "value": true },
+          { "name": "bil_service_context.curr_code[1001]", "value": "SAR" },
+          { "name": "bil_price_rule.billing_price[1001]", "value": 100.00 },
+          { "name": "bil_offer_rule.matched", "value": "N" },
+          { "name": "bil_class_rule.resolve_share.raises", "value": false },
+          { "name": "get_next_invoice_no.raises", "value": false },
+          { "name": "bil_audit.log_event.raises", "value": false },
+          { "name": "bil_payment.payment_posted", "value": "Y" },
+          { "name": "bil_queue_posting.queue_posted", "value": "Y" },
+          { "name": "bil_stock_posting.stock_posted", "value": "Y" }
+        ]
+      },
+      "expected": { "outcome": "Pass" }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome"] }
+}

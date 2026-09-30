@@ -1,0 +1,147 @@
+{
+  "id": "PR-23",
+  "class": "package",
+  "source": [
+    { "construct": "BIL_INVOICE_API.CREATE_FULL_INVOICE posting flag defaults", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:1297" },
+    { "construct": "BIL_INVOICE_API.CREATE_FULL_INVOICE payment stage", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:1385" },
+    { "construct": "BIL_INVOICE_API.CREATE_FULL_INVOICE queue stage", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:1405" },
+    { "construct": "BIL_INVOICE_API.CREATE_FULL_INVOICE stock stage", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:1416" },
+    { "construct": "T016 T_INV POST-INSERT", "locator": "05_Complex/Inv_Small_Cash.xml:368" },
+    { "construct": "T061 D_INV POST-INSERT", "locator": "05_Complex/Inv_Small_Cash.xml:568" }
+  ],
+  "cases": [
+    {
+      "name": "pending-oi-08-paid-invoice-posts-payment",
+      "status": "pending-evidence",
+      "pendingOn": "OI-08",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CreateFullInvoice",
+        "header": {
+          "patientNo": "990000001",
+          "draftDate": "2026-09-28T10:00:00",
+          "payType": 1,
+          "discT": 0,
+          "amount1": 100.00,
+          "amount2": 0,
+          "subPayType": 1
+        },
+        "lines": [
+          { "serviceId": "1001", "qty": 1 }
+        ],
+        "operatorContext": {
+          "userNo": 1,
+          "userName": "PARITY",
+          "infoCenterId": "1",
+          "machineName": "PARITY-PC",
+          "sessionId": "3F2504E04F8911D39A0C0305E82C3301"
+        },
+        "requestId": "50523233000000000000000000000001"
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "IS_PACKAGE": 0 } }
+        ],
+        "context": [
+          { "name": "bil_cashier_shift.shift_open", "value": true, "openItem": "OI-01" },
+          { "name": "bil_patient_context.is_cash", "value": "Y", "openItem": "OI-03" },
+          { "name": "bil_service_context.vat_rate", "value": 0, "openItem": "OI-04" },
+          { "name": "bil_price_rule.price", "value": 100.00, "openItem": "OI-05" },
+          { "name": "bil_class_rule.the_pay", "value": 100.00, "openItem": "OI-06" },
+          { "name": "bil_payment.accepts_paid", "value": null, "openItem": "OI-08" }
+        ]
+      },
+      "expected": {}
+    },
+    {
+      "name": "pending-oi-08-partial-payment-refused-or-accepted",
+      "status": "pending-evidence",
+      "pendingOn": "OI-08",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CreateFullInvoice",
+        "header": {
+          "patientNo": "990000001",
+          "draftDate": "2026-09-28T10:00:00",
+          "payType": 1,
+          "discT": 0,
+          "amount1": 60.00,
+          "amount2": 0,
+          "subPayType": 1
+        },
+        "lines": [
+          { "serviceId": "1001", "qty": 1 }
+        ],
+        "operatorContext": {
+          "userNo": 1,
+          "userName": "PARITY",
+          "infoCenterId": "1",
+          "machineName": "PARITY-PC",
+          "sessionId": "3F2504E04F8911D39A0C0305E82C3301"
+        },
+        "requestId": "50523233000000000000000000000002"
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "IS_PACKAGE": 0 } }
+        ],
+        "context": [
+          { "name": "bil_cashier_shift.shift_open", "value": true, "openItem": "OI-01" },
+          { "name": "bil_patient_context.is_cash", "value": "Y", "openItem": "OI-03" },
+          { "name": "bil_service_context.vat_rate", "value": 0, "openItem": "OI-04" },
+          { "name": "bil_price_rule.price", "value": 100.00, "openItem": "OI-05" },
+          { "name": "bil_class_rule.the_pay", "value": 100.00, "openItem": "OI-06" },
+          { "name": "bil_payment.accepts_partial", "value": null, "openItem": "OI-08" }
+        ]
+      },
+      "expected": {},
+      "decision": "D-13"
+    },
+    {
+      "name": "pending-oi-08-queue-and-stock-posted",
+      "status": "pending-evidence",
+      "pendingOn": "OI-08",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CreateFullInvoice",
+        "header": {
+          "patientNo": "990000001",
+          "draftDate": "2026-09-28T10:00:00",
+          "payType": 1,
+          "discT": 0,
+          "amount1": 100.00,
+          "amount2": 0,
+          "subPayType": 1
+        },
+        "lines": [
+          { "serviceId": "1001", "qty": 1 }
+        ],
+        "operatorContext": {
+          "userNo": 1,
+          "userName": "PARITY",
+          "infoCenterId": "1",
+          "machineName": "PARITY-PC",
+          "sessionId": "3F2504E04F8911D39A0C0305E82C3301"
+        },
+        "requestId": "50523233000000000000000000000003"
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "IS_PACKAGE": 0 } }
+        ],
+        "context": [
+          { "name": "bil_cashier_shift.shift_open", "value": true, "openItem": "OI-01" },
+          { "name": "bil_patient_context.is_cash", "value": "Y", "openItem": "OI-03" },
+          { "name": "bil_service_context.vat_rate", "value": 0, "openItem": "OI-04" },
+          { "name": "bil_price_rule.price", "value": 100.00, "openItem": "OI-05" },
+          { "name": "bil_class_rule.the_pay", "value": 100.00, "openItem": "OI-06" },
+          { "name": "bil_payment.accepts_paid", "value": null, "openItem": "OI-08" },
+          { "name": "bil_queue_posting.queue_posted", "value": null, "openItem": "OI-09" },
+          { "name": "bil_stock_posting.stock_posted", "value": null, "openItem": "OI-10" }
+        ]
+      },
+      "expected": {}
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome"] }
+}
