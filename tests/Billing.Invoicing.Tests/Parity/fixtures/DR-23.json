@@ -5,6 +5,7 @@
     { "construct": "T066 SERVICEID WHEN-VALIDATE-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:389" },
     { "construct": "PU19 OKA", "locator": "05_Complex/Inv_Small_Cash.xml:978" },
     { "construct": "T029 DOCIDX WHEN-VALIDATE-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:43" },
+    { "construct": "T089 IMP_PKG WHEN-BUTTON-PRESSED", "locator": "05_Complex/Inv_Small_Cash.xml:771" },
     { "construct": "BIL_INVOICE_ENGINE.t_header_input.add_to_list", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:21" },
     { "construct": "BIL_INVOICE_ENGINE.insert_header add_to_list", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2782" }
   ],
@@ -37,16 +38,9 @@
       "status": "derivable",
       "input": {
         "profiles": [
-          {
-            "serviceId": "P100",
-            "addToQue": 0,
-            "servLocId": 14,
-            "isPackage": 1,
-            "components": [
-              { "serviceId": "2001", "addToQue": 1 },
-              { "serviceId": "2002", "addToQue": 0 }
-            ]
-          }
+          { "serviceId": "P100", "addToQue": 0, "servLocId": 14, "isPackage": 1, "components": [] },
+          { "serviceId": "2001", "addToQue": 1 },
+          { "serviceId": "2002", "addToQue": 0 }
         ],
         "flagSource": "GetServiceQueueFlags"
       },
@@ -78,16 +72,9 @@
       "status": "derivable",
       "input": {
         "profiles": [
-          {
-            "serviceId": "P100",
-            "addToQue": 0,
-            "servLocId": 14,
-            "isPackage": 1,
-            "components": [
-              { "serviceId": "2001", "addToQue": 0 },
-              { "serviceId": "2002", "addToQue": 0 }
-            ]
-          }
+          { "serviceId": "P100", "addToQue": 0, "servLocId": 14, "isPackage": 1, "components": [] },
+          { "serviceId": "2001", "addToQue": 0 },
+          { "serviceId": "2002", "addToQue": 0 }
         ],
         "flagSource": "GetServiceQueueFlags"
       },
@@ -131,6 +118,18 @@
         "flagSource": "GetPackageComponentFlags"
       },
       "expected": { "outcome": "Pass", "messages": [], "values": { "ADD_TO_LIST": 0 } }
+    },
+    {
+      "name": "expanded-package-outside-location-14-queued-component-counts",
+      "status": "derivable",
+      "input": {
+        "profiles": [
+          { "serviceId": "P100", "addToQue": 0, "servLocId": 10, "isPackage": 1, "components": [] },
+          { "serviceId": "2001", "addToQue": 1 }
+        ],
+        "flagSource": "GetServiceQueueFlags"
+      },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "ADD_TO_LIST": 1 } }
     },
     {
       "name": "no-lines",

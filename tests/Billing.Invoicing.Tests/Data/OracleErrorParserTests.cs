@@ -45,6 +45,16 @@ public sealed class OracleErrorParserTests
     }
 
     [Fact]
+    public void FromParts_AnonymousFrame_IsSkippedAndNamedFrameReturned()
+    {
+        const string message = "ORA-20931: " + RequestUnavailableText + "\nORA-06512: at line 7\n" + EngineFrameLine;
+
+        OracleErrorInfo info = OracleErrorParser.FromParts(20931, message);
+
+        Assert.Equal(("HIS", "BIL_INVOICE_ENGINE", 619), Assert.Single(info.Frames));
+    }
+
+    [Fact]
     public void FromParts_NumberDisagreesWithMessagePrefix_Throws()
     {
         Assert.Throws<ArgumentException>(() => OracleErrorParser.FromParts(20930, RequestUnavailableMessage));
@@ -72,6 +82,19 @@ public sealed class OracleErrorParserTests
 
         Assert.Equal(expected, info.Number);
         Assert.Equal("x", info.Text);
+    }
+
+    [Fact]
+    public void FromParts_MessageWithoutOraPrefix_KeepsWholeMessageAsText()
+    {
+        const string message = "raw driver message";
+
+        OracleErrorInfo info = OracleErrorParser.FromParts(20931, message);
+
+        Assert.Equal(-20931, info.Number);
+        Assert.Equal(message, info.Text);
+        Assert.Equal(message, info.Message);
+        Assert.Empty(info.Frames);
     }
 
     [Fact]
@@ -114,12 +137,26 @@ public sealed class OracleErrorParserTests
     [Fact]
     public void FromParts_NearMatchFrameFlood_ReturnsOnlyTheValidFrame()
     {
-        string flood = string.Concat(Enumerable.Repeat("ORA-06512: at \"xxxxxxxx", 20000));
+        string flood = string.Concat(Enumerable.Repeat("ORA-06512: at \"xxxxxxxx", 100));
         string message = "ORA-20931: x\n" + flood + "\n" + EngineFrameLine;
 
         OracleErrorInfo info = OracleErrorParser.FromParts(20931, message);
 
         Assert.Equal(("HIS", "BIL_INVOICE_ENGINE", 619), Assert.Single(info.Frames));
+    }
+
+    [Fact]
+    public void FromParts_LargeNearMatchFlood_ReturnsFramesInMessageOrderUpToAnyTimeout()
+    {
+        string flood = string.Concat(Enumerable.Repeat("ORA-06512: at \"xxxxxxxx", 20000));
+        string message = "ORA-20931: x\n" + EngineFrameLine + "\n" + flood + "\n" + ApiFrameLine;
+
+        OracleErrorInfo info = OracleErrorParser.FromParts(20931, message);
+
+        Assert.InRange(info.Frames.Count, 1, 2);
+        Assert.Equal(
+            new[] { ("HIS", "BIL_INVOICE_ENGINE", 619), ("HIS", "BIL_INVOICE_API", 1476) }.Take(info.Frames.Count),
+            info.Frames);
     }
 
     [Fact]

@@ -208,6 +208,7 @@ public static partial class ParityFixture
     /// <param name="expected">Expected values, a JSON object; actual keys it does not name are ignored.</param>
     /// <param name="actual">Actual values; nested objects are dictionaries and arrays are sequences.</param>
     /// <param name="compare">
+    /// Strings need a string, char or <see cref="DateTime"/> actual, numbers a numeric actual and booleans a bool.
     /// Strings and <see cref="FixtureCompare.Exact"/> keys compare as exact text (booleans as <c>true</c>/<c>false</c>,
     /// <see cref="DateTime"/> as <c>yyyy-MM-ddTHH:mm:ss</c>); other numbers compare at <see cref="FixtureCompare.MoneyDecimals"/>.
     /// </param>
@@ -247,16 +248,16 @@ public static partial class ParityFixture
         switch (expected.ValueKind)
         {
             case JsonValueKind.String:
-                AtPath(path, () => AssertExact(expected.GetString(), ToText(actual)));
+                AtPath(path, () => AssertExact(expected.GetString(), ToText(RequireType(expected, actual))));
                 break;
             case JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False when exact:
-                AtPath(path, () => AssertExact(expected.GetRawText(), ToText(actual)));
+                AtPath(path, () => AssertExact(expected.GetRawText(), ToText(RequireType(expected, actual))));
                 break;
             case JsonValueKind.Number:
-                AtPath(path, () => AssertMoney(ReadDecimal(expected), ToDecimal(actual), compare.MoneyDecimals));
+                AtPath(path, () => AssertMoney(ReadDecimal(expected), ToDecimal(RequireType(expected, actual)), compare.MoneyDecimals));
                 break;
             case JsonValueKind.True or JsonValueKind.False:
-                AtPath(path, () => Assert.Equal(expected.GetBoolean(), ToBoolean(actual)));
+                AtPath(path, () => Assert.Equal(expected.GetBoolean(), ToBoolean(RequireType(expected, actual))));
                 break;
             case JsonValueKind.Null:
                 AtPath(path, () => Assert.Null(actual));
@@ -347,6 +348,25 @@ public static partial class ParityFixture
             ? value
             : throw FailException.ForFailure($"expected number {expected.GetRawText()} is outside the decimal range.");
 
+    private static object? RequireType(JsonElement expected, object? actual)
+    {
+        var required = expected.ValueKind switch
+        {
+            JsonValueKind.String when actual is not (null or string or char or DateTime) => "a string, char or DateTime",
+            JsonValueKind.Number when actual is not null && !IsNumber(actual) => "a numeric",
+            JsonValueKind.True or JsonValueKind.False when actual is not (null or bool) => "a bool",
+            _ => null,
+        };
+
+        return required is null
+            ? actual
+            : throw FailException.ForFailure(
+                $"expected JSON {expected.ValueKind} {expected.GetRawText()} requires {required} actual, not {Describe(actual)}.");
+    }
+
+    private static bool IsNumber(object actual) =>
+        actual is sbyte or byte or short or ushort or int or uint or long or ulong or decimal or float or double;
+
     private static decimal? ToDecimal(object? actual)
     {
         if (actual is null)
@@ -354,32 +374,25 @@ public static partial class ParityFixture
             return null;
         }
 
+        if (!IsNumber(actual))
+        {
+            throw FailException.ForFailure($"actual {Describe(actual)} is not a number.");
+        }
+
         try
         {
             return Convert.ToDecimal(actual, CultureInfo.InvariantCulture);
         }
-        catch (Exception ex) when (ex is FormatException or InvalidCastException or OverflowException)
+        catch (OverflowException ex)
         {
-            throw FailException.ForFailure($"actual {Describe(actual)} is not a number: {ex.Message}");
+            throw FailException.ForFailure($"actual {Describe(actual)} is outside the decimal range: {ex.Message}");
         }
     }
 
-    private static bool ToBoolean(object? actual)
-    {
-        if (actual is null)
-        {
-            throw FailException.ForFailure("actual is null, expected a boolean.");
-        }
-
-        try
-        {
-            return Convert.ToBoolean(actual, CultureInfo.InvariantCulture);
-        }
-        catch (Exception ex) when (ex is FormatException or InvalidCastException)
-        {
-            throw FailException.ForFailure($"actual {Describe(actual)} is not a boolean: {ex.Message}");
-        }
-    }
+    private static bool ToBoolean(object? actual) =>
+        actual is bool flag
+            ? flag
+            : throw FailException.ForFailure(actual is null ? "actual is null, expected a boolean." : $"actual {Describe(actual)} is not a boolean.");
 
     private static string? ToText(object? actual) => actual switch
     {
@@ -469,9 +482,9 @@ public static partial class ParityFixture
             throw Invalid(id, null, "compare is missing.");
         }
 
-        if (document.Compare.MoneyDecimals < 0)
+        if (document.Compare.MoneyDecimals is < 0 or > 28)
         {
-            throw Invalid(id, null, $"compare.moneyDecimals {document.Compare.MoneyDecimals} is negative.");
+            throw Invalid(id, null, $"compare.moneyDecimals {document.Compare.MoneyDecimals} is outside 0 to 28.");
         }
 
         if (document.Compare.Exact is null)
@@ -491,7 +504,12 @@ public static partial class ParityFixture
             cases.Add(ValidateCase(id, requiredClass, i, document.Cases[i], names));
         }
 
-        return document with { Cases = cases.AsReadOnly() };
+        return document with
+        {
+            Source = Freeze(document.Source),
+            Cases = cases.AsReadOnly(),
+            Compare = document.Compare with { Exact = Freeze(document.Compare.Exact) },
+        };
     }
 
     private static FixtureCase ValidateCase(string id, string documentClass, int index, FixtureCase? fixtureCase, HashSet<string> names)
@@ -528,17 +546,101 @@ public static partial class ParityFixture
             throw Invalid(id, label, $"pendingOn '{fixtureCase.PendingOn}' must be an open-item id OI-nn.");
         }
 
+        if (fixtureCase.Input.ValueKind != JsonValueKind.Object)
+        {
+            throw Invalid(id, label, $"input must be a JSON object, not {fixtureCase.Input.ValueKind}.");
+        }
+
         if (fixtureCase.Expected is null)
         {
             throw Invalid(id, label, "expected is missing.");
         }
 
-        return fixtureCase.Requires is null
-            ? fixtureCase
-            : fixtureCase with
+        if (documentClass == PackageClass && fixtureCase.Requires is null)
+        {
+            throw Invalid(id, label, "a package case needs requires.");
+        }
+
+        ValidateExpected(id, label, documentClass, fixtureCase.Status, fixtureCase.Expected);
+
+        return fixtureCase with
+        {
+            Expected = fixtureCase.Expected.Messages is null
+                ? fixtureCase.Expected
+                : fixtureCase.Expected with { Messages = Freeze(fixtureCase.Expected.Messages) },
+            Requires = fixtureCase.Requires is null
+                ? null
+                : new FixtureRequires(Freeze(fixtureCase.Requires.Rows ?? []), Freeze(fixtureCase.Requires.Context ?? [])),
+        };
+    }
+
+    private static ReadOnlyCollection<T> Freeze<T>(IEnumerable<T> items) => Array.AsReadOnly(items.ToArray());
+
+    private static void ValidateExpected(string id, string label, string documentClass, string status, FixtureExpected expected)
+    {
+        if (expected.Outcome is not null && string.IsNullOrWhiteSpace(expected.Outcome))
+        {
+            throw Invalid(id, label, "expected.outcome is blank.");
+        }
+
+        if (expected.Messages is not null)
+        {
+            for (var i = 0; i < expected.Messages.Count; i++)
             {
-                Requires = new FixtureRequires(fixtureCase.Requires.Rows ?? [], fixtureCase.Requires.Context ?? []),
-            };
+                var message = expected.Messages[i];
+                if (message is null)
+                {
+                    throw Invalid(id, label, $"expected.messages[{i}] is null.");
+                }
+
+                if (string.IsNullOrEmpty(message.Text))
+                {
+                    throw Invalid(id, label, $"expected.messages[{i}].text is missing or empty.");
+                }
+
+                if (string.IsNullOrWhiteSpace(message.Severity))
+                {
+                    throw Invalid(id, label, $"expected.messages[{i}].severity is blank.");
+                }
+            }
+        }
+
+        if (expected.Values is { ValueKind: not JsonValueKind.Object } values)
+        {
+            throw Invalid(id, label, $"expected.values must be a JSON object, not {values.ValueKind}.");
+        }
+
+        if (expected.Error is { } error)
+        {
+            if (string.IsNullOrWhiteSpace(error.Package))
+            {
+                throw Invalid(id, label, "expected.error.package is blank.");
+            }
+
+            if (error.Number is < -20999 or > -20000)
+            {
+                throw Invalid(id, label, $"expected.error.number {error.Number} is outside -20999 to -20000.");
+            }
+
+            if (string.IsNullOrWhiteSpace(error.MessagePrefix))
+            {
+                throw Invalid(id, label, "expected.error.messagePrefix is blank.");
+            }
+        }
+
+        if (documentClass == DomainClass && (expected.Outcome is null || expected.Messages is null))
+        {
+            throw Invalid(id, label, "a domain case needs expected.outcome and expected.messages.");
+        }
+
+        if (documentClass == PackageClass
+            && status == Derivable
+            && expected.Error is null
+            && expected.Outcome is null
+            && !(expected.Values is { } asserted && asserted.EnumerateObject().Any()))
+        {
+            throw Invalid(id, label, "a derivable package case needs expected.error, expected.outcome or a non-empty expected.values.");
+        }
     }
 
     private static InvalidDataException Invalid(string id, string? caseName, string problem) =>
