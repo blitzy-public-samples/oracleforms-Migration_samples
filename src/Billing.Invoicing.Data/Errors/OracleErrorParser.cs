@@ -18,6 +18,8 @@ public static partial class OracleErrorParser
 
     private const RegexOptions ParseOptions = RegexOptions.CultureInvariant | RegexOptions.ExplicitCapture;
 
+    private const int FrameMatchTimeoutMilliseconds = 1000;
+
     /// <summary>Copies number, message, open phase and failing operation from an ODP.NET exception and parses them.</summary>
     /// <param name="exception">The driver exception.</param>
     /// <returns>The parsed error.</returns>
@@ -30,6 +32,40 @@ public static partial class OracleErrorParser
         string? operation = exception.Data[OperationKey] as string;
 
         return FromParts(exception.Number, exception.Message ?? string.Empty, duringOpen, operation);
+    }
+
+    /// <summary>Finds the first ODP.NET exception in an exception and its inner-exception chain and parses it.</summary>
+    /// <param name="exception">The exception raised by a Data member.</param>
+    /// <param name="error">The parsed error, or null when no driver exception exists or its number and message cannot be parsed.</param>
+    /// <param name="number">The signed driver number, or 0 when no driver exception exists.</param>
+    /// <returns>True when the chain holds a driver exception.</returns>
+    internal static bool TryFromExceptionChain(Exception exception, out OracleErrorInfo? error, out int number)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is not OracleException oracleException)
+            {
+                continue;
+            }
+
+            number = Normalise(oracleException.Number);
+            try
+            {
+                error = FromException(oracleException);
+            }
+            catch (Exception parseFailure) when (parseFailure is ArgumentException or RegexMatchTimeoutException)
+            {
+                error = null;
+            }
+
+            return true;
+        }
+
+        error = null;
+        number = 0;
+        return false;
     }
 
     /// <summary>Parses an Oracle error number and message into a signed number, first-line error text and ORA-06512 frames.</summary>
@@ -46,9 +82,8 @@ public static partial class OracleErrorParser
         // int.MinValue has no positive int counterpart; it is rejected as an argument error.
         ArgumentOutOfRangeException.ThrowIfEqual(number, int.MinValue);
 
-        // Normalise: application errors 20000 to 20999 become negative; every other code is positive.
-        int code = Math.Abs(number);
-        int signed = code is >= ApplicationErrorFirst and <= ApplicationErrorLast ? -code : code;
+        int signed = Normalise(number);
+        int code = Math.Abs(signed);
 
         // Cross-check: the first ORA code in the message, when present, must equal the number.
         Match oraCode = OraCodeRegex().Match(message);
@@ -76,6 +111,20 @@ public static partial class OracleErrorParser
         };
     }
 
+    /// <summary>Returns the signed ORA code: application errors 20000 to 20999 negative, every other code positive.</summary>
+    /// <param name="number">ORA code as reported by the driver, positive or already signed.</param>
+    /// <returns>The signed code; <see cref="int.MinValue"/> unchanged.</returns>
+    private static int Normalise(int number)
+    {
+        if (number == int.MinValue)
+        {
+            return number;
+        }
+
+        int code = Math.Abs(number);
+        return code is >= ApplicationErrorFirst and <= ApplicationErrorLast ? -code : code;
+    }
+
     /// <summary>Returns the text after the first "ORA-nnnnn: " prefix up to the end of its line, or the whole message when no prefix exists.</summary>
     private static string ParseText(string message)
     {
@@ -91,29 +140,59 @@ public static partial class OracleErrorParser
         return line.TrimEnd().ToString();
     }
 
-    /// <summary>Returns every ORA-06512 frame that names a quoted object, in message order.</summary>
+    /// <summary>Returns, in message order, every ORA-06512 frame whose quoted name parts fit the frame pattern; on a match timeout, the frames found before it.</summary>
     private static IReadOnlyList<(string Schema, string Package, int Line)> ParseFrames(string message)
     {
-        MatchCollection matches = FrameRegex().Matches(message);
-        if (matches.Count == 0)
+        var frames = new List<(string Schema, string Package, int Line)>();
+        try
         {
-            return Array.Empty<(string Schema, string Package, int Line)>();
-        }
-
-        var frames = new List<(string Schema, string Package, int Line)>(matches.Count);
-        foreach (Match match in matches)
-        {
-            // Frames whose line number does not fit an int are skipped.
-            if (!int.TryParse(match.Groups["line"].ValueSpan, NumberStyles.None, CultureInfo.InvariantCulture, out int line))
+            Match match = FrameRegex().Match(message);
+            while (match.Success)
             {
-                continue;
-            }
+                // Frames whose line number does not fit an int are skipped.
+                if (int.TryParse(match.Groups["line"].ValueSpan, NumberStyles.None, CultureInfo.InvariantCulture, out int line))
+                {
+                    Group schema = match.Groups["schema"];
+                    frames.Add((schema.Success ? schema.Value : string.Empty, match.Groups["object"].Value, line));
+                }
 
-            Group schema = match.Groups["schema"];
-            frames.Add((schema.Success ? schema.Value : string.Empty, match.Groups["object"].Value, line));
+                match = match.NextMatch();
+            }
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            // The frames matched before the timeout are returned.
+            return frames.AsReadOnly();
         }
 
-        return frames.AsReadOnly();
+        return frames.Count == 0 ? Array.Empty<(string Schema, string Package, int Line)>() : frames.AsReadOnly();
+    }
+
+    /// <summary>Returns, in message order, every trigger named by an ORA-04088 line; on a match timeout, the triggers found before it.</summary>
+    /// <param name="message">Full error message.</param>
+    /// <returns>The trigger names; Schema is empty when the name has no schema part.</returns>
+    internal static IReadOnlyList<(string Schema, string Name)> ParseTriggers(string message)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+
+        var triggers = new List<(string Schema, string Name)>();
+        try
+        {
+            Match match = TriggerRegex().Match(message);
+            while (match.Success)
+            {
+                Group schema = match.Groups["schema"];
+                triggers.Add((schema.Success ? schema.Value : string.Empty, match.Groups["object"].Value));
+                match = match.NextMatch();
+            }
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            // The triggers matched before the timeout are returned.
+            return triggers.AsReadOnly();
+        }
+
+        return triggers.AsReadOnly();
     }
 
     /// <summary>First "ORA-" followed by a five-digit code anywhere in the message.</summary>
@@ -124,7 +203,17 @@ public static partial class OracleErrorParser
     [GeneratedRegex("ORA-[0-9]{5}: ", ParseOptions)]
     private static partial Regex OraPrefixRegex();
 
-    /// <summary>An ORA-06512 frame with a quoted, optionally schema-qualified object name and a line number.</summary>
-    [GeneratedRegex("ORA-06512: at \"(?:(?<schema>[^\".]+)\\.)?(?<object>[^\"]+)\", line (?<line>[0-9]+)", ParseOptions)]
+    /// <summary>An ORA-06512 frame with a quoted, optionally schema-qualified object name on one line, each name part at most 128 characters, and a line number.</summary>
+    [GeneratedRegex(
+        "ORA-06512: at \"(?:(?<schema>[^\".\\r\\n]{1,128})\\.)?(?<object>[^\"\\r\\n]{1,128})\", line (?<line>[0-9]+)",
+        ParseOptions,
+        matchTimeoutMilliseconds: FrameMatchTimeoutMilliseconds)]
     private static partial Regex FrameRegex();
+
+    /// <summary>An ORA-04088 line with a quoted, optionally schema-qualified trigger name on one line, each name part at most 128 characters.</summary>
+    [GeneratedRegex(
+        "ORA-04088: error during execution of trigger '(?:(?<schema>[^'.\\r\\n]{1,128})\\.)?(?<object>[^'\\r\\n]{1,128})'",
+        ParseOptions,
+        matchTimeoutMilliseconds: FrameMatchTimeoutMilliseconds)]
+    private static partial Regex TriggerRegex();
 }

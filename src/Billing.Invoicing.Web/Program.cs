@@ -1,4 +1,4 @@
-// Serves the React build in wwwroot and returns index.html for any unmatched path.
+// Serves the React build in wwwroot; unmatched non-file routes get index.html, missing files stay 404.
 var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
 app.UseDefaultFiles();

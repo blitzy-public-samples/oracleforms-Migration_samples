@@ -1,0 +1,257 @@
+{
+  "id": "DR-03",
+  "class": "domain",
+  "source": [
+    { "construct": "T023 PATIENTNO WHEN-VALIDATE-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:18" },
+    { "construct": "T_INV.INVDATE item DataType Date", "locator": "05_Complex/Inv_Small_Cash.xml:16" }
+  ],
+  "cases": [
+    {
+      "name": "contract-ended-normal-user-blocks",
+      "status": "derivable",
+      "input": {
+        "coverage": { "compCode": "205", "companyType": 2, "contractEnd": "2026-09-01T00:00:00", "companyIsActive": 1, "cardEnd": "2026-12-31T00:00:00", "subCompCode": "305", "subCompanyContractEnd": "2026-12-31T00:00:00", "subCompanyIsActive": 1, "myClass": 1, "classWithRef": 0, "classIsActive": 1 },
+        "parameters": { "invDateAdmin": 2, "cashOrCredit": 0 },
+        "draftDate": "2026-09-28T00:00:00"
+      },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "PATIENTNO", "text": "Contract  Ended 01/09/2026", "severity": "Blocking" }] }
+    },
+    {
+      "name": "contract-ended-date-admin-warns",
+      "status": "derivable",
+      "input": {
+        "coverage": { "compCode": "205", "companyType": 2, "contractEnd": "2026-09-01T00:00:00", "companyIsActive": 1, "cardEnd": "2026-12-31T00:00:00", "subCompCode": "305", "subCompanyContractEnd": "2026-12-31T00:00:00", "subCompanyIsActive": 1, "myClass": 1, "classWithRef": 0, "classIsActive": 1 },
+        "parameters": { "invDateAdmin": 1, "cashOrCredit": 0 },
+        "draftDate": "2026-09-28T00:00:00"
+      },
+      "expected": { "outcome": "Warning", "messages": [{ "field": "PATIENTNO", "text": "Contract  Ended 01/09/2026 , But due to that user have date admin privileges system will open claim", "severity": "Warning" }] }
+    },
+    {
+      "name": "company-on-hold-blocks",
+      "status": "derivable",
+      "input": {
+        "coverage": { "compCode": "205", "companyType": 2, "contractEnd": "2026-12-31T00:00:00", "companyIsActive": 2, "cardEnd": "2026-12-31T00:00:00", "subCompCode": "305", "subCompanyContractEnd": "2026-12-31T00:00:00", "subCompanyIsActive": 1, "myClass": 1, "classWithRef": 0, "classIsActive": 1 },
+        "parameters": { "invDateAdmin": 2, "cashOrCredit": 0 },
+        "draftDate": "2026-09-28T00:00:00"
+      },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "PATIENTNO", "text": "Company Is Holed", "severity": "Blocking" }] }
+    },
+    {
+      "name": "card-expired-normal-user-blocks",
+      "status": "derivable",
+      "input": {
+        "coverage": { "compCode": "205", "companyType": 2, "contractEnd": "2026-12-31T00:00:00", "companyIsActive": 1, "cardEnd": "2026-09-20T00:00:00", "subCompCode": "305", "subCompanyContractEnd": "2026-12-31T00:00:00", "subCompanyIsActive": 1, "myClass": 1, "classWithRef": 0, "classIsActive": 1 },
+        "parameters": { "invDateAdmin": 2, "cashOrCredit": 0 },
+        "draftDate": "2026-09-28T00:00:00"
+      },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "PATIENTNO", "text": "Card Expired 20/09/2026", "severity": "Blocking" }] }
+    },
+    {
+      "name": "card-expired-date-admin-warns",
+      "status": "derivable",
+      "input": {
+        "coverage": { "compCode": "205", "companyType": 2, "contractEnd": "2026-12-31T00:00:00", "companyIsActive": 1, "cardEnd": "2026-09-20T00:00:00", "subCompCode": "305", "subCompanyContractEnd": "2026-12-31T00:00:00", "subCompanyIsActive": 1, "myClass": 1, "classWithRef": 0, "classIsActive": 1 },
+        "parameters": { "invDateAdmin": 1, "cashOrCredit": 0 },
+        "draftDate": "2026-09-28T00:00:00"
+      },
+      "expected": { "outcome": "Warning", "messages": [{ "field": "PATIENTNO", "text": "Card Expired 20/09/2026 , But due to that user have date admin privileges system will open claim", "severity": "Warning" }] }
+    },
+    {
+      "name": "card-ends-today-warns",
+      "status": "derivable",
+      "input": {
+        "coverage": { "compCode": "205", "companyType": 2, "contractEnd": "2026-12-31T00:00:00", "companyIsActive": 1, "cardEnd": "2026-09-28T00:00:00", "subCompCode": "305", "subCompanyContractEnd": "2026-12-31T00:00:00", "subCompanyIsActive": 1, "myClass": 1, "classWithRef": 0, "classIsActive": 1 },
+        "parameters": { "invDateAdmin": 2, "cashOrCredit": 0 },
+        "draftDate": "2026-09-28T00:00:00"
+      },
+      "expected": { "outcome": "Warning", "messages": [{ "field": "PATIENTNO", "text": "Card Expired 28/09/2026 , Today last Date", "severity": "Warning" }] }
+    },
+    {
+      "name": "company-type-1-card-not-checked-passes",
+      "status": "derivable",
+      "input": {
+        "coverage": { "compCode": "205", "companyType": 1, "contractEnd": "2026-12-31T00:00:00", "companyIsActive": 1, "cardEnd": "2026-09-20T00:00:00", "subCompCode": "305", "subCompanyContractEnd": "2026-12-31T00:00:00", "subCompanyIsActive": 1, "myClass": 1, "classWithRef": 0, "classIsActive": 1 },
+        "parameters": { "invDateAdmin": 2, "cashOrCredit": 0 },
+        "draftDate": "2026-09-28T00:00:00"
+      },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "policy-ended-admin-1-warns",
+      "status": "derivable",
+      "input": {
+        "coverage": { "compCode": "205", "companyType": 2, "contractEnd": "2026-12-31T00:00:00", "companyIsActive": 1, "cardEnd": "2026-12-31T00:00:00", "subCompCode": "305", "subCompanyContractEnd": "2026-09-10T00:00:00", "subCompanyIsActive": 1, "myClass": 1, "classWithRef": 0, "classIsActive": 1 },
+        "parameters": { "invDateAdmin": 1, "cashOrCredit": 0 },
+        "draftDate": "2026-09-28T00:00:00"
+      },
+      "expected": { "outcome": "Warning", "messages": [{ "field": "PATIENTNO", "text": "Policy  Ended 10/09/2026 ,But due to that user have date admin privileges system will open claim", "severity": "Warning" }] }
+    },
+    {
+      "name": "policy-ended-normal-user-blocks",
+      "status": "derivable",
+      "input": {
+        "coverage": { "compCode": "205", "companyType": 2, "contractEnd": "2026-12-31T00:00:00", "companyIsActive": 1, "cardEnd": "2026-12-31T00:00:00", "subCompCode": "305", "subCompanyContractEnd": "2026-09-10T00:00:00", "subCompanyIsActive": 1, "myClass": 1, "classWithRef": 0, "classIsActive": 1 },
+        "parameters": { "invDateAdmin": 2, "cashOrCredit": 0 },
+        "draftDate": "2026-09-28T00:00:00"
+      },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "PATIENTNO", "text": "Policy  Ended 10/09/2026 Patient well treated as cash patient ", "severity": "Blocking" }] }
+    },
+    {
+      "name": "policy-ended-admin-0-blocks",
+      "status": "derivable",
+      "input": {
+        "coverage": { "compCode": "205", "companyType": 2, "contractEnd": "2026-12-31T00:00:00", "companyIsActive": 1, "cardEnd": "2026-12-31T00:00:00", "subCompCode": "305", "subCompanyContractEnd": "2026-09-10T00:00:00", "subCompanyIsActive": 1, "myClass": 1, "classWithRef": 0, "classIsActive": 1 },
+        "parameters": { "invDateAdmin": 0, "cashOrCredit": 0 },
+        "draftDate": "2026-09-28T00:00:00"
+      },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "PATIENTNO", "text": "Policy  Ended 10/09/2026 Patient well treated as cash patient ", "severity": "Blocking" }] }
+    },
+    {
+      "name": "policy-on-hold-blocks",
+      "status": "derivable",
+      "input": {
+        "coverage": { "compCode": "205", "companyType": 2, "contractEnd": "2026-12-31T00:00:00", "companyIsActive": 1, "cardEnd": "2026-12-31T00:00:00", "subCompCode": "305", "subCompanyContractEnd": "2026-12-31T00:00:00", "subCompanyIsActive": 2, "myClass": 1, "classWithRef": 0, "classIsActive": 1 },
+        "parameters": { "invDateAdmin": 2, "cashOrCredit": 0 },
+        "draftDate": "2026-09-28T00:00:00"
+      },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "PATIENTNO", "text": "Policy Is Holed", "severity": "Blocking" }] }
+    },
+    {
+      "name": "class-on-hold-blocks",
+      "status": "derivable",
+      "input": {
+        "coverage": { "compCode": "205", "companyType": 2, "contractEnd": "2026-12-31T00:00:00", "companyIsActive": 1, "cardEnd": "2026-12-31T00:00:00", "subCompCode": "305", "subCompanyContractEnd": "2026-12-31T00:00:00", "subCompanyIsActive": 1, "myClass": 1, "classWithRef": 0, "classIsActive": 2 },
+        "parameters": { "invDateAdmin": 2, "cashOrCredit": 0 },
+        "draftDate": "2026-09-28T00:00:00"
+      },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "PATIENTNO", "text": "Class Is Holed", "severity": "Blocking" }] }
+    },
+    {
+      "name": "class-referral-warns",
+      "status": "derivable",
+      "input": {
+        "coverage": { "compCode": "205", "companyType": 2, "contractEnd": "2026-12-31T00:00:00", "companyIsActive": 1, "cardEnd": "2026-12-31T00:00:00", "subCompCode": "305", "subCompanyContractEnd": "2026-12-31T00:00:00", "subCompanyIsActive": 1, "myClass": 1, "classWithRef": 1, "classIsActive": 1 },
+        "parameters": { "invDateAdmin": 2, "cashOrCredit": 0 },
+        "draftDate": "2026-09-28T00:00:00"
+      },
+      "expected": { "outcome": "Warning", "messages": [{ "field": "PATIENTNO", "text": "Refral Required For This Class", "severity": "Warning" }] }
+    },
+    {
+      "name": "admin-warning-then-class-hold-blocks",
+      "status": "derivable",
+      "input": {
+        "coverage": { "compCode": "205", "companyType": 2, "contractEnd": "2026-09-01T00:00:00", "companyIsActive": 1, "cardEnd": "2026-12-31T00:00:00", "subCompCode": "305", "subCompanyContractEnd": "2026-12-31T00:00:00", "subCompanyIsActive": 1, "myClass": 1, "classWithRef": 0, "classIsActive": 2 },
+        "parameters": { "invDateAdmin": 1, "cashOrCredit": 0 },
+        "draftDate": "2026-09-28T00:00:00"
+      },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "PATIENTNO", "text": "Contract  Ended 01/09/2026 , But due to that user have date admin privileges system will open claim", "severity": "Warning" }, { "field": "PATIENTNO", "text": "Class Is Holed", "severity": "Blocking" }] }
+    },
+    {
+      "name": "company-zero-skips-checks-passes",
+      "status": "derivable",
+      "input": {
+        "coverage": { "compCode": "0", "companyType": 2, "contractEnd": "2026-09-01T00:00:00", "companyIsActive": 1, "cardEnd": "2026-09-20T00:00:00", "subCompCode": "305", "subCompanyContractEnd": "2026-09-10T00:00:00", "subCompanyIsActive": 1, "myClass": 1, "classWithRef": 0, "classIsActive": 1 },
+        "parameters": { "invDateAdmin": 2, "cashOrCredit": 0 },
+        "draftDate": "2026-09-28T00:00:00"
+      },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "cash-or-credit-1-company-type-2-skips-checks-passes",
+      "status": "derivable",
+      "input": {
+        "coverage": { "compCode": "205", "companyType": 2, "contractEnd": "2026-09-01T00:00:00", "companyIsActive": 1, "cardEnd": "2026-12-31T00:00:00", "subCompCode": "305", "subCompanyContractEnd": "2026-12-31T00:00:00", "subCompanyIsActive": 1, "myClass": 1, "classWithRef": 0, "classIsActive": 1 },
+        "parameters": { "invDateAdmin": 2, "cashOrCredit": 1 },
+        "draftDate": "2026-09-28T00:00:00"
+      },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "cash-or-credit-1-direct-company-still-checked-blocks",
+      "status": "derivable",
+      "input": {
+        "coverage": { "compCode": "205", "companyType": 1, "contractEnd": "2026-09-01T00:00:00", "companyIsActive": 1, "cardEnd": "2026-12-31T00:00:00", "subCompCode": "305", "subCompanyContractEnd": "2026-12-31T00:00:00", "subCompanyIsActive": 1, "myClass": 1, "classWithRef": 0, "classIsActive": 1 },
+        "parameters": { "invDateAdmin": 2, "cashOrCredit": 1 },
+        "draftDate": "2026-09-28T00:00:00"
+      },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "PATIENTNO", "text": "Contract  Ended 01/09/2026", "severity": "Blocking" }] }
+    },
+    {
+      "name": "valid-coverage-passes",
+      "status": "derivable",
+      "input": {
+        "coverage": { "compCode": "205", "companyType": 2, "contractEnd": "2026-12-31T00:00:00", "companyIsActive": 1, "cardEnd": "2026-12-31T00:00:00", "subCompCode": "305", "subCompanyContractEnd": "2026-12-31T00:00:00", "subCompanyIsActive": 1, "myClass": 1, "classWithRef": 0, "classIsActive": 1 },
+        "parameters": { "invDateAdmin": 2, "cashOrCredit": 0 },
+        "draftDate": "2026-09-28T00:00:00"
+      },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "contract-ends-at-midnight-afternoon-draft-blocks",
+      "status": "derivable",
+      "input": {
+        "coverage": { "compCode": "205", "companyType": 2, "contractEnd": "2026-09-28T00:00:00", "companyIsActive": 1, "cardEnd": "2026-12-31T00:00:00", "subCompCode": "305", "subCompanyContractEnd": "2026-12-31T00:00:00", "subCompanyIsActive": 1, "myClass": 1, "classWithRef": 0, "classIsActive": 1 },
+        "parameters": { "invDateAdmin": 2, "cashOrCredit": 0 },
+        "draftDate": "2026-09-28T15:30:00"
+      },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "PATIENTNO", "text": "Contract  Ended 28/09/2026", "severity": "Blocking" }] },
+      "decision": "D-39"
+    },
+    {
+      "name": "contract-ends-at-draft-timestamp-passes",
+      "status": "derivable",
+      "input": {
+        "coverage": { "compCode": "205", "companyType": 2, "contractEnd": "2026-09-28T15:30:00", "companyIsActive": 1, "cardEnd": "2026-12-31T00:00:00", "subCompCode": "305", "subCompanyContractEnd": "2026-12-31T00:00:00", "subCompanyIsActive": 1, "myClass": 1, "classWithRef": 0, "classIsActive": 1 },
+        "parameters": { "invDateAdmin": 2, "cashOrCredit": 0 },
+        "draftDate": "2026-09-28T15:30:00"
+      },
+      "expected": { "outcome": "Pass", "messages": [] },
+      "decision": "D-39"
+    },
+    {
+      "name": "contract-ended-yesterday-early-draft-blocks",
+      "status": "derivable",
+      "input": {
+        "coverage": { "compCode": "205", "companyType": 2, "contractEnd": "2026-09-27T00:00:00", "companyIsActive": 1, "cardEnd": "2026-12-31T00:00:00", "subCompCode": "305", "subCompanyContractEnd": "2026-12-31T00:00:00", "subCompanyIsActive": 1, "myClass": 1, "classWithRef": 0, "classIsActive": 1 },
+        "parameters": { "invDateAdmin": 2, "cashOrCredit": 0 },
+        "draftDate": "2026-09-28T00:00:01"
+      },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "PATIENTNO", "text": "Contract  Ended 27/09/2026", "severity": "Blocking" }] },
+      "decision": "D-39"
+    },
+    {
+      "name": "card-ends-at-midnight-afternoon-draft-blocks",
+      "status": "derivable",
+      "input": {
+        "coverage": { "compCode": "205", "companyType": 2, "contractEnd": "2026-12-31T00:00:00", "companyIsActive": 1, "cardEnd": "2026-09-28T00:00:00", "subCompCode": "305", "subCompanyContractEnd": "2026-12-31T00:00:00", "subCompanyIsActive": 1, "myClass": 1, "classWithRef": 0, "classIsActive": 1 },
+        "parameters": { "invDateAdmin": 2, "cashOrCredit": 0 },
+        "draftDate": "2026-09-28T15:30:00"
+      },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "PATIENTNO", "text": "Card Expired 28/09/2026", "severity": "Blocking" }] },
+      "decision": "D-39"
+    },
+    {
+      "name": "card-ends-at-draft-timestamp-warns",
+      "status": "derivable",
+      "input": {
+        "coverage": { "compCode": "205", "companyType": 2, "contractEnd": "2026-12-31T00:00:00", "companyIsActive": 1, "cardEnd": "2026-09-28T15:30:00", "subCompCode": "305", "subCompanyContractEnd": "2026-12-31T00:00:00", "subCompanyIsActive": 1, "myClass": 1, "classWithRef": 0, "classIsActive": 1 },
+        "parameters": { "invDateAdmin": 2, "cashOrCredit": 0 },
+        "draftDate": "2026-09-28T15:30:00"
+      },
+      "expected": { "outcome": "Warning", "messages": [{ "field": "PATIENTNO", "text": "Card Expired 28/09/2026 , Today last Date", "severity": "Warning" }] },
+      "decision": "D-39"
+    },
+    {
+      "name": "policy-ends-at-midnight-late-draft-blocks",
+      "status": "derivable",
+      "input": {
+        "coverage": { "compCode": "205", "companyType": 2, "contractEnd": "2026-12-31T00:00:00", "companyIsActive": 1, "cardEnd": "2026-12-31T00:00:00", "subCompCode": "305", "subCompanyContractEnd": "2026-09-28T00:00:00", "subCompanyIsActive": 1, "myClass": 1, "classWithRef": 0, "classIsActive": 1 },
+        "parameters": { "invDateAdmin": 2, "cashOrCredit": 0 },
+        "draftDate": "2026-09-28T23:59:59"
+      },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "PATIENTNO", "text": "Policy  Ended 28/09/2026 Patient well treated as cash patient ", "severity": "Blocking" }] },
+      "decision": "D-39"
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "messages"] }
+}

@@ -16,7 +16,7 @@ public sealed record OperatorContext
     /// <summary>Operator information centre id, bound as the invoice header <c>info_center_id</c>.</summary>
     public string InfoCenterId { get; init; } = string.Empty;
 
-    /// <summary>Operator machine name, at most 15 characters; a longer value keeps its first 15.</summary>
+    /// <summary>Operator machine name, at most 15 characters; a longer value keeps its first 15, never splitting a surrogate pair.</summary>
     /// <exception cref="ArgumentNullException">The value is null.</exception>
     public string MachineName
     {
@@ -24,10 +24,27 @@ public sealed record OperatorContext
         init
         {
             ArgumentNullException.ThrowIfNull(value);
-            _machineName = value.Length > MaxMachineNameLength ? value[..MaxMachineNameLength] : value;
+            _machineName = TruncateToCharacters(value, MaxMachineNameLength);
         }
     }
 
     /// <summary>Operator session id, passed as the request-selection application session.</summary>
     public string SessionId { get; init; } = string.Empty;
+
+    /// <summary>Returns the first <paramref name="maxCharacters"/> characters of <paramref name="value"/>, a surrogate pair counting as one character.</summary>
+    private static string TruncateToCharacters(string value, int maxCharacters)
+    {
+        if (value.Length <= maxCharacters)
+        {
+            return value;
+        }
+
+        var index = 0;
+        for (var count = 0; count < maxCharacters && index < value.Length; count++)
+        {
+            index += char.IsSurrogatePair(value, index) ? 2 : 1;
+        }
+
+        return index < value.Length ? value[..index] : value;
+    }
 }

@@ -5,13 +5,13 @@ namespace Billing.Invoicing.Domain.Workflow;
 /// <summary>Detects the open items whose triggering condition a draft meets.</summary>
 public static class OpenItemGate
 {
-    /// <summary>Returns the open-item ids the draft needs, from server-read values only.</summary>
-    /// <param name="header">Draft header; only <see cref="InvoiceHeaderDraft.PayType"/> and <see cref="InvoiceHeaderDraft.SubCompCode"/> are read.</param>
-    /// <param name="services">Service profiles of every draft line; package components are inspected recursively.</param>
-    /// <param name="cardId">Patient card id (<c>PATIENT.CARD_ID</c> or the claim preload's card id); null when none.</param>
-    /// <param name="maxDeductable"><c>MAX_DEDUCTABLE</c> of the coverage snapshot or claim preload.</param>
-    /// <param name="useAdvanced"><c>DISC_CLASSES.USE_ADVANCED</c> of the draft's class; null when no class.</param>
-    /// <param name="parameters">Entry parameters; only <see cref="InvoiceEntryParameters.PkgInv"/> is read.</param>
+    /// <summary>Returns the open-item ids the draft needs, from draft context and server-read lookups.</summary>
+    /// <param name="header">Draft header, as carried by the draft; only <see cref="InvoiceHeaderDraft.PayType"/> and <see cref="InvoiceHeaderDraft.SubCompCode"/> are read.</param>
+    /// <param name="services">Server-read service profiles of every draft line; package components are inspected recursively.</param>
+    /// <param name="cardId">Server-read patient card id (<c>PATIENT.CARD_ID</c> or the claim preload's card id); null when none.</param>
+    /// <param name="maxDeductable">Server-read <c>MAX_DEDUCTABLE</c> of the coverage snapshot or claim preload.</param>
+    /// <param name="useAdvanced">Server-read <c>DISC_CLASSES.USE_ADVANCED</c> of the draft's class; null when no class.</param>
+    /// <param name="parameters">Entry parameters, as carried by the draft; only <see cref="InvoiceEntryParameters.PkgInv"/> is read.</param>
     /// <returns>Distinct open-item ids in ordinal order; empty when no condition holds.</returns>
     public static IReadOnlyList<string> Evaluate(
         InvoiceHeaderDraft header,

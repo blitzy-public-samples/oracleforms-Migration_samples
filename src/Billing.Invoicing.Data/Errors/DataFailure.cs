@@ -33,7 +33,7 @@ public sealed record DataFailure
     /// <summary>Attributed source package, or UNKNOWN; null when no package applies.</summary>
     public string? Package { get; init; }
 
-    /// <summary>Operator-facing text: the Oracle text after the ORA prefix, or the exception message.</summary>
+    /// <summary>Operator-facing text: the Oracle text after the ORA prefix for a 422, the open-item message for a 501, a fixed text for a 500 or 503.</summary>
     public required string Message { get; init; }
 
     /// <summary>Legacy item name the failure maps to; null for a form-level failure.</summary>

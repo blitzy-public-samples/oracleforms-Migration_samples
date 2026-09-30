@@ -302,11 +302,6 @@ public static partial class ParityFixture
 
     private static bool TryGetValue(IReadOnlyDictionary<string, object?> actual, string key, string path, out object? value)
     {
-        if (actual.TryGetValue(key, out value))
-        {
-            return true;
-        }
-
         var matches = actual
             .Where(pair => string.Equals(pair.Key, key, StringComparison.OrdinalIgnoreCase))
             .ToList();
@@ -315,8 +310,13 @@ public static partial class ParityFixture
             Assert.Fail($"Value '{path}': actual keys {string.Join(", ", matches.Select(pair => pair.Key))} differ only in case.");
         }
 
-        value = matches.Count == 1 ? matches[0].Value : null;
-        return matches.Count == 1;
+        if (matches.Count == 1)
+        {
+            value = matches[0].Value;
+            return true;
+        }
+
+        return actual.TryGetValue(key, out value);
     }
 
     private static bool TryAsDictionary(object? actual, [NotNullWhen(true)] out IReadOnlyDictionary<string, object?>? map)

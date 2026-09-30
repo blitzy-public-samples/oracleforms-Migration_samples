@@ -374,7 +374,7 @@ public sealed record FullInvoiceResultRow
     public decimal? CashCollected { get; init; }
 
     /// <summary>Cashier shift id (<c>invoice_result.shift_system_unique</c>).</summary>
-    public string? ShiftSystemUnique { get; init; }
+    public decimal? ShiftSystemUnique { get; init; }
 
     /// <summary>Payment posted flag 'Y' or 'N' (<c>payment_posted</c>).</summary>
     public string? PaymentPosted { get; init; }

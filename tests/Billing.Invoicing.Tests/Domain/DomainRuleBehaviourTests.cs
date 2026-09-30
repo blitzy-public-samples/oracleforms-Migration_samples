@@ -166,6 +166,23 @@ public sealed class DomainRuleBehaviourTests
     }
 
     [Fact]
+    public void PaymentAllocation_AmountsAtIngressBoundDoNotOverflow()
+    {
+        const decimal bound = 19807040628566084398385987584m;
+        const decimal twiceBound = 39614081257132168796771975168m;
+        Assert.Equal(decimal.MaxValue / 4m, bound);
+
+        Assert.Equal(twiceBound, PaymentAllocationRules.AllocateSecondAmount(bound, -bound));
+        Assert.Equal(-twiceBound, PaymentAllocationRules.AllocateSecondAmount(-bound, bound));
+
+        var cash = new PaymentAllocation { CashPayed = bound, Amount1 = bound, SubPayType = 1, Amount2 = bound, SubPayType2 = 1 };
+        Assert.Equal(-bound, PaymentAllocationRules.Refund(cash));
+
+        Assert.Equal(twiceBound, PaymentAllocationRules.TotalCollected(bound, bound));
+        Assert.Equal(-twiceBound, PaymentAllocationRules.TotalCollected(-bound, -bound));
+    }
+
+    [Fact]
     public void RequestImport_DoctorRequired()
     {
         AssertMessage(RequestImportRules.RequireDoctor(null), "DOCIDX", "Select doctor First", ValidationMessage.Blocking, "DR-18");
@@ -338,7 +355,7 @@ public sealed class DomainRuleBehaviourTests
             Texts(PatientEligibilityRules.Evaluate(expired, Admin(1), DraftDate)));
         Assert.Equal(
             new[] { ("Card Expired 28/09/2026 , Today last Date", ValidationMessage.Warning) },
-            Texts(PatientEligibilityRules.Evaluate(expired with { CardEnd = new DateTime(2026, 9, 28) }, Admin(2), DraftDate)));
+            Texts(PatientEligibilityRules.Evaluate(expired with { CardEnd = DraftDate }, Admin(2), DraftDate)));
     }
 
     [Fact]
@@ -367,6 +384,42 @@ public sealed class DomainRuleBehaviourTests
         Assert.Empty(PatientEligibilityRules.Evaluate(classed, Admin(2), DraftDate).Messages);
     }
 
+    [Fact]
+    public void Eligibility_ExpiryComparesDraftTimestamp()
+    {
+        var today = new DateTime(2026, 9, 28);
+        var afternoon = new DateTime(2026, 9, 28, 15, 30, 0);
+        var evening = new DateTime(2026, 9, 28, 18, 30, 0);
+        var lastSecond = new DateTime(2026, 9, 28, 23, 59, 59);
+
+        Assert.Equal(
+            new[] { ("Contract  Ended 28/09/2026", ValidationMessage.Blocking) },
+            Texts(PatientEligibilityRules.Evaluate(InsuredCoverage() with { ContractEnd = today }, Admin(2), afternoon)));
+        Assert.Empty(PatientEligibilityRules.Evaluate(InsuredCoverage() with { ContractEnd = afternoon }, Admin(2), afternoon).Messages);
+        Assert.Equal(
+            new[] { ("Contract  Ended 27/09/2026", ValidationMessage.Blocking) },
+            Texts(PatientEligibilityRules.Evaluate(InsuredCoverage() with { ContractEnd = new DateTime(2026, 9, 27) }, Admin(2), new DateTime(2026, 9, 28, 0, 0, 1))));
+
+        Assert.Equal(
+            new[] { ("Card Expired 28/09/2026", ValidationMessage.Blocking) },
+            Texts(PatientEligibilityRules.Evaluate(InsuredCoverage() with { CardEnd = today }, Admin(2), evening)));
+        Assert.Equal(
+            new[] { ("Card Expired 28/09/2026 , But due to that user have date admin privileges system will open claim", ValidationMessage.Warning) },
+            Texts(PatientEligibilityRules.Evaluate(InsuredCoverage() with { CardEnd = today }, Admin(1), evening)));
+        Assert.Equal(
+            new[] { ("Card Expired 28/09/2026 , Today last Date", ValidationMessage.Warning) },
+            Texts(PatientEligibilityRules.Evaluate(InsuredCoverage() with { CardEnd = evening }, Admin(2), evening)));
+        Assert.Empty(PatientEligibilityRules.Evaluate(InsuredCoverage() with { CardEnd = new DateTime(2026, 9, 28, 18, 0, 0) }, Admin(2), new DateTime(2026, 9, 28, 10, 15, 0)).Messages);
+
+        Assert.Equal(
+            new[] { ("Policy  Ended 28/09/2026 Patient well treated as cash patient ", ValidationMessage.Blocking) },
+            Texts(PatientEligibilityRules.Evaluate(InsuredCoverage() with { SubCompCode = "S1", SubCompanyContractEnd = today }, Admin(2), lastSecond)));
+        Assert.Empty(PatientEligibilityRules.Evaluate(
+            InsuredCoverage() with { SubCompCode = "S1", SubCompanyContractEnd = lastSecond },
+            Admin(2),
+            lastSecond).Messages);
+    }
+
     [Theory]
     [InlineData(10.0, "Maximum discount allawed is10")]
     [InlineData(12.5, "Maximum discount allawed is12.5")]
@@ -386,7 +439,22 @@ public sealed class DomainRuleBehaviourTests
         Assert.Empty(FinalDiscountLimitRule.Evaluate(header with { FinalDiscPerc = 10m }, 10m, 200m).Messages);
         Assert.Empty(FinalDiscountLimitRule.Evaluate(header with { OferId = 9 }, 10m, 200m).Messages);
         AssertMessage(FinalDiscountLimitRule.Evaluate(header with { FinalDiscPerc = 5m }, null, 200m), "FINALDISC_PERC", "Maximum discount allawed is0", ValidationMessage.Blocking, "DR-06");
-        Assert.Empty(FinalDiscountLimitRule.Evaluate(new InvoiceHeaderDraft { DiscT = 2, FinalDiscPerc = 50m }, 10m, 200m).Messages);
+        AssertMessage(FinalDiscountLimitRule.Evaluate(new InvoiceHeaderDraft { DiscT = 2, FinalDiscPerc = 50m }, 10m, 200m), "DISC_T", "DISC_T must be 0 (Value Disc) or 1 (Rate Disc)", ValidationMessage.Blocking, "DR-06");
+    }
+
+    [Fact]
+    public void FinalDiscount_UnsupportedModeBlocks()
+    {
+        var header = new InvoiceHeaderDraft { FinalDisc = 30m };
+
+        foreach (var mode in new[] { -1, 2 })
+        {
+            var result = FinalDiscountLimitRule.Evaluate(header with { DiscT = mode }, 10m, 200m);
+            AssertMessage(result, "DISC_T", "DISC_T must be 0 (Value Disc) or 1 (Rate Disc)", ValidationMessage.Blocking, "DR-06");
+            Assert.Empty(result.Adjusted);
+        }
+
+        AssertMessage(FinalDiscountLimitRule.Evaluate(header, 10m, 200m), "FINALDISC", "Maximum discount allawed is10", ValidationMessage.Blocking, "DR-06");
     }
 
     [Fact]
@@ -412,6 +480,11 @@ public sealed class DomainRuleBehaviourTests
         Assert.Empty(FinalDiscountLimitRule.Evaluate(header with { FinalDisc = 20m }, 10m, 0m).Messages);
         Assert.True(FinalDiscountLimitRule.Evaluate(header with { FinalDisc = decimal.MaxValue }, 10m, 0.0000001m).IsBlocking);
         Assert.Empty(FinalDiscountLimitRule.Evaluate(header with { FinalDisc = decimal.MaxValue, OferId = 9 }, 10m, 0.0000001m).Messages);
+
+        var negativeOverflow = FinalDiscountLimitRule.Evaluate(header with { FinalDisc = decimal.MinValue }, 0m, 1m);
+        Assert.Empty(negativeOverflow.Messages);
+        Assert.Empty(negativeOverflow.Adjusted);
+        Assert.Empty(FinalDiscountLimitRule.Evaluate(header with { FinalDisc = decimal.MinValue }, 0m, 0.0000001m).Messages);
     }
 
     [Fact]
@@ -541,6 +614,21 @@ public sealed class DomainRuleBehaviourTests
         Assert.Equal(1, PayTypeSelectionRule.Decide("300", null, parameters, ClaimPreload() with { PayType = 1 }));
         Assert.Equal(2, PayTypeSelectionRule.Decide("300", null, parameters, ClaimPreload() with { PayType = null }));
         Assert.Throws<ArgumentNullException>(() => PayTypeSelectionRule.Decide("0", null, null!, null));
+    }
+
+    [Fact]
+    public void PayType_ClaimPreloadDecidesBeforeCashCompany()
+    {
+        var cashCompanyPreload = ClaimPreload() with { CompCode = "0" };
+
+        Assert.Equal(2, PayTypeSelectionRule.Decide("0", null, new InvoiceEntryParameters { CashOrCredit = 2 }, cashCompanyPreload with { PayType = 1 }));
+        Assert.Equal(2, PayTypeSelectionRule.Decide("0", null, new InvoiceEntryParameters(), cashCompanyPreload with { PayType = 2 }));
+        Assert.Equal(1, PayTypeSelectionRule.Decide("0", null, new InvoiceEntryParameters(), cashCompanyPreload with { PayType = 1 }));
+        Assert.Equal(1, PayTypeSelectionRule.Decide("0", null, new InvoiceEntryParameters { CashOrCredit = 1 }, cashCompanyPreload));
+
+        var draft = InvoiceDefaultsRule.Apply(new InvoiceEntryParameters { ClaimNo = "C-9", CashOrCredit = 2 }, DraftDate, cashCompanyPreload with { PayType = 1 }, null);
+        Assert.Equal("0", draft.CompCode);
+        Assert.Equal(2, draft.PayType);
     }
 
     [Theory]

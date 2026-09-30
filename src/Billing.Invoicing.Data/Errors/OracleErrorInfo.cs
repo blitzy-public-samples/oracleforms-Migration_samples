@@ -12,7 +12,7 @@ public sealed record OracleErrorInfo
     /// <summary>Text after the first "ORA-nnnnn: " prefix up to the end of its line, trailing whitespace trimmed; the whole message when no prefix exists.</summary>
     public required string Text { get; init; }
 
-    /// <summary>ORA-06512 frames naming a quoted object, innermost first; Schema is empty when the name has no schema part.</summary>
+    /// <summary>ORA-06512 frames naming a quoted object on one line, each name part at most 128 characters, innermost first; Schema is empty when the name has no schema part.</summary>
     public IReadOnlyList<(string Schema, string Package, int Line)> Frames { get; init; } = Array.Empty<(string, string, int)>();
 
     /// <summary>True when the failure occurred while opening the connection.</summary>

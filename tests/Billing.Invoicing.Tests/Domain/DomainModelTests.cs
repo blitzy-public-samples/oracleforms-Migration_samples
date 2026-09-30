@@ -107,6 +107,71 @@ public sealed class DomainModelTests
     }
 
     [Fact]
+    public void OperatorContext_KeepsWholeSurrogatePairAsFifteenthCharacter()
+    {
+        var context = new OperatorContext { MachineName = "ABCDEFGHIJKLMN\uD83D\uDE00XYZ" };
+
+        Assert.Equal("ABCDEFGHIJKLMN\uD83D\uDE00", context.MachineName);
+        Assert.Equal(16, context.MachineName.Length);
+        Assert.Equal(15, context.MachineName.EnumerateRunes().Count());
+        Assert.True(char.IsLowSurrogate(context.MachineName[^1]));
+    }
+
+    [Theory]
+    [InlineData("ABCDEFGHIJKLMN\uD83D\uDE00")]
+    [InlineData("ABCDEFGHIJKLM\uD83D\uDE00\uD83D\uDE01")]
+    [InlineData("\uD83D\uDE00\uD83D\uDE01\uD83D\uDE02\uD83D\uDE03\uD83D\uDE04\uD83D\uDE05\uD83D\uDE06\uD83D\uDE07\uD83D\uDE08\uD83D\uDE09\uD83D\uDE0A\uD83D\uDE0B\uD83D\uDE0C\uD83D\uDE0D\uD83D\uDE0E")]
+    public void OperatorContext_KeepsMachineNameOf15CharactersLongerThan15CodeUnits(string machineName)
+    {
+        var context = new OperatorContext { MachineName = machineName };
+
+        Assert.Equal(machineName, context.MachineName);
+    }
+
+    [Theory]
+    [InlineData("ABCDEFGHIJKLMNO\uD83D\uDE00", "ABCDEFGHIJKLMNO")]
+    [InlineData("ABCDEFGHIJKLM\uD83D\uDE00\uD83D\uDE01\uD83D\uDE02", "ABCDEFGHIJKLM\uD83D\uDE00\uD83D\uDE01")]
+    [InlineData("e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301", "e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e")]
+    public void OperatorContext_TruncatesMachineNameByCharactersNotCodeUnits(string machineName, string expected)
+    {
+        var context = new OperatorContext { MachineName = machineName };
+
+        Assert.Equal(expected, context.MachineName);
+    }
+
+    [Fact]
+    public void OperatorContext_TruncatesSupplementaryMachineNameTo15Characters()
+    {
+        var context = new OperatorContext { MachineName = string.Concat(Enumerable.Repeat("\uD83D\uDE00", 20)) };
+
+        Assert.Equal(string.Concat(Enumerable.Repeat("\uD83D\uDE00", 15)), context.MachineName);
+        Assert.Equal(30, context.MachineName.Length);
+    }
+
+    [Fact]
+    public void OperatorContext_WithExpressionTruncatesMachineNameByCharacters()
+    {
+        var original = new OperatorContext { UserNo = 1, MachineName = "clone0" };
+
+        var copy = original with { MachineName = "ABCDEFGHIJKLMN\uD83D\uDE00XYZ" };
+
+        Assert.Equal("ABCDEFGHIJKLMN\uD83D\uDE00", copy.MachineName);
+        Assert.Equal(1, copy.UserNo);
+        Assert.Equal("clone0", original.MachineName);
+    }
+
+    [Fact]
+    public void OperatorContext_KeepsLoneSurrogateAsOneCharacter()
+    {
+        var machineName = "\uD83D" + "ABCDEFGHIJKLM" + "\uD83D\uDE00" + "XYZ";
+
+        var context = new OperatorContext { MachineName = machineName };
+
+        Assert.Equal("\uD83DABCDEFGHIJKLM\uD83D\uDE00", context.MachineName);
+        Assert.Equal(16, context.MachineName.Length);
+    }
+
+    [Fact]
     public void InvoiceEntryParameters_CarryFormDefaults()
     {
         var parameters = new InvoiceEntryParameters();

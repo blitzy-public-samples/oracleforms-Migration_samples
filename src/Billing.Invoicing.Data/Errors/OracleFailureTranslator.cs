@@ -1,7 +1,6 @@
 using System.Collections.Frozen;
 using System.Net.Sockets;
 using System.Text.RegularExpressions;
-using Oracle.ManagedDataAccess.Client;
 
 namespace Billing.Invoicing.Data.Errors;
 
@@ -18,6 +17,9 @@ public sealed partial class OracleFailureTranslator
 
     private const string UnknownPackage = "UNKNOWN";
 
+    private const string OracleErrorMessage = "The Oracle database returned an error.";
+    private const string OracleUnavailableMessage = "Oracle database is unavailable.";
+
     /// <summary>ORA codes classified as connectivity or availability failures.</summary>
     private static readonly FrozenSet<int> ConnectivityNumbers = new[]
     {
@@ -33,6 +35,22 @@ public sealed partial class OracleFailureTranslator
         OracleErrorCatalog.EnginePackage,
         OracleErrorCatalog.ImportPackage,
     });
+
+    /// <summary>Standalone database functions and procedures the legacy module and packages call, compared ignoring case.</summary>
+    private static readonly FrozenSet<string> StandaloneRoutines = new[]
+    {
+        "GET_NEXT_INVOICE_NO",
+        "VALIDATE_TOTAL_INV",
+        "GET_ELLIGABILTY",
+        "DAY_TO_DAYES",
+        "GET_PAYID_VALUE",
+        "GET_PRICE_PLAN",
+        "GET_U_PREV20",
+        "SEND_MESSAG",
+        "GET_HTFN2",
+        "FIND_PROMPT",
+        "SILENT_COMMET00",
+    }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Packages reachable from each Data gateway operation, keyed ordinally by operation name.</summary>
     private static readonly FrozenDictionary<string, IReadOnlyCollection<string>> OperationPackages = BuildOperationPackages();
@@ -53,18 +71,11 @@ public sealed partial class OracleFailureTranslator
         // Listed connectivity and availability codes are 503.
         if (ConnectivityNumbers.Contains(error.Number))
         {
-            return Unavailable(error.Number, error.Text);
+            return Unavailable(error.Number);
         }
 
         // Every other code, including credential, privilege and account failures while opening, is 500.
-        return new DataFailure
-        {
-            Status = InternalServerErrorStatus,
-            Type = DataFailure.OracleErrorType,
-            Number = error.Number,
-            Package = InnermostFramePackage(error),
-            Message = error.Text,
-        };
+        return OracleError(error.Number, InnermostFramePackage(error));
     }
 
     /// <summary>Translates a Data-layer exception into a failure, or returns null when the exception is not an Oracle, open-item or transport failure.</summary>
@@ -74,12 +85,19 @@ public sealed partial class OracleFailureTranslator
     {
         ArgumentNullException.ThrowIfNull(exception);
 
-        OracleException? oracleException = FindOracleException(exception);
-        Exception? transportFailure = FindTransportFailure(exception);
+        bool transport = HasTransportFailure(exception);
 
-        if (oracleException is not null)
+        if (OracleErrorParser.TryFromExceptionChain(exception, out OracleErrorInfo? oracleError, out int driverNumber))
         {
-            return TranslateOracleException(oracleException, transportFailure);
+            // A driver number and message that cannot be parsed together are a 500 without a package.
+            if (oracleError is null)
+            {
+                return OracleError(driverNumber, package: null);
+            }
+
+            // A generic Oracle error with a socket failure or timeout in the chain is 503.
+            DataFailure failure = Translate(oracleError);
+            return failure.Status == InternalServerErrorStatus && transport ? Unavailable(failure.Number) : failure;
         }
 
         // A blocked member names its open item at the start of the message.
@@ -96,9 +114,9 @@ public sealed partial class OracleFailureTranslator
         }
 
         // A socket failure or timeout without an Oracle error is 503 with no number.
-        if (transportFailure is not null)
+        if (transport)
         {
-            return Unavailable(null, transportFailure.Message);
+            return Unavailable(null);
         }
 
         return null;
@@ -138,42 +156,28 @@ public sealed partial class OracleFailureTranslator
         };
     }
 
-    /// <summary>Parses and translates a driver exception, turning a 500 into a 503 when the chain holds a transport failure.</summary>
-    private DataFailure TranslateOracleException(OracleException oracleException, Exception? transportFailure)
+    /// <summary>Builds a 500 oracle-error failure with the fixed Oracle error message.</summary>
+    /// <param name="number">Signed Oracle error number.</param>
+    /// <param name="package">Attributed package, or null when none applies.</param>
+    /// <returns>The 500 failure.</returns>
+    private static DataFailure OracleError(int number, string? package) => new()
     {
-        OracleErrorInfo info;
-        try
-        {
-            info = OracleErrorParser.FromException(oracleException);
-        }
-        catch (ArgumentException)
-        {
-            // Number and message disagree: report the driver values unparsed.
-            return new DataFailure
-            {
-                Status = InternalServerErrorStatus,
-                Type = DataFailure.OracleErrorType,
-                Number = oracleException.Number,
-                Message = oracleException.Message ?? string.Empty,
-            };
-        }
+        Status = InternalServerErrorStatus,
+        Type = DataFailure.OracleErrorType,
+        Number = number,
+        Package = package,
+        Message = OracleErrorMessage,
+    };
 
-        DataFailure failure = Translate(info);
-        if (failure.Status == InternalServerErrorStatus && transportFailure is not null)
-        {
-            return Unavailable(failure.Number, failure.Message);
-        }
-
-        return failure;
-    }
-
-    /// <summary>Builds a 503 oracle-unavailable failure.</summary>
-    private static DataFailure Unavailable(int? number, string message) => new()
+    /// <summary>Builds a 503 oracle-unavailable failure with the fixed unavailability message.</summary>
+    /// <param name="number">Signed Oracle error number, or null for a transport failure without one.</param>
+    /// <returns>The 503 failure.</returns>
+    private static DataFailure Unavailable(int? number) => new()
     {
         Status = ServiceUnavailableStatus,
         Type = DataFailure.OracleUnavailableType,
         Number = number,
-        Message = message,
+        Message = OracleUnavailableMessage,
     };
 
     /// <summary>Returns the packages reachable from a gateway operation; all three when the operation is null or unknown.</summary>
@@ -182,36 +186,61 @@ public sealed partial class OracleFailureTranslator
             ? packages
             : AllPackages;
 
-    /// <summary>Returns the package named by the innermost ORA-06512 frame, or null when the error has no frame.</summary>
-    private static string? InnermostFramePackage(OracleErrorInfo error) =>
-        error.Frames is { Count: > 0 } frames ? frames[0].Package : null;
-
-    /// <summary>Returns the first <see cref="OracleException"/> in the exception and its inner-exception chain.</summary>
-    private static OracleException? FindOracleException(Exception exception)
+    /// <summary>Returns the object named by the innermost ORA-06512 frame that is neither a standalone routine nor a trigger named by an ORA-04088 line, or null when none is.</summary>
+    /// <param name="error">The parsed Oracle error.</param>
+    /// <returns>The package name as the frame spells it, or null.</returns>
+    private static string? InnermostFramePackage(OracleErrorInfo error)
     {
-        for (Exception? current = exception; current is not null; current = current.InnerException)
+        if (error.Frames is not { Count: > 0 } frames)
         {
-            if (current is OracleException oracleException)
+            return null;
+        }
+
+        IReadOnlyList<(string Schema, string Name)> triggers = OracleErrorParser.ParseTriggers(error.Message ?? string.Empty);
+        foreach (var (schema, package, _) in frames)
+        {
+            if (!StandaloneRoutines.Contains(package) && !IsTrigger(triggers, schema, package))
             {
-                return oracleException;
+                return package;
             }
         }
 
         return null;
     }
 
-    /// <summary>Returns the first <see cref="SocketException"/> or <see cref="TimeoutException"/> in the exception and its inner-exception chain.</summary>
-    private static Exception? FindTransportFailure(Exception exception)
+    /// <summary>Returns whether a frame's object is one of the triggers named by ORA-04088 lines.</summary>
+    /// <param name="triggers">Triggers named by the error's ORA-04088 lines.</param>
+    /// <param name="schema">Schema of the frame, empty when unqualified.</param>
+    /// <param name="name">Object name of the frame.</param>
+    /// <returns>True when a trigger has the frame's name and, when the trigger is schema-qualified, its schema.</returns>
+    private static bool IsTrigger(IReadOnlyList<(string Schema, string Name)> triggers, string schema, string name)
+    {
+        foreach ((string triggerSchema, string triggerName) in triggers)
+        {
+            if (string.Equals(triggerName, name, StringComparison.Ordinal)
+                && (triggerSchema.Length == 0 || string.Equals(triggerSchema, schema, StringComparison.Ordinal)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>Returns whether the exception or its inner-exception chain holds a <see cref="SocketException"/> or <see cref="TimeoutException"/>.</summary>
+    /// <param name="exception">The exception raised by a Data member.</param>
+    /// <returns>True when the chain holds a transport failure.</returns>
+    private static bool HasTransportFailure(Exception exception)
     {
         for (Exception? current = exception; current is not null; current = current.InnerException)
         {
             if (current is SocketException or TimeoutException)
             {
-                return current;
+                return true;
             }
         }
 
-        return null;
+        return false;
     }
 
     /// <summary>Maps each Data gateway operation name to the packages it reaches.</summary>

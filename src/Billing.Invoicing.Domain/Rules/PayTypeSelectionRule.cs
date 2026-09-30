@@ -13,16 +13,11 @@ public static class PayTypeSelectionRule
     /// <param name="compCode">Company code of the patient or draft (COMP_CODE); '0' is the cash company.</param>
     /// <param name="companyType">Company type (<c>COMPANYS.COMP_TYPE</c>) of that company, when known.</param>
     /// <param name="parameters">Entry parameters; <see cref="InvoiceEntryParameters.CashOrCredit"/> is read.</param>
-    /// <param name="claimPreload">Header preloaded from the claim's first invoice, or null when there is no claim preload.</param>
+    /// <param name="claimPreload">Header preloaded from the claim's first invoice; when set, it decides the pay type before any company rule. Null when there is no claim preload.</param>
     /// <returns>1 for a cash invoice, 2 for a credit invoice.</returns>
     public static int Decide(string? compCode, int? companyType, InvoiceEntryParameters parameters, InvoiceHeaderDraft? claimPreload)
     {
         ArgumentNullException.ThrowIfNull(parameters);
-
-        if (compCode == CashCompanyCode)
-        {
-            return Cash;
-        }
 
         if (claimPreload is not null)
         {
@@ -32,6 +27,11 @@ public static class PayTypeSelectionRule
                 Credit => Credit,
                 _ => claimPreload.PayType ?? Credit,
             };
+        }
+
+        if (compCode == CashCompanyCode)
+        {
+            return Cash;
         }
 
         if (parameters.CashOrCredit == Cash && companyType is 1 or 2)

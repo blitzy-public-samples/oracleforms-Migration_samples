@@ -110,4 +110,52 @@ public sealed class OracleErrorParserTests
         Assert.Equal(unix.Frames, windows.Frames);
         Assert.Equal(RequestUnavailableMessageCrLf, windows.Message);
     }
+
+    [Fact]
+    public void FromParts_NearMatchFrameFlood_ReturnsOnlyTheValidFrame()
+    {
+        string flood = string.Concat(Enumerable.Repeat("ORA-06512: at \"xxxxxxxx", 20000));
+        string message = "ORA-20931: x\n" + flood + "\n" + EngineFrameLine;
+
+        OracleErrorInfo info = OracleErrorParser.FromParts(20931, message);
+
+        Assert.Equal(("HIS", "BIL_INVOICE_ENGINE", 619), Assert.Single(info.Frames));
+    }
+
+    [Fact]
+    public void FromParts_OversizedQuotedName_YieldsNoFrame()
+    {
+        string message = "ORA-20931: x\nORA-06512: at \"" + new string('A', 200000) + "\", line 7";
+
+        OracleErrorInfo info = OracleErrorParser.FromParts(20931, message);
+
+        Assert.Empty(info.Frames);
+    }
+
+    [Theory]
+    [InlineData(128, 1)]
+    [InlineData(129, 0)]
+    public void FromParts_ObjectNameLength_IsBoundedAt128(int length, int expectedFrames)
+    {
+        string name = new('B', length);
+        string message = "ORA-20931: x\nORA-06512: at \"HIS." + name + "\", line 7";
+
+        OracleErrorInfo info = OracleErrorParser.FromParts(20931, message);
+
+        Assert.Equal(expectedFrames, info.Frames.Count);
+        if (expectedFrames == 1)
+        {
+            Assert.Equal(("HIS", name, 7), info.Frames[0]);
+        }
+    }
+
+    [Fact]
+    public void FromParts_QuotedNameBrokenByNewline_YieldsNoFrame()
+    {
+        const string message = "ORA-20931: x\nORA-06512: at \"HIS.BIL_INVOICE\nENGINE\", line 619";
+
+        OracleErrorInfo info = OracleErrorParser.FromParts(20931, message);
+
+        Assert.Empty(info.Frames);
+    }
 }

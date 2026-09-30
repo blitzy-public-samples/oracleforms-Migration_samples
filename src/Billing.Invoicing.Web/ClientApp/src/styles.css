@@ -17,18 +17,23 @@
   --color-button-hover-bg: #cadff3;
   --color-button-border: #5d82a8;
   --color-button-text: #0b3d73;
+  --color-button-active-bg: #b1ceea;
+  --color-button-active-border: #0b3d73;
   --color-focus: #1a5fb4;
   --color-grid-border: #b5c8da;
   --color-grid-header-bg: #c9ddef;
   --color-grid-header-text: #0d3b66;
   --color-current-row-bg: #cfe5fa;
   --color-current-row-accent: #1f5f9e;
+  --color-row-active-bg: #b3d2f0;
   --color-error-text: #a3221b;
   --color-error-bg: #fdecea;
   --color-error-border: #b3261e;
   --color-warning-text: #6e4400;
   --color-warning-bg: #fff5d1;
   --color-warning-border: #d9b85a;
+  --color-dismiss-hover-bg: rgb(15 30 45 / 0.1);
+  --color-dismiss-active-bg: rgb(15 30 45 / 0.16);
   --color-banner-bg: #8b1a1a;
   --color-banner-text: #ffffff;
   --color-notice-bg: #e8eef5;
@@ -79,10 +84,7 @@ body {
   line-height: 1.4;
 }
 
-button,
-input,
-select,
-textarea {
+:where(button, input, select, textarea) {
   font: inherit;
   color: inherit;
 }
@@ -136,9 +138,15 @@ textarea {
 }
 
 @media (hover: hover) {
-  :where(button:not(:disabled)):hover {
+  :where(button:not(:disabled, [aria-disabled="true"])):hover {
     background-color: var(--color-button-hover-bg);
   }
+}
+
+:where(button:not(:disabled, [aria-disabled="true"])):active,
+:where(button)[aria-pressed="true"] {
+  border-color: var(--color-button-active-border);
+  background-color: var(--color-button-active-bg);
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -475,6 +483,16 @@ textarea {
   line-height: 1;
 }
 
+@media (hover: hover) {
+  .msg-dismiss:hover {
+    background-color: var(--color-dismiss-hover-bg);
+  }
+}
+
+.msg-dismiss:active {
+  background-color: var(--color-dismiss-active-bg);
+}
+
 .form-error {
   display: flex;
   flex-wrap: wrap;
@@ -672,6 +690,10 @@ textarea {
   .lov-view-only .lov-row:not(.lov-row-selected):hover {
     background-color: transparent;
   }
+}
+
+.lov-row:not(.lov-view-only *):active {
+  background-color: var(--color-row-active-bg);
 }
 
 @media (prefers-reduced-motion: no-preference) {

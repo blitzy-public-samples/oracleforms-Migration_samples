@@ -1,0 +1,105 @@
+{
+  "id": "DR-24",
+  "class": "domain",
+  "source": [
+    { "construct": "T026 COMP_CODE WHEN-VALIDATE-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:27" },
+    { "construct": "T023 PATIENTNO WHEN-VALIDATE-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:18" },
+    { "construct": "T015 T_INV WHEN-CREATE-RECORD", "locator": "05_Complex/Inv_Small_Cash.xml:367" },
+    { "construct": "PU16 MAKE_CASH", "locator": "05_Complex/Inv_Small_Cash.xml:975" },
+    { "construct": "BIL_INVOICE_ENGINE.resolve header paytype", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:478" }
+  ],
+  "cases": [
+    {
+      "name": "company-zero-cash",
+      "status": "derivable",
+      "input": { "compCode": "0", "companyType": null, "parameters": { "cashOrCredit": 0 }, "claimPreload": null },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "PAYTYPE": 1 } },
+      "decision": "D-47"
+    },
+    {
+      "name": "cash-or-credit-1-direct-company-cash",
+      "status": "derivable",
+      "input": { "compCode": "205", "companyType": 1, "parameters": { "cashOrCredit": 1 }, "claimPreload": null },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "PAYTYPE": 1 } },
+      "decision": "D-47"
+    },
+    {
+      "name": "cash-or-credit-1-insurance-company-cash",
+      "status": "derivable",
+      "input": { "compCode": "205", "companyType": 2, "parameters": { "cashOrCredit": 1 }, "claimPreload": null },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "PAYTYPE": 1 } },
+      "decision": "D-47"
+    },
+    {
+      "name": "insured-company-credit",
+      "status": "derivable",
+      "input": { "compCode": "205", "companyType": 2, "parameters": { "cashOrCredit": 0 }, "claimPreload": null },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "PAYTYPE": 2 } },
+      "decision": "D-47"
+    },
+    {
+      "name": "direct-company-default-credit",
+      "status": "derivable",
+      "input": { "compCode": "205", "companyType": 1, "parameters": { "cashOrCredit": 0 }, "claimPreload": null },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "PAYTYPE": 2 } },
+      "decision": "D-47"
+    },
+    {
+      "name": "no-company-cash",
+      "status": "derivable",
+      "input": { "compCode": null, "companyType": null, "parameters": { "cashOrCredit": 0 }, "claimPreload": null },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "PAYTYPE": 1 } },
+      "decision": "D-47"
+    },
+    {
+      "name": "claim-preload-cash-or-credit-1",
+      "status": "derivable",
+      "input": { "compCode": "205", "companyType": 2, "parameters": { "cashOrCredit": 1 }, "claimPreload": { "payType": 2, "compCode": "205" } },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "PAYTYPE": 1 } },
+      "decision": "D-47"
+    },
+    {
+      "name": "claim-preload-cash-or-credit-2",
+      "status": "derivable",
+      "input": { "compCode": "205", "companyType": 2, "parameters": { "cashOrCredit": 2 }, "claimPreload": { "payType": 1, "compCode": "205" } },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "PAYTYPE": 2 } },
+      "decision": "D-47"
+    },
+    {
+      "name": "claim-preload-keeps-cash-pay-type",
+      "status": "derivable",
+      "input": { "compCode": "205", "companyType": 2, "parameters": { "cashOrCredit": 0 }, "claimPreload": { "payType": 1 } },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "PAYTYPE": 1 } },
+      "decision": "D-47"
+    },
+    {
+      "name": "claim-preload-keeps-credit-pay-type",
+      "status": "derivable",
+      "input": { "compCode": "205", "companyType": 2, "parameters": { "cashOrCredit": 0 }, "claimPreload": { "payType": 2 } },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "PAYTYPE": 2 } },
+      "decision": "D-47"
+    },
+    {
+      "name": "claim-preload-company-zero-cash-or-credit-2-credit",
+      "status": "derivable",
+      "input": { "compCode": "0", "companyType": null, "parameters": { "cashOrCredit": 2 }, "claimPreload": { "payType": 1, "compCode": "0" } },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "PAYTYPE": 2 } },
+      "decision": "D-47"
+    },
+    {
+      "name": "claim-preload-company-zero-keeps-credit-pay-type",
+      "status": "derivable",
+      "input": { "compCode": "0", "companyType": null, "parameters": { "cashOrCredit": 0 }, "claimPreload": { "payType": 2, "compCode": "0" } },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "PAYTYPE": 2 } },
+      "decision": "D-47"
+    },
+    {
+      "name": "claim-preload-company-zero-cash-or-credit-1-cash",
+      "status": "derivable",
+      "input": { "compCode": "0", "companyType": null, "parameters": { "cashOrCredit": 1 }, "claimPreload": { "payType": 2, "compCode": "0" } },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "PAYTYPE": 1 } },
+      "decision": "D-47"
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "messages", "PAYTYPE"] }
+}

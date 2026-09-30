@@ -7,6 +7,7 @@ namespace Billing.Invoicing.Domain.Rules;
 public static class FinalDiscountLimitRule
 {
     private const string MaximumDiscountAllowed = "Maximum discount allawed is";
+    private const string UnsupportedDiscountMode = "DISC_T must be 0 (Value Disc) or 1 (Rate Disc)";
     private const string RuleId = "DR-06";
     private const string FinalDiscPercItem = "FINALDISC_PERC";
     private const string FinalDiscItem = "FINALDISC";
@@ -18,25 +19,29 @@ public static class FinalDiscountLimitRule
     /// <param name="header">Draft header supplying DISC_T, FINALDISC_PERC, FINALDISC and OFERID.</param>
     /// <param name="maxDisc">The operator's <c>USERS_TABLE.MAX_DISC</c>; null counts as 0.</param>
     /// <param name="patPay">Patient share the value-mode percent is derived from; null or not positive skips the value-mode check.</param>
-    /// <returns>A blocking 'Maximum discount allawed is' message, which needs a <see cref="DiscountLimitChoice"/>, when the percent
-    /// exceeds the limit and the header has no offer; in value mode otherwise FINALDISC_PERC set to the derived percent, or to 0
-    /// when FINALDISC is empty; otherwise no messages and no adjustments.</returns>
+    /// <returns>A blocking DISC_T message when DISC_T is neither 0 nor 1; a blocking 'Maximum discount allawed is' message, which
+    /// needs a <see cref="DiscountLimitChoice"/>, when the percent exceeds the limit and the header has no offer; in value mode
+    /// otherwise FINALDISC_PERC set to the derived percent, or to 0 when FINALDISC is empty; otherwise no messages and no adjustments.</returns>
     public static RuleResult Evaluate(InvoiceHeaderDraft header, decimal? maxDisc, decimal? patPay)
     {
         ArgumentNullException.ThrowIfNull(header);
 
         var limit = maxDisc ?? 0m;
 
+        if (header.DiscT is { } mode && mode is not (PercentMode or ValueMode))
+        {
+            return new RuleResult
+            {
+                Messages = [new ValidationMessage(DiscTItem, UnsupportedDiscountMode, ValidationMessage.Blocking, RuleId)],
+                Adjusted = Adjust(),
+            };
+        }
+
         if (IsPercentMode(header))
         {
             return header.FinalDiscPerc is { } percent && limit < percent && header.OferId is null
                 ? Blocked(FinalDiscPercItem, limit, Adjust())
                 : RuleResult.Empty;
-        }
-
-        if (!IsValueMode(header))
-        {
-            return RuleResult.Empty;
         }
 
         var finalDisc = header.FinalDisc ?? 0m;
@@ -52,8 +57,9 @@ public static class FinalDiscountLimitRule
         }
 
         var derived = DerivedPercent(finalDisc, share);
+        var exceeds = derived is null ? finalDisc > 0m : limit < derived.Value;
 
-        if (header.OferId is null && (derived is null || limit < derived.Value))
+        if (header.OferId is null && exceeds)
         {
             return Blocked(FinalDiscItem, limit, Adjust());
         }
@@ -92,8 +98,6 @@ public static class FinalDiscountLimitRule
 
     private static bool IsPercentMode(InvoiceHeaderDraft header) => (header.DiscT ?? ValueMode) == PercentMode;
 
-    private static bool IsValueMode(InvoiceHeaderDraft header) => (header.DiscT ?? ValueMode) == ValueMode;
-
     private static decimal? DerivedPercent(decimal finalDisc, decimal patPay)
     {
         try
@@ -102,7 +106,7 @@ public static class FinalDiscountLimitRule
         }
         catch (OverflowException)
         {
-            // A percent beyond the decimal range has no value and exceeds every limit.
+            // Returns null when the percent is outside the decimal range.
             return null;
         }
     }
