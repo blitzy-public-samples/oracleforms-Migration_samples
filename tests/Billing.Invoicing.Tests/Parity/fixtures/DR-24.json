@@ -100,6 +100,13 @@
       "input": { "compCode": "0", "companyType": null, "parameters": { "cashOrCredit": 1 }, "claimPreload": { "payType": 2, "compCode": "0" } },
       "expected": { "outcome": "Pass", "messages": [], "values": { "PAYTYPE": 1 } },
       "decision": "D-47"
+    },
+    {
+      "name": "claim-preload-inherits-missing-pay-type",
+      "status": "derivable",
+      "input": { "compCode": "205", "companyType": 2, "parameters": { "cashOrCredit": 0 }, "claimPreload": { "payType": null, "compCode": "205" } },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "PAYTYPE": null } },
+      "decision": "D-88"
     }
   ],
   "compare": { "moneyDecimals": 2, "exact": ["outcome", "messages", "PAYTYPE"] }

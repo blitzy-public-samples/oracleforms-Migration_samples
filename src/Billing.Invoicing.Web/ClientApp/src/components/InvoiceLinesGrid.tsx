@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type Dispatch } from 'react';
-import type { InvoiceLineDraft, MessageDto, ValidateTarget } from '../api/types';
+import { useEffect, useMemo, useRef, useState, type Dispatch } from 'react';
+import type { EditablePreviewLine, InvoiceLineDraft, MessageDto, PreviewResponse, ValidateTarget } from '../api/types';
+import { entryErrorFor, fieldErrorFor, parseDecimalEntry } from '../state/invoiceDraft';
 import type { InvoiceDraftAction, InvoiceDraftState } from '../state/invoiceDraft';
 import FieldMessage from './FieldMessage';
 import LovPicker from './LovPicker';
@@ -20,6 +21,7 @@ type CellStatus = {
   source: string;
   messages: MessageDto[];
   fieldError: { text: string; oracleErrorNumber: number | null } | null;
+  rejected: boolean;
   invalid: boolean;
 };
 
@@ -30,25 +32,25 @@ type InvoiceLinesGridProps = {
   onRemoveLine: (index: number) => void;
 };
 
-/** Column widths in grid order: CATID, XCAT_NAMEX, SERVICEID … FIXPAY, PAYRATE, actions. */
-const COLUMN_WIDTHS: readonly string[] = [
-  '5.5rem',
-  '7rem',
-  '5.5rem',
-  '12rem',
-  '4.5rem',
-  '6rem',
-  '5.5rem',
-  '5rem',
-  '5rem',
-  '5.5rem',
-  '5.5rem',
-  '5.5rem',
-  '5.5rem',
-  '5.5rem',
-  '7rem',
-  '7rem',
-  '5.5rem',
+/** Column size classes in grid order: CATID, XCAT_NAMEX, SERVICEID … FIXPAY, PAYRATE, actions. */
+const COLUMN_CLASSES: readonly string[] = [
+  'lines-col-code',
+  'lines-col-name',
+  'lines-col-code',
+  'lines-col-desc',
+  'lines-col-qty',
+  'lines-col-price',
+  'lines-col-choice',
+  'lines-col-disc',
+  'lines-col-disc',
+  'lines-col-amount',
+  'lines-col-amount',
+  'lines-col-amount',
+  'lines-col-amount',
+  'lines-col-amount',
+  'lines-col-rate',
+  'lines-col-rate',
+  'lines-col-action',
 ];
 
 /** LDISCT radio values and labels. */
@@ -79,27 +81,56 @@ function lookup(record: LineDisplay | null | undefined, key: string): unknown {
   return match === undefined ? undefined : record[match];
 }
 
-/** Parses operator text: null when empty, the number when finite, undefined when unparsable. */
-function parseNumber(text: string): number | null | undefined {
-  const trimmed = text.trim();
-  if (trimmed === '') {
-    return null;
-  }
-  const parsed = Number(trimmed);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
 /** Parses an LOV cell into a number, or null when it is empty or not numeric. */
 function toNumberOrNull(value: unknown): number | null {
   if (typeof value === 'number') {
     return Number.isFinite(value) ? value : null;
   }
-  return typeof value === 'string' ? (parseNumber(value) ?? null) : null;
+  if (typeof value !== 'string' || value.trim() === '') {
+    return null;
+  }
+  const parsed = Number(value.trim());
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 /** True when a text field holds no value. */
 function isBlank(value: string | null | undefined): boolean {
   return value === null || value === undefined || value.trim() === '';
+}
+
+/** Trimmed text, with null and blank both read as the empty string. */
+function trimmed(value: string | null | undefined): string {
+  return value?.trim() ?? '';
+}
+
+/** True when the server has judged PRICE editable on the line's current service, patient and company. */
+function serverAllowsPrice(state: InvoiceDraftState, line: InvoiceLineDraft): boolean {
+  const clientId = line.clientId;
+  if (clientId === null || clientId === undefined || clientId === '' || !Object.hasOwn(state.priceEditable, clientId)) {
+    return false;
+  }
+  const entry = state.priceEditable[clientId];
+  const header = state.draft?.header;
+  const judgedServiceId = trimmed(entry.serviceId).toUpperCase();
+  return (
+    entry.editable &&
+    judgedServiceId !== '' &&
+    judgedServiceId === trimmed(line.serviceId).toUpperCase() &&
+    trimmed(entry.patientNo) === trimmed(header?.patientNo) &&
+    trimmed(entry.compCode) === trimmed(header?.compCode)
+  );
+}
+
+/** Preview lines by client id, keeping the first line of each non-empty client id. */
+function previewLinesByClientId(preview: PreviewResponse | null): Map<string, EditablePreviewLine> {
+  const byClientId = new Map<string, EditablePreviewLine>();
+  for (const previewLine of preview?.lines ?? []) {
+    const clientId = previewLine.clientId;
+    if (clientId !== null && clientId !== undefined && clientId !== '' && !byClientId.has(clientId)) {
+      byClientId.set(clientId, previewLine);
+    }
+  }
+  return byClientId;
 }
 
 /** Display values of a saved view's line, taken from LINE_DISPLAY aligned with the lines. */
@@ -122,17 +153,19 @@ function setLineField<K extends keyof InvoiceLineDraft>(
   dispatch({ type: 'lineFieldChanged', index, field, value });
 }
 
-/** Messages, current-line Oracle field error and invalid flag of one line cell. */
+/** Messages, the line's rejected entry or Oracle field error, and the rejected and invalid flags of one line cell. */
 function cellStatus(state: InvoiceDraftState, index: number, target: LineTarget): CellStatus {
   const source = `LINE:${index}:${target}`;
   const messages = state.messages[source] ?? [];
-  const mapped = index === state.currentLineIndex && Object.hasOwn(state.fieldErrors, target) ? state.fieldErrors[target] : undefined;
-  const fieldError = mapped === undefined ? null : { text: mapped.text, oracleErrorNumber: mapped.oracleErrorNumber };
+  const clientId = (state.saved?.view?.lines ?? state.draft?.lines ?? [])[index]?.clientId ?? null;
+  const mapped = fieldErrorFor(state, target, clientId);
+  const fieldError = mapped === null ? null : { text: mapped.text, oracleErrorNumber: mapped.oracleErrorNumber };
   return {
     target,
     source,
     messages,
     fieldError,
+    rejected: entryErrorFor(state, target, clientId) !== null,
     invalid: fieldError !== null || messages.some((message) => message.severity === 'Blocking'),
   };
 }
@@ -160,14 +193,32 @@ type EditableCellProps = {
   numeric: boolean;
   readOnly: boolean;
   invalid: boolean;
+  rejected: boolean;
   onText: (raw: string) => void;
   onChanged: () => void;
+  onRejected?: (message: string) => void;
+  onAccepted?: () => void;
 };
 
-/** Text input cell that keeps the raw text while focused and reports a changed value on blur. */
-function EditableCell({ name, label, text, changeToken, numeric, readOnly, invalid, onText, onChanged }: EditableCellProps) {
+/** Text input cell that keeps the raw text while focused or rejected, keeps a non-decimal numeric entry out of the line, rejects it on blur and reports a changed value. */
+function EditableCell({
+  name,
+  label,
+  text,
+  changeToken,
+  numeric,
+  readOnly,
+  invalid,
+  rejected,
+  onText,
+  onChanged,
+  onRejected,
+  onAccepted,
+}: EditableCellProps) {
   const [raw, setRaw] = useState<string | null>(null);
+  const [focused, setFocused] = useState(false);
   const focusToken = useRef<string | null>(null);
+  const shown = (focused || (rejected && !readOnly)) && raw !== null ? raw : text;
 
   return (
     <td>
@@ -180,26 +231,47 @@ function EditableCell({ name, label, text, changeToken, numeric, readOnly, inval
         aria-invalid={invalid || undefined}
         autoComplete="off"
         readOnly={readOnly}
-        value={raw ?? text}
+        value={shown}
         title={text === '' ? undefined : text}
         onFocus={() => {
           if (!readOnly) {
             focusToken.current = changeToken;
-            setRaw(text);
+            setFocused(true);
+            setRaw((current) => (rejected && current !== null ? current : text));
           }
         }}
         onChange={(event) => {
           if (readOnly) {
             return;
           }
-          setRaw(event.target.value);
-          onText(event.target.value);
+          const value = event.target.value;
+          setRaw(value);
+          if (!numeric || parseDecimalEntry(value).kind !== 'invalid') {
+            onText(value);
+          } else if (focusToken.current !== null && focusToken.current !== changeToken) {
+            onText(focusToken.current);
+          }
         }}
         onBlur={() => {
           const before = focusToken.current;
           focusToken.current = null;
+          setFocused(false);
+          if (before === null) {
+            setRaw(null);
+            return;
+          }
+          if (numeric) {
+            const entry = parseDecimalEntry(raw ?? text);
+            if (entry.kind === 'invalid') {
+              onRejected?.(entry.message);
+              return;
+            }
+          }
           setRaw(null);
-          if (before !== null && before !== changeToken) {
+          if (rejected) {
+            onAccepted?.();
+          }
+          if (before !== changeToken || rejected) {
             onChanged();
           }
         }}
@@ -234,6 +306,7 @@ type LineRowProps = {
   index: number;
   editable: boolean;
   fromSavedView: boolean;
+  previewLine: EditablePreviewLine | undefined;
   onValidateLine: (index: number, target: ValidateTarget) => void;
   onQueueValidation: (index: number, target: LineTarget) => void;
   onRemoveLine: (index: number) => void;
@@ -248,6 +321,7 @@ function LineRow({
   index,
   editable,
   fromSavedView,
+  previewLine,
   onValidateLine,
   onQueueValidation,
   onRemoveLine,
@@ -262,12 +336,13 @@ function LineRow({
     : line.clientId !== null && line.clientId !== ''
       ? state.lineDisplay[line.clientId]
       : undefined;
-  const previewLine = fromSavedView
-    ? undefined
-    : state.preview?.lines?.find((candidate) => candidate.clientId !== null && candidate.clientId === line.clientId);
   const packageValue = (savedKey: string, previewValue: unknown) => (fromSavedView ? lookup(display, savedKey) : previewValue);
 
-  const priceEditable = editable && isBlank(line.packageServiceId) && (line.offerId === null || line.offerId === undefined);
+  const priceEditable =
+    editable &&
+    isBlank(line.packageServiceId) &&
+    (line.offerId === null || line.offerId === undefined) &&
+    serverAllowsPrice(state, line);
   const priceValue = line.priceOverride !== null && line.priceOverride !== undefined ? line.priceOverride : (previewLine?.price ?? line.price);
   const discountType = line.discountType ?? '';
   const knownDiscountType = DISCOUNT_TYPES.some((option) => option.value === discountType);
@@ -285,11 +360,14 @@ function LineRow({
   );
 
   const numericField = (field: 'qty' | 'disc' | 'myDisc') => (raw: string) => {
-    const parsed = parseNumber(raw);
-    if (parsed !== undefined) {
-      setLineField(dispatch, index, field, parsed);
+    const entry = parseDecimalEntry(raw);
+    if (entry.kind !== 'invalid') {
+      setLineField(dispatch, index, field, entry.kind === 'value' ? entry.text : null);
     }
   };
+  const rejectEntry = (target: LineTarget) => (text: string) =>
+    dispatch({ type: 'entryRejected', field: target, lineIndex: index, text });
+  const acceptEntry = (target: LineTarget) => () => dispatch({ type: 'entryAccepted', field: target, lineIndex: index });
   const selectLine = () => dispatch({ type: 'currentLineSelected', index });
   const rowClass = isCurrent ? 'current-line' : undefined;
 
@@ -305,7 +383,7 @@ function LineRow({
               aria-label={label('Catid')}
               readOnly
               tabIndex={-1}
-              value={displayText(previewLine?.catId ?? line.catId)}
+              value={displayText(line.catId)}
             />
             {editable && (
               <button
@@ -328,6 +406,7 @@ function LineRow({
           numeric={false}
           readOnly={!editable}
           invalid={status.SERVICEID.invalid}
+          rejected={false}
           onText={(raw) => setLineField(dispatch, index, 'serviceId', raw.trim() === '' ? null : raw.trim())}
           onChanged={() => onValidateLine(index, 'SERVICEID')}
         />
@@ -344,8 +423,11 @@ function LineRow({
           numeric
           readOnly={!editable}
           invalid={status.QTY.invalid}
+          rejected={status.QTY.rejected}
           onText={numericField('qty')}
           onChanged={() => onValidateLine(index, 'QTY')}
+          onRejected={rejectEntry('QTY')}
+          onAccepted={acceptEntry('QTY')}
         />
         <EditableCell
           name={name('PRICE')}
@@ -355,14 +437,18 @@ function LineRow({
           numeric
           readOnly={!priceEditable}
           invalid={status.PRICE.invalid}
+          rejected={status.PRICE.rejected}
           onText={(raw) => {
-            const parsed = parseNumber(raw);
-            if (parsed !== undefined) {
-              setLineField(dispatch, index, 'priceOverride', parsed);
-              setLineField(dispatch, index, 'usePriceOverride', parsed === null ? 'N' : 'Y');
+            const entry = parseDecimalEntry(raw);
+            if (entry.kind !== 'invalid') {
+              const override = entry.kind === 'value' ? entry.text : null;
+              setLineField(dispatch, index, 'priceOverride', override);
+              setLineField(dispatch, index, 'usePriceOverride', override === null ? 'N' : 'Y');
             }
           }}
           onChanged={() => onValidateLine(index, 'PRICE')}
+          onRejected={rejectEntry('PRICE')}
+          onAccepted={acceptEntry('PRICE')}
         />
         <td>
           <select
@@ -393,8 +479,11 @@ function LineRow({
           numeric
           readOnly={!editable}
           invalid={status.DISC.invalid}
+          rejected={status.DISC.rejected}
           onText={numericField('disc')}
           onChanged={() => onValidateLine(index, 'DISC')}
+          onRejected={rejectEntry('DISC')}
+          onAccepted={acceptEntry('DISC')}
         />
         <EditableCell
           name={name('MY_DISC')}
@@ -404,8 +493,11 @@ function LineRow({
           numeric
           readOnly={!editable}
           invalid={status.MY_DISC.invalid}
+          rejected={status.MY_DISC.rejected}
           onText={numericField('myDisc')}
           onChanged={() => onValidateLine(index, 'MY_DISC')}
+          onRejected={rejectEntry('MY_DISC')}
+          onAccepted={acceptEntry('MY_DISC')}
         />
         <ReadOnlyCell name={name('THE_PAY')} label={label('The Pay')} value={packageValue('THE_PAY', previewLine?.thePay)} />
         <ReadOnlyCell name={name('THE_COMP')} label={label('The Comp')} value={packageValue('THE_COMP', previewLine?.theComp)} />
@@ -436,7 +528,7 @@ function LineRow({
       {withMessages.length > 0 && (
         // Messages of the line's cells, in column order, in a full-width row under the line.
         <tr className={rowClass} onClick={selectLine}>
-          <td colSpan={COLUMN_WIDTHS.length}>
+          <td colSpan={COLUMN_CLASSES.length}>
             <div className="check-field">
               {withMessages.map((cell) => (
                 <FieldMessage
@@ -466,6 +558,7 @@ export default function InvoiceLinesGrid({ state, dispatch, onValidateLine, onRe
   const fromSavedView = state.saved?.view != null;
   const lines = state.saved?.view?.lines ?? state.draft?.lines ?? [];
   const editable = state.draft !== null && state.saved === null && !state.readOnly;
+  const previewLines = useMemo(() => previewLinesByClientId(state.preview), [state.preview]);
 
   useEffect(() => {
     if (pending.length === 0) {
@@ -505,8 +598,8 @@ export default function InvoiceLinesGrid({ state, dispatch, onValidateLine, onRe
       <div className="lines-grid-scroll">
         <table className="lines-grid" aria-label="Invoice lines">
           <colgroup>
-            {COLUMN_WIDTHS.map((width, position) => (
-              <col key={position} style={{ inlineSize: width }} />
+            {COLUMN_CLASSES.map((sizeClass, position) => (
+              <col key={position} className={sizeClass} />
             ))}
           </colgroup>
           <thead>
@@ -543,6 +636,9 @@ export default function InvoiceLinesGrid({ state, dispatch, onValidateLine, onRe
                 index={index}
                 editable={editable}
                 fromSavedView={fromSavedView}
+                previewLine={
+                  fromSavedView || line.clientId === null || line.clientId === '' ? undefined : previewLines.get(line.clientId)
+                }
                 onValidateLine={onValidateLine}
                 onQueueValidation={queueValidation}
                 onRemoveLine={removeLine}

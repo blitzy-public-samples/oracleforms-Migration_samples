@@ -12,6 +12,8 @@ namespace Billing.Invoicing.Api.Controllers;
 [Route("api/drafts")]
 public sealed class DraftsController : ControllerBase
 {
+    private const string ProblemJson = "application/problem+json";
+
     private static readonly string[] OperatorHeaders =
     [
         "X-His-User-No",
@@ -39,7 +41,12 @@ public sealed class DraftsController : ControllerBase
     /// <param name="parameters">Entry parameters set by the calling module.</param>
     /// <returns>200 with the new draft; 422 when the defaults raise a blocking message or the operator context is missing.</returns>
     [HttpGet("new")]
-    public async Task<IActionResult> New([FromQuery] InvoiceEntryParameters parameters)
+    [ProducesResponseType<NewDraftResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status501NotImplemented, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status500InternalServerError, ProblemJson)]
+    public async Task<ActionResult<NewDraftResponse>> New([FromQuery] InvoiceEntryParameters parameters)
     {
         if (CurrentOperator() is not { } operatorContext)
         {
@@ -60,7 +67,12 @@ public sealed class DraftsController : ControllerBase
     /// <param name="request">Draft, validated target and, for a line target, the line index.</param>
     /// <returns>200 with warnings, adjusted values and advisory open items; 422 <c>field-validation</c> when any message is blocking.</returns>
     [HttpPost("validate")]
-    public async Task<IActionResult> Validate([FromBody] ValidateDraftRequest request)
+    [ProducesResponseType<ValidateDraftResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status501NotImplemented, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status500InternalServerError, ProblemJson)]
+    public async Task<ActionResult<ValidateDraftResponse>> Validate([FromBody] ValidateDraftRequest request)
     {
         if (CurrentOperator() is not { } operatorContext)
         {
@@ -86,7 +98,7 @@ public sealed class DraftsController : ControllerBase
 
     /// <summary>Writes the 422 <c>operator-context-missing</c> body naming the operator-context headers.</summary>
     /// <returns>An empty result over the written response.</returns>
-    private async Task<IActionResult> OperatorMissing()
+    private async Task<ActionResult> OperatorMissing()
     {
         await _problems.WriteAsync(HttpContext, OperatorHeaders);
         return new EmptyResult();
@@ -104,7 +116,7 @@ public sealed class DraftsController : ControllerBase
     /// <param name="openItems">Open-item ids; none when null.</param>
     /// <param name="adjusted">Adjusted item values; omitted when null.</param>
     /// <returns>An empty result over the written response.</returns>
-    private async Task<IActionResult> Rejected(
+    private async Task<ActionResult> Rejected(
         IReadOnlyList<MessageDto> messages,
         IReadOnlyList<string>? openItems,
         IReadOnlyDictionary<string, object?>? adjusted)

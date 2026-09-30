@@ -20,6 +20,7 @@ public sealed class InvoiceDefaultsRuleTests
     private const string T003Locator = "05_Complex/Inv_Small_Cash.xml:1096";
 
     private static readonly TimeSpan LastMinuteBeforeMidnight = new(23, 59, 0);
+    private static readonly string[] CardFieldKeys = ["INS_NUMBER", "CARD_END", "PAT_POLICY_NO"];
     private static readonly JsonSerializerOptions InputOptions = CreateInputOptions();
 
     /// <summary>Compares the draft header built by <see cref="InvoiceDefaultsRule.Apply"/> with one DR-20 fixture case.</summary>
@@ -50,7 +51,7 @@ public sealed class InvoiceDefaultsRuleTests
         ParityFixture.AssertValues(expectedValues, Project(draft), fixture.Compare);
     }
 
-    /// <summary>Checks that the DR-20 fixture is a domain fixture traced to T015, the INVTYPEID item, T022 and T003 whose cases reach each default and preload branch.</summary>
+    /// <summary>Checks that the DR-20 fixture is a domain fixture traced to T015, the INVTYPEID item, T022 and T003 whose cases reach each default and preload branch, including a credit preload copying the card fields and a cash preload nulling them.</summary>
     [Fact]
     [Trait("Rule", "DR-20")]
     public void Fixture_DR_20_is_a_domain_fixture_covering_each_default_branch()
@@ -78,6 +79,21 @@ public sealed class InvoiceDefaultsRuleTests
         Assert.Contains(inputs, input => input.ClaimPreload is not null && input.Parameters.CashOrCredit == 1);
         Assert.Contains(inputs, input => input.ClaimPreload is not null && input.Parameters.CashOrCredit != 1);
         Assert.Contains(inputs, input => !string.IsNullOrEmpty(input.Parameters.VisitUnique) && input.VisitDoctorId is not null);
+
+        var cardCases = fixture.Cases
+            .Select(fixtureCase => (Input: ReadInput(fixtureCase), Values: fixtureCase.Expected.Values))
+            .Where(entry => entry.Input.ClaimPreload is { InsNumber: not null, CardEnd: not null, PatPolicyNo: not null }
+                && entry.Values is { ValueKind: JsonValueKind.Object } values
+                && CardFieldKeys.All(key => values.TryGetProperty(key, out _)))
+            .Select(entry => (entry.Input, Values: entry.Values!.Value))
+            .ToList();
+
+        Assert.Contains(cardCases, entry => entry.Input.Parameters.CashOrCredit != 1
+            && entry.Values.GetProperty("INS_NUMBER").GetString() == entry.Input.ClaimPreload!.InsNumber
+            && entry.Values.GetProperty("CARD_END").GetString() == entry.Input.ClaimPreload.CardEnd!.Value.ToString("s", CultureInfo.InvariantCulture)
+            && entry.Values.GetProperty("PAT_POLICY_NO").GetString() == entry.Input.ClaimPreload.PatPolicyNo);
+        Assert.Contains(cardCases, entry => entry.Input.Parameters.CashOrCredit == 1
+            && CardFieldKeys.All(key => entry.Values.GetProperty(key).ValueKind == JsonValueKind.Null));
     }
 
     /// <summary>Checks that a claim preload supplied with claim parameter '1' or '2' is not applied (T015).</summary>
@@ -133,6 +149,9 @@ public sealed class InvoiceDefaultsRuleTests
             ["SUB_COMP_CODE"] = d.SubCompCode,
             ["CLASS_CODE"] = d.ClassCode,
             ["PAYTYPE"] = d.PayType,
+            ["INS_NUMBER"] = d.InsNumber,
+            ["CARD_END"] = d.CardEnd,
+            ["PAT_POLICY_NO"] = d.PatPolicyNo,
         };
 
     private static DefaultsInput ReadInput(FixtureCase fixtureCase)

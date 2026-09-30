@@ -22,6 +22,7 @@ public sealed class ProblemDetailsWriter
 
     private const string ProblemJsonContentType = "application/problem+json";
     private const string FieldValidationType = "field-validation";
+    private const string NotFoundType = "not-found";
     private const string AboutBlankType = "about:blank";
 
     private const string OracleBusinessErrorTitle = "Oracle business error";
@@ -30,6 +31,7 @@ public sealed class ProblemDetailsWriter
     private const string OracleUnavailableTitle = "Oracle database is unavailable";
     private const string OracleErrorTitle = "Oracle error";
     private const string FieldValidationTitle = "Validation failed";
+    private const string NotFoundTitle = "Not found";
     private const string InternalServerErrorTitle = "Internal Server Error";
 
     /// <summary>Web-default serializer options with string enums, relaxed escaping and dictionary keys written as given.</summary>
@@ -147,6 +149,26 @@ public sealed class ProblemDetailsWriter
         body["missing"] = NonNull(missingHeaders);
 
         return WriteBodyAsync(context, StatusCodes.Status422UnprocessableEntity, body);
+    }
+
+    /// <summary>Writes a 404 <c>not-found</c> body carrying the message.</summary>
+    /// <param name="context">The request to answer.</param>
+    /// <param name="message">Text naming what was not found, written as given.</param>
+    /// <returns>A task that completes when the body is written, or at once when the response has started.</returns>
+    public Task WriteNotFoundAsync(HttpContext context, string message)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(message);
+
+        if (context.Response.HasStarted)
+        {
+            return Task.CompletedTask;
+        }
+
+        Dictionary<string, object?> body = Problem(NotFoundType, NotFoundTitle, StatusCodes.Status404NotFound);
+        body["message"] = message;
+
+        return WriteBodyAsync(context, StatusCodes.Status404NotFound, body);
     }
 
     /// <summary>Builds the 422 body of an Oracle application error; field, legacy text and kind only when set.</summary>

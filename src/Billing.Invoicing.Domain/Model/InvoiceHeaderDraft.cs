@@ -101,4 +101,13 @@ public sealed record InvoiceHeaderDraft
 
     /// <summary>Reservation sequence number (SEQ_NO); display-only, never bound (OI-33).</summary>
     public int? SeqNo { get; init; }
+
+    /// <summary>Insurance number (INS_NUMBER) copied from the claim's first invoice; display-only, never bound.</summary>
+    public string? InsNumber { get; init; }
+
+    /// <summary>Insurance card end date (CARD_END) copied from the claim's first invoice; display-only, never bound.</summary>
+    public DateTime? CardEnd { get; init; }
+
+    /// <summary>Patient policy number (PAT_POLICY_NO) copied from the claim's first invoice; display-only, never bound.</summary>
+    public string? PatPolicyNo { get; init; }
 }

@@ -12,6 +12,8 @@ namespace Billing.Invoicing.Api.Controllers;
 [Route("api/patients")]
 public sealed class PatientsController : ControllerBase
 {
+    private const string ProblemJson = "application/problem+json";
+
     private static readonly string[] OperatorHeaders =
     [
         "X-His-User-No",
@@ -42,7 +44,11 @@ public sealed class PatientsController : ControllerBase
     /// <param name="parameters">Entry parameters of the draft.</param>
     /// <returns>200 with the coverage response, or 422 <c>field-validation</c> when a message is blocking.</returns>
     [HttpGet("{patientNo}/coverage")]
-    public async Task<IActionResult> Coverage(
+    [ProducesResponseType<CoverageResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status500InternalServerError, ProblemJson)]
+    public async Task<ActionResult<CoverageResponse>> Coverage(
         string? patientNo,
         [FromQuery] DateTime? draftDate,
         [FromQuery] InvoiceEntryParameters parameters)
@@ -78,7 +84,7 @@ public sealed class PatientsController : ControllerBase
 
     /// <summary>Writes the 422 <c>operator-context-missing</c> body naming every operator header.</summary>
     /// <returns>An empty result, the body being already written.</returns>
-    private async Task<IActionResult> OperatorMissing()
+    private async Task<ActionResult> OperatorMissing()
     {
         await _problems.WriteAsync(HttpContext, OperatorHeaders);
         return new EmptyResult();
@@ -96,7 +102,7 @@ public sealed class PatientsController : ControllerBase
     /// <param name="openItems">Advisory open-item ids; none when null.</param>
     /// <param name="adjusted">Adjusted values keyed by legacy item name; omitted when null.</param>
     /// <returns>An empty result, the body being already written.</returns>
-    private async Task<IActionResult> Rejected(
+    private async Task<ActionResult> Rejected(
         IReadOnlyList<MessageDto> messages,
         IReadOnlyList<string>? openItems,
         IReadOnlyDictionary<string, object?>? adjusted)

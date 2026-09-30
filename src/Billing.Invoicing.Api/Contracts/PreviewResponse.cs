@@ -23,4 +23,13 @@ public sealed record PreviewResponse
 
     /// <summary>Advisory open-item ids that apply to this preview.</summary>
     public IReadOnlyList<string> OpenItems { get; init; } = [];
+
+    /// <summary>Client ids of the draft lines on which an operator-entered PRICE is accepted.</summary>
+    public IReadOnlyList<string> PriceEditableClientIds { get; init; } = [];
+
+    /// <summary>Patient number of the request the PRICE editability was judged on.</summary>
+    public string? PriceJudgedPatientNo { get; init; }
+
+    /// <summary>Company code of the request the PRICE editability was judged on.</summary>
+    public string? PriceJudgedCompCode { get; init; }
 }

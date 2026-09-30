@@ -313,9 +313,15 @@ public sealed class DomainRuleBehaviourTests
         result.Messages.Select(m => (m.Text, m.Severity));
 
     [Fact]
-    public void Eligibility_CashAndMissingCoverageAreNotChecked()
+    public void Eligibility_CashIsNotCheckedAndMissingCoverageBlocks()
     {
-        Assert.Empty(PatientEligibilityRules.Evaluate(null, Admin(2), DraftDate).Messages);
+        AssertMessage(
+            PatientEligibilityRules.Evaluate(null, Admin(2), DraftDate),
+            "PATIENTNO",
+            "FRM-40735: WHEN-VALIDATE-ITEM trigger raised unhandled exception ORA-01403.",
+            ValidationMessage.Blocking,
+            "DR-03");
+        Assert.True(PatientEligibilityRules.Evaluate(null, new InvoiceEntryParameters { CashOrCredit = 1 }, DraftDate).IsBlocking);
         Assert.Empty(PatientEligibilityRules.Evaluate(InsuredCoverage() with { CompCode = "0", CompanyIsActive = 2 }, Admin(2), DraftDate).Messages);
         Assert.Empty(PatientEligibilityRules.Evaluate(InsuredCoverage() with { CompanyIsActive = 2 }, new InvoiceEntryParameters { CashOrCredit = 1 }, DraftDate).Messages);
         Assert.Empty(PatientEligibilityRules.Evaluate(InsuredCoverage(), Admin(2), DraftDate).Messages);
@@ -612,7 +618,7 @@ public sealed class DomainRuleBehaviourTests
         Assert.Equal(1, PayTypeSelectionRule.Decide("300", null, new InvoiceEntryParameters { CashOrCredit = 1 }, ClaimPreload()));
         Assert.Equal(2, PayTypeSelectionRule.Decide("300", null, new InvoiceEntryParameters { CashOrCredit = 2 }, ClaimPreload()));
         Assert.Equal(1, PayTypeSelectionRule.Decide("300", null, parameters, ClaimPreload() with { PayType = 1 }));
-        Assert.Equal(2, PayTypeSelectionRule.Decide("300", null, parameters, ClaimPreload() with { PayType = null }));
+        Assert.Null(PayTypeSelectionRule.Decide("300", null, parameters, ClaimPreload() with { PayType = null }));
         Assert.Throws<ArgumentNullException>(() => PayTypeSelectionRule.Decide("0", null, null!, null));
     }
 

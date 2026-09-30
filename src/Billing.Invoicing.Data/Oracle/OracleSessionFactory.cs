@@ -16,14 +16,16 @@ public sealed class OracleSessionFactory : IOracleSessionFactory
     /// <summary>Stores the data-layer settings; opens nothing.</summary>
     /// <param name="options">Connection string and command settings.</param>
     /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><see cref="InvoicingDataOptions.CommandTimeoutSeconds"/> is below 1.</exception>
     public OracleSessionFactory(InvoicingDataOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
+        options.EnsureCommandTimeout(nameof(options));
 
         _options = options;
     }
 
-    /// <summary>Opens a connection and begins a read-committed transaction on it.</summary>
+    /// <summary>Opens a connection within <see cref="InvoicingDataOptions.CommandTimeoutSeconds"/> and begins a read-committed transaction on it; an open that exceeds it fails with a <see cref="TimeoutException"/>.</summary>
     /// <param name="cancellationToken">Cancels the connection open.</param>
     /// <returns>The open session; disposing it uncommitted rolls the transaction back.</returns>
     public async Task<IOracleSession> Open(CancellationToken cancellationToken = default)
@@ -41,19 +43,22 @@ public sealed class OracleSessionFactory : IOracleSessionFactory
             throw;
         }
 
-        return new OracleSession(connection, transaction);
+        return new OracleSession(connection, transaction, TimeSpan.FromSeconds(_options.CommandTimeoutSeconds));
     }
 
-    /// <summary>Opens a connection without a transaction; marks a blank or malformed connection string under <see cref="OracleFailureTranslator.ConfigurationFaultKey"/> and open failures under <see cref="OracleErrorParser.DuringOpenKey"/> in <see cref="Exception.Data"/>, and rethrows.</summary>
-    /// <param name="options">Settings holding the connection string.</param>
+    /// <summary>Opens a connection without a transaction within <see cref="InvoicingDataOptions.CommandTimeoutSeconds"/>; marks a blank or malformed connection string under <see cref="OracleFailureTranslator.ConfigurationFaultKey"/> and open failures under <see cref="OracleErrorParser.DuringOpenKey"/> in <see cref="Exception.Data"/>, and rethrows; a connection whose open is still running at the deadline is released once that open settles.</summary>
+    /// <param name="options">Settings holding the connection string and the open deadline.</param>
     /// <param name="cancellationToken">Cancels the connection open.</param>
     /// <returns>An open connection the caller disposes.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><see cref="InvoicingDataOptions.CommandTimeoutSeconds"/> is below 1.</exception>
     /// <exception cref="InvalidOperationException">The connection string is blank.</exception>
     /// <exception cref="ArgumentException">The connection string is malformed.</exception>
+    /// <exception cref="TimeoutException">The open did not complete within <see cref="InvoicingDataOptions.CommandTimeoutSeconds"/>.</exception>
     internal static async Task<OracleConnection> OpenConnection(InvoicingDataOptions options, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(options);
+        options.EnsureCommandTimeout(nameof(options));
 
         if (IsBlank(options.ConnectionString))
         {
@@ -73,9 +78,15 @@ public sealed class OracleSessionFactory : IOracleSessionFactory
             throw;
         }
 
+        Task? abandonedOpen = null;
         try
         {
-            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            await OracleSession.RunWithinDeadline(
+                "connection open",
+                TimeSpan.FromSeconds(options.CommandTimeoutSeconds),
+                connection.OpenAsync,
+                opening => abandonedOpen = opening,
+                cancellationToken).ConfigureAwait(false);
             return connection;
         }
         catch (Exception exception)
@@ -85,7 +96,15 @@ public sealed class OracleSessionFactory : IOracleSessionFactory
                 exception.Data[OracleErrorParser.DuringOpenKey] = true;
             }
 
-            await DisposeAfterFailure(connection, exception).ConfigureAwait(false);
+            if (abandonedOpen is not null)
+            {
+                OracleSession.ReleaseWhenSettled(abandonedOpen, connection);
+            }
+            else
+            {
+                await DisposeAfterFailure(connection, exception).ConfigureAwait(false);
+            }
+
             throw;
         }
     }

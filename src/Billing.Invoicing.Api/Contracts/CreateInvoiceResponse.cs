@@ -6,7 +6,7 @@ namespace Billing.Invoicing.Api.Contracts;
 public sealed record CreateInvoiceResponse
 {
     /// <summary>Invoice number saved, or returned by a replay of the same request id (<c>INV_NO</c>).</summary>
-    public long? InvNo { get; init; }
+    public required long InvNo { get; init; }
 
     /// <summary>Package result message (<c>t_full_invoice_result.message</c>).</summary>
     public string? Message { get; init; }

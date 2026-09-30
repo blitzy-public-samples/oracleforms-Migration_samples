@@ -25,7 +25,7 @@ builder.Services
             .Where(entry => entry.Value is { Errors.Count: > 0 })
             .SelectMany(entry => entry.Value!.Errors.Select(error => new MessageDto
             {
-                Field = FieldOf(entry.Key),
+                Field = ModelStateFieldMap.FieldOf(entry.Key),
                 Text = string.IsNullOrEmpty(error.ErrorMessage) ? "The input was not valid." : error.ErrorMessage,
                 Severity = ValidationMessage.Blocking,
             }))
@@ -40,14 +40,9 @@ builder.Services.AddInvoicingData(builder.Configuration);
 builder.Services.AddSingleton<ProblemDetailsWriter>();
 builder.Services.AddScoped<InvoiceWorkflowService>();
 
-var webOrigin = builder.Configuration["Cors:WebOrigin"];
+var webOrigin = RequireWebOrigin(builder.Configuration["Cors:WebOrigin"]);
 builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
-{
-    if (!string.IsNullOrWhiteSpace(webOrigin))
-    {
-        p.WithOrigins(webOrigin).AllowAnyHeader().AllowAnyMethod().WithExposedHeaders("Location");
-    }
-}));
+    p.WithOrigins(webOrigin).AllowAnyHeader().AllowAnyMethod().WithExposedHeaders("Location")));
 
 var app = builder.Build();
 
@@ -59,11 +54,24 @@ app.MapControllers();
 
 app.Run();
 
-static string? FieldOf(string key)
+// Returns the Cors:WebOrigin value as a scheme://host:port origin; throws InvalidOperationException naming the key when it is
+// missing, blank, or not an absolute http or https URI without user info, path, query or fragment.
+static string RequireWebOrigin(string? configured)
 {
-    var item = key[(key.LastIndexOf('.') + 1)..];
-    return item.Length > 0 && item.All(c => char.IsAsciiLetterUpper(c) || char.IsAsciiDigit(c) || c == '_') ? item : null;
+    var value = configured?.Trim();
+    if (Uri.TryCreate(value, UriKind.Absolute, out var uri)
+        && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
+        && uri.UserInfo.Length == 0
+        && uri.AbsolutePath == "/"
+        && uri.Query.Length == 0
+        && uri.Fragment.Length == 0)
+    {
+        return uri.GetLeftPart(UriPartial.Authority);
+    }
+
+    throw new InvalidOperationException(
+        "Cors:WebOrigin must be the absolute http or https origin of the Web host, such as http://localhost:5090.");
 }
 
-// Declares the top-level entry-point class internal, so the Web SDK does not generate a public Program.
+// Declares the top-level entry-point class internal (D-81).
 internal partial class Program;

@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import type { CSSProperties, Dispatch, KeyboardEvent } from 'react';
-import type { DiscountLimitChoice, InvoiceHeaderDraft, MessageDto, ValidateTarget } from '../api/types';
+import type { Dispatch, KeyboardEvent } from 'react';
+import type { DecimalValue, DiscountLimitChoice, InvoiceHeaderDraft, MessageDto, ValidateTarget } from '../api/types';
+import { entryErrorFor, fieldErrorFor, parseDecimalEntry } from '../state/invoiceDraft';
 import type { InvoiceDraftAction, InvoiceDraftState } from '../state/invoiceDraft';
 import FieldMessage from './FieldMessage';
 import LovPicker from './LovPicker';
@@ -19,6 +20,7 @@ type FieldFeedback = {
   messages: MessageDto[];
   sources: { source: string; index: number }[];
   fieldError: InvoiceDraftState['fieldErrors'][string] | null;
+  rejected: boolean;
   invalid: boolean;
 };
 
@@ -31,9 +33,9 @@ const DISC_T_VALUE = 0;
 
 const DISCOUNT_LIMIT_TITLE = 'Maximum Discount';
 
-// Method-row widths: a narrow three-character code, then name and amount sharing the rest and wrapping when narrow.
-const METHOD_CODE_WIDTH: CSSProperties = { flex: '0 0 3.5rem' };
-const METHOD_FILL_WIDTH: CSSProperties = { flex: '1 1 6rem' };
+// Method-row size classes: a narrow three-character code, then name and amount sharing the rest and wrapping when narrow.
+const METHOD_CODE_CLASS = 'method-code';
+const METHOD_FILL_CLASS = 'method-fill';
 
 // Text shown for a value: '' for null or undefined, otherwise the value as returned.
 function show(value: unknown): string {
@@ -54,23 +56,13 @@ function toNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-// Parsed operator entry: null for empty text, the number when finite, undefined when unparsable.
-function parseEntry(text: string): number | null | undefined {
-  const trimmed = text.trim();
-  if (trimmed === '') {
-    return null;
-  }
-  const parsed = Number(trimmed);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
 // Space-separated class list without empty entries.
 function classes(...names: (string | false)[]): string | undefined {
   const list = names.filter((name): name is string => name !== false && name !== '');
   return list.length > 0 ? list.join(' ') : undefined;
 }
 
-// Messages from every header-level source addressed to `target`, with their origin, and the field's Oracle error.
+// Messages from every header-level source addressed to `target`, with their origin, and the field's rejected entry or Oracle error.
 function feedbackFor(state: InvoiceDraftState, target: string): FieldFeedback {
   const messages: MessageDto[] = [];
   const sources: FieldFeedback['sources'] = [];
@@ -88,9 +80,9 @@ function feedbackFor(state: InvoiceDraftState, target: string): FieldFeedback {
       collect(source);
     }
   }
-  const fieldError = state.fieldErrors[target] ?? null;
+  const fieldError = fieldErrorFor(state, target);
   const invalid = fieldError !== null || messages.some((message) => message.severity === 'Blocking');
-  return { messages, sources, fieldError, invalid };
+  return { messages, sources, fieldError, rejected: entryErrorFor(state, target) !== null, invalid };
 }
 
 type FeedbackProps = {
@@ -122,18 +114,36 @@ function Feedback({ feedback, locked, dispatch }: FeedbackProps) {
 type NumberInputProps = {
   id: string;
   ariaLabel?: string;
-  value: number | null;
+  value: DecimalValue | null;
   locked: boolean;
   invalid: boolean;
-  width?: CSSProperties;
-  onEntry: (value: number | null) => void;
+  rejected: boolean;
+  sizeClass?: string;
+  onEntry: (value: DecimalValue | null) => void;
+  onRejected: (message: string) => void;
+  onAccepted: () => void;
   onChangedBlur?: () => void;
 };
 
-// Decimal text input that keeps the operator's raw text while focused and reports a changed value on blur.
-function NumberInput({ id, ariaLabel, value, locked, invalid, width, onEntry, onChangedBlur }: NumberInputProps) {
+// Decimal text input that keeps the operator's text while focused or rejected, keeps a non-decimal entry out of the record, rejects it on blur and reports a changed value.
+function NumberInput({
+  id,
+  ariaLabel,
+  value,
+  locked,
+  invalid,
+  rejected,
+  sizeClass,
+  onEntry,
+  onRejected,
+  onAccepted,
+  onChangedBlur,
+}: NumberInputProps) {
   const [text, setText] = useState<string | null>(null);
-  const focusValue = useRef<number | null>(null);
+  const [focused, setFocused] = useState(false);
+  const focusValue = useRef<DecimalValue | null>(null);
+  const editBase = useRef<{ value: DecimalValue | null } | null>(null);
+  const shown = !locked && (focused || rejected) && text !== null ? text : show(value);
 
   return (
     <input
@@ -143,12 +153,16 @@ function NumberInput({ id, ariaLabel, value, locked, invalid, width, onEntry, on
       autoComplete="off"
       aria-label={ariaLabel}
       aria-invalid={invalid || undefined}
-      className={classes(locked && 'read-only', invalid && 'invalid')}
-      style={width}
+      className={classes(sizeClass ?? false, locked && 'read-only', invalid && 'invalid')}
       readOnly={locked}
-      value={text ?? show(value)}
+      value={shown}
       onFocus={() => {
         focusValue.current = value;
+        editBase.current = null;
+        if (!locked) {
+          setFocused(true);
+          setText((current) => (rejected && current !== null ? current : null));
+        }
       }}
       onChange={(event) => {
         if (locked) {
@@ -156,14 +170,34 @@ function NumberInput({ id, ariaLabel, value, locked, invalid, width, onEntry, on
         }
         const raw = event.target.value;
         setText(raw);
-        const parsed = parseEntry(raw);
-        if (parsed !== undefined && !Object.is(parsed, value)) {
-          onEntry(parsed);
+        if (editBase.current === null) {
+          editBase.current = { value };
+        }
+        const entry = parseDecimalEntry(raw);
+        const next = entry.kind === 'value' ? entry.text : entry.kind === 'empty' ? null : editBase.current.value;
+        if (!Object.is(next, value)) {
+          onEntry(next);
         }
       }}
       onBlur={() => {
+        setFocused(false);
+        editBase.current = null;
+        if (locked) {
+          setText(null);
+          return;
+        }
+        if (text !== null) {
+          const entry = parseDecimalEntry(text);
+          if (entry.kind === 'invalid') {
+            onRejected(entry.message);
+            return;
+          }
+        }
         setText(null);
-        if (!locked && onChangedBlur !== undefined && !Object.is(focusValue.current, value)) {
+        if (rejected) {
+          onAccepted();
+        }
+        if (onChangedBlur !== undefined && (!Object.is(focusValue.current, value) || rejected)) {
           onChangedBlur();
         }
       }}
@@ -176,11 +210,11 @@ type ReadOnlyTextProps = {
   ariaLabel?: string;
   value: unknown;
   invalid?: boolean;
-  width?: CSSProperties;
+  sizeClass?: string;
 };
 
 // Read-only display of a value as held by the record.
-function ReadOnlyText({ id, ariaLabel, value, invalid = false, width }: ReadOnlyTextProps) {
+function ReadOnlyText({ id, ariaLabel, value, invalid = false, sizeClass }: ReadOnlyTextProps) {
   return (
     <input
       id={id}
@@ -188,8 +222,7 @@ function ReadOnlyText({ id, ariaLabel, value, invalid = false, width }: ReadOnly
       readOnly
       aria-label={ariaLabel}
       aria-invalid={invalid || undefined}
-      className={classes('read-only', invalid && 'invalid')}
-      style={width}
+      className={classes(sizeClass ?? false, 'read-only', invalid && 'invalid')}
       value={show(value)}
     />
   );
@@ -313,11 +346,23 @@ export default function PaymentPanel({ state, dispatch, onValidate }: PaymentPan
     setPending((current) => [...current, target]);
   };
 
-  const setField = (field: NumericHeaderField, value: number | null) => {
+  const setField = <K extends NumericHeaderField>(field: K, value: InvoiceHeaderDraft[K]) => {
     if (!locked) {
       dispatch({ type: 'headerFieldChanged', field, value });
     }
   };
+
+  // Sets the discount mode and validates the final-discount field that governs in it (D-64).
+  const changeDiscountMode = (mode: typeof DISC_T_RATE | typeof DISC_T_VALUE) => {
+    if (locked || header?.discT === mode) {
+      return;
+    }
+    setField('discT', mode);
+    queueValidation(mode === DISC_T_RATE ? 'FINALDISC_PERC' : 'FINALDISC');
+  };
+
+  const rejectEntry = (field: string) => (text: string) => dispatch({ type: 'entryRejected', field, lineIndex: null, text });
+  const acceptEntry = (field: string) => () => dispatch({ type: 'entryAccepted', field, lineIndex: null });
 
   const pickPayType = (row: Record<string, unknown>) => {
     if (locked) {
@@ -343,7 +388,15 @@ export default function PaymentPanel({ state, dispatch, onValidate }: PaymentPan
     queueValidation(prompt.target);
   };
 
-  const refund = names.REUND != null ? names.REUND : state.preview?.refund;
+  // A saved or queried invoice shows only its saved view's refund; an unsaved draft falls back to its preview.
+  const refund =
+    state.saved !== null
+      ? view !== null
+        ? names.REUND
+        : undefined
+      : names.REUND != null
+        ? names.REUND
+        : state.preview?.refund;
 
   const discTFeedback = feedbackFor(state, 'DISC_T');
   const finalDiscPercFeedback = feedbackFor(state, 'FINALDISC_PERC');
@@ -387,7 +440,7 @@ export default function PaymentPanel({ state, dispatch, onValidate }: PaymentPan
               checked={header?.discT === DISC_T_RATE}
               disabled={locked}
               className={classes(locked && 'read-only')}
-              onChange={() => setField('discT', DISC_T_RATE)}
+              onChange={() => changeDiscountMode(DISC_T_RATE)}
             />{' '}
             Rate Disc
           </label>
@@ -399,7 +452,7 @@ export default function PaymentPanel({ state, dispatch, onValidate }: PaymentPan
               checked={header?.discT === DISC_T_VALUE}
               disabled={locked}
               className={classes(locked && 'read-only')}
-              onChange={() => setField('discT', DISC_T_VALUE)}
+              onChange={() => changeDiscountMode(DISC_T_VALUE)}
             />{' '}
             Value Disc
           </label>
@@ -416,7 +469,10 @@ export default function PaymentPanel({ state, dispatch, onValidate }: PaymentPan
             value={header?.finalDiscPerc ?? null}
             locked={locked}
             invalid={finalDiscPercFeedback.invalid}
+            rejected={finalDiscPercFeedback.rejected}
             onEntry={(value) => setField('finalDiscPerc', value)}
+            onRejected={rejectEntry('FINALDISC_PERC')}
+            onAccepted={acceptEntry('FINALDISC_PERC')}
             onChangedBlur={() => onValidate('FINALDISC_PERC')}
           />
           <NumberInput
@@ -425,7 +481,10 @@ export default function PaymentPanel({ state, dispatch, onValidate }: PaymentPan
             value={header?.finalDisc ?? null}
             locked={locked}
             invalid={finalDiscFeedback.invalid}
+            rejected={finalDiscFeedback.rejected}
             onEntry={(value) => setField('finalDisc', value)}
+            onRejected={rejectEntry('FINALDISC')}
+            onAccepted={acceptEntry('FINALDISC')}
             onChangedBlur={() => onValidate('FINALDISC')}
           />
         </div>
@@ -440,13 +499,13 @@ export default function PaymentPanel({ state, dispatch, onValidate }: PaymentPan
             id={ids.subPayType}
             value={header?.subPayType}
             invalid={subPayTypeFeedback.invalid}
-            width={METHOD_CODE_WIDTH}
+            sizeClass={METHOD_CODE_CLASS}
           />
           <ReadOnlyText
             id={ids.subPayTypeName}
             ariaLabel="Method 1 name"
             value={names.SUB_PAYTYPE_NAME}
-            width={METHOD_FILL_WIDTH}
+            sizeClass={METHOD_FILL_CLASS}
           />
           <button
             type="button"
@@ -463,8 +522,11 @@ export default function PaymentPanel({ state, dispatch, onValidate }: PaymentPan
             value={header?.amount1 ?? null}
             locked={locked}
             invalid={amount1Feedback.invalid}
-            width={METHOD_FILL_WIDTH}
+            rejected={amount1Feedback.rejected}
+            sizeClass={METHOD_FILL_CLASS}
             onEntry={(value) => setField('amount1', value)}
+            onRejected={rejectEntry('AMOUNT_1')}
+            onAccepted={acceptEntry('AMOUNT_1')}
             onChangedBlur={() => onValidate('AMOUNT_1')}
           />
         </div>
@@ -479,13 +541,13 @@ export default function PaymentPanel({ state, dispatch, onValidate }: PaymentPan
             id={ids.subPayType2}
             value={header?.subPayType2}
             invalid={subPayType2Feedback.invalid}
-            width={METHOD_CODE_WIDTH}
+            sizeClass={METHOD_CODE_CLASS}
           />
           <ReadOnlyText
             id={ids.subPayType2Name}
             ariaLabel="Method 2 name"
             value={names.SUB_PAYTYPE2_NAME}
-            width={METHOD_FILL_WIDTH}
+            sizeClass={METHOD_FILL_CLASS}
           />
           <button
             type="button"
@@ -502,8 +564,11 @@ export default function PaymentPanel({ state, dispatch, onValidate }: PaymentPan
             value={header?.amount2 ?? null}
             locked={locked}
             invalid={amount2Feedback.invalid}
-            width={METHOD_FILL_WIDTH}
+            rejected={amount2Feedback.rejected}
+            sizeClass={METHOD_FILL_CLASS}
             onEntry={(value) => setField('amount2', value)}
+            onRejected={rejectEntry('AMOUNT_2')}
+            onAccepted={acceptEntry('AMOUNT_2')}
             onChangedBlur={() => onValidate('AMOUNT_2')}
           />
         </div>
@@ -518,7 +583,10 @@ export default function PaymentPanel({ state, dispatch, onValidate }: PaymentPan
           value={header?.cashPayed ?? null}
           locked={locked}
           invalid={cashPayedFeedback.invalid}
+          rejected={cashPayedFeedback.rejected}
           onEntry={(value) => setField('cashPayed', value)}
+          onRejected={rejectEntry('CASH_PAYED')}
+          onAccepted={acceptEntry('CASH_PAYED')}
         />
         <Feedback feedback={cashPayedFeedback} locked={locked} dispatch={dispatch} />
       </div>

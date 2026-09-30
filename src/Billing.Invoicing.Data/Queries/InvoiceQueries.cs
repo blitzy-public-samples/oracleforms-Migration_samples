@@ -12,7 +12,7 @@ namespace Billing.Invoicing.Data.Queries;
 /// <summary>Read-only queries over saved invoices, selected request rows, claim preloads and create requests. UNVERIFIED against Oracle.</summary>
 public sealed class InvoiceQueries : IInvoiceQueries
 {
-    /// <summary>Saved invoice header with its persisted display columns and the T010 display lookups; binds :invNo and :rowType.</summary>
+    /// <summary>Saved invoice header with its persisted display columns and the T010 display lookups, in the T_INV block's INV_NO order; binds :invNo and :rowType.</summary>
     public const string GetInvoiceSql =
         "SELECT t.INV_NO, t.PATIENTNO, t.INVDATE, t.INVTYPEID, t.PAYTYPE, t.SUB_PAYTYPE, t.SUB_PAYTYPE2, t.CLINICID, t.DOCID, t.CURR_CODE, "
         + "t.PRE_AUTHORIZATION, t.CLAIM_NO, t.CLAIM_FLAG, t.NOTE_NO, t.FINALDISC_PERC, t.FINALDISC, t.AMOUNT_1, t.AMOUNT_2, t.ADD_TO_LIST, "
@@ -36,7 +36,8 @@ public sealed class InvoiceQueries : IInvoiceQueries
         + "(SELECT CASE WHEN COUNT(*) = 1 THEN MAX(g.COMP_NAME) END FROM COMPANYS g WHERE g.COMP_CODE IN (SELECT y.XGROUP FROM COMPANYS y WHERE y.COMP_CODE = t.SUB_COMP_CODE)) AS G_NAME, "
         + "(SELECT CASE WHEN COUNT(*) = 1 THEN MAX(x.CARD_NAME) END FROM CASH_CARD_DISC x WHERE x.CARD_ID = t.CARD_ID) AS CARD_NAME "
         + "FROM T_INV t "
-        + "WHERE (t.INVTYPEID <> 8 and t.INVTYPEID <> 9) and t.PHARMACY_INV_NO is null AND t.INV_NO = :invNo AND (:rowType IS NULL OR t.ROW_TYPE = :rowType)";
+        + "WHERE (t.INVTYPEID <> 8 and t.INVTYPEID <> 9) and t.PHARMACY_INV_NO is null AND t.INV_NO = :invNo AND (:rowType IS NULL OR t.ROW_TYPE = :rowType) "
+        + "ORDER BY t.INV_NO";
 
     /// <summary>Lines of a saved invoice in D_INV_ROW_ID order; binds :invNo.</summary>
     public const string GetInvoiceLinesSql =
@@ -77,14 +78,20 @@ public sealed class InvoiceQueries : IInvoiceQueries
         + "WHERE PATIENTNO = :patientNo AND D_INV_ROW_ID IS NULL AND SELECT_TO_INV = 1 AND VISIT_UNIQUE = :visitUnique "
         + "AND DECODE(PAY_TYPE,'Cash',1,'Credit',2) = :payType";
 
-    /// <summary>Header fields, price list, deductible and card id of a claim's first invoice; binds :claimNo.</summary>
+    /// <summary>Header and insurance card fields, price list, deductible and card id of a claim's first invoice; binds :claimNo.</summary>
     public const string GetClaimPreloadSql =
-        "SELECT CLAIM_NO, PATIENTNO, CLINICID, COMP_CODE, SUB_COMP_CODE, CLASS_CODE, PAYTYPE, LIST_ID, MAX_DEDUCTABLE, CARD_ID FROM T_INV "
+        "SELECT CLAIM_NO, PATIENTNO, CLINICID, COMP_CODE, SUB_COMP_CODE, CLASS_CODE, PAYTYPE, LIST_ID, MAX_DEDUCTABLE, CARD_ID, "
+        + "INS_NUMBER, CARD_END, PAT_POLICY_NO FROM T_INV "
         + "WHERE INV_NO = (SELECT MIN(INV_NO) FROM T_INV WHERE CLAIM_NO = :claimNo AND :claimNo NOT IN ('1','2'))";
 
-    /// <summary>Invoice number, patient and completion time recorded for a create request id; binds :requestId.</summary>
+    /// <summary>Invoice number, patient and completion time recorded for a create request id, with the recorded invoice's date, company, sub-company and whether its clinic has an age limit; binds :requestId.</summary>
     public const string GetCreateRequestSql =
-        "SELECT INV_NO, PATIENTNO, COMPLETED_AT FROM BIL_INVOICE_CREATE_REQUEST WHERE REQUEST_ID = :requestId";
+        "SELECT r.INV_NO, r.PATIENTNO, r.COMPLETED_AT, t.INVDATE, t.COMP_CODE, t.SUB_COMP_CODE, "
+        + "CASE WHEN c.AGE_MIN IS NOT NULL OR c.AGE_MAX IS NOT NULL THEN 1 ELSE 0 END AS CLINIC_AGE_LIMIT "
+        + "FROM BIL_INVOICE_CREATE_REQUEST r "
+        + "LEFT JOIN T_INV t ON t.INV_NO = r.INV_NO "
+        + "LEFT JOIN CLINICS c ON c.CLINICID = t.CLINICID "
+        + "WHERE r.REQUEST_ID = :requestId";
 
     private const string LineDisplayKey = "LINE_DISPLAY";
     private const string OfferNameKey = "OFFER_NAME";
@@ -96,9 +103,11 @@ public sealed class InvoiceQueries : IInvoiceQueries
     /// <summary>Stores the data-layer settings; opens nothing.</summary>
     /// <param name="options">Connection string and command settings.</param>
     /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><see cref="InvoicingDataOptions.CommandTimeoutSeconds"/> is below 1.</exception>
     public InvoiceQueries(InvoicingDataOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
+        options.EnsureCommandTimeout(nameof(options));
 
         _options = options;
     }
@@ -152,6 +161,8 @@ public sealed class InvoiceQueries : IInvoiceQueries
     /// <param name="cancellationToken">Cancels the connection open and the read.</param>
     /// <returns>Every matching row with its request row id, service id and approval fields.</returns>
     /// <exception cref="ArgumentException"><paramref name="patientNo"/> or <paramref name="visitUnique"/> is null, empty or white space.</exception>
+    /// <exception cref="InvalidCastException">A selected row has no PAT_SERV_REQ_ROW_ID or SERVICEID, or a non-integral number.</exception>
+    /// <exception cref="OverflowException">A selected row holds a number outside the Int32 or Int64 range.</exception>
     public async Task<IReadOnlyList<(long PatServReqRowId, string ServiceId, int? ReqAStatus, int? ReqNeedA, string? ApprovRefNo)>> GetSelectedRequestRows(
         string patientNo,
         string visitUnique,
@@ -170,7 +181,7 @@ public sealed class InvoiceQueries : IInvoiceQueries
     /// <summary>Header preload from the claim's first invoice with its price list, deductible and card id, or null.</summary>
     /// <param name="claimNo">Claim number; '1' and '2' never match.</param>
     /// <param name="cancellationToken">Cancels the connection open and the read.</param>
-    /// <returns>A header carrying claim, patient, clinic, company, sub-company, class and pay type, with LIST_ID, MAX_DEDUCTABLE and CARD_ID; or null.</returns>
+    /// <returns>A header carrying claim, patient, clinic, company, sub-company, class, pay type, insurance number, card end and policy number, with LIST_ID, MAX_DEDUCTABLE and CARD_ID; or null.</returns>
     /// <exception cref="ArgumentException"><paramref name="claimNo"/> is null, empty or white space.</exception>
     public async Task<(InvoiceHeaderDraft Header, decimal? ListId, decimal? MaxDeductable, int? CardId)?> GetClaimPreload(
         string claimNo,
@@ -183,12 +194,12 @@ public sealed class InvoiceQueries : IInvoiceQueries
         return await ReadClaimPreload(connection, claimNo, _options.CommandTimeoutSeconds, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>Recorded create request for a request id, or null when none exists.</summary>
+    /// <summary>Recorded create request for a request id with its invoice's INVDATE, COMP_CODE, SUB_COMP_CODE and clinic age-limit flag, or null when none exists.</summary>
     /// <param name="requestId">Idempotency request id of the draft.</param>
     /// <param name="cancellationToken">Cancels the connection open and the read.</param>
-    /// <returns>The recorded invoice number, patient and completion time, or null.</returns>
+    /// <returns>The recorded invoice number, patient and completion time with the invoice's date, company, sub-company and clinic age-limit flag, or null; the invoice fields are null and the flag false while no invoice row matches.</returns>
     /// <exception cref="ArgumentException"><paramref name="requestId"/> is null, empty or white space.</exception>
-    public async Task<(long? InvNo, string? PatientNo, DateTimeOffset? CompletedAt)?> GetCreateRequest(
+    public async Task<(long? InvNo, string? PatientNo, DateTimeOffset? CompletedAt, DateTime? InvDate, string? CompCode, string? SubCompCode, bool ClinicHasAgeLimit)?> GetCreateRequest(
         string requestId,
         CancellationToken cancellationToken = default)
     {
@@ -315,13 +326,16 @@ public sealed class InvoiceQueries : IInvoiceQueries
             SubCompCode = row.SUB_COMP_CODE,
             ClassCode = ToInt32(row.CLASS_CODE),
             PayType = ToInt32(row.PAYTYPE),
+            InsNumber = row.INS_NUMBER,
+            CardEnd = row.CARD_END,
+            PatPolicyNo = row.PAT_POLICY_NO,
         };
 
         return (header, row.LIST_ID, row.MAX_DEDUCTABLE, ToInt32(row.CARD_ID));
     }
 
-    /// <summary>Reads the create-request row of a request id.</summary>
-    private static async Task<(long? InvNo, string? PatientNo, DateTimeOffset? CompletedAt)?> ReadCreateRequest(
+    /// <summary>Reads the create-request row of a request id with its invoice and clinic columns.</summary>
+    private static async Task<(long? InvNo, string? PatientNo, DateTimeOffset? CompletedAt, DateTime? InvDate, string? CompCode, string? SubCompCode, bool ClinicHasAgeLimit)?> ReadCreateRequest(
         DbConnection connection,
         string requestId,
         int commandTimeoutSeconds,
@@ -337,7 +351,14 @@ public sealed class InvoiceQueries : IInvoiceQueries
             return null;
         }
 
-        return (ToInt64(row.INV_NO), row.PATIENTNO, ToCompletedAt(row.COMPLETED_AT));
+        return (
+            ToInt64(row.INV_NO),
+            row.PATIENTNO,
+            ToCompletedAt(row.COMPLETED_AT),
+            row.INVDATE,
+            row.COMP_CODE,
+            row.SUB_COMP_CODE,
+            ToInt32(row.CLINIC_AGE_LIMIT) == 1);
     }
 
 
@@ -508,10 +529,11 @@ public sealed class InvoiceQueries : IInvoiceQueries
         };
 
     /// <summary>Selected request row as the port tuple.</summary>
-    /// <exception cref="InvalidCastException">The row has no PAT_SERV_REQ_ROW_ID.</exception>
+    /// <exception cref="InvalidCastException">The row has no PAT_SERV_REQ_ROW_ID or SERVICEID, or a non-integral number.</exception>
+    /// <exception cref="OverflowException">The row holds a number outside the Int32 or Int64 range.</exception>
     private static (long PatServReqRowId, string ServiceId, int? ReqAStatus, int? ReqNeedA, string? ApprovRefNo) ToSelectedRequestRow(RequestRow row) =>
         (ToInt64(row.PAT_SERV_REQ_ROW_ID) ?? throw new InvalidCastException("Column PAT_SERV_REQ_ROW_ID of V_SERVICES_REQ holds null."),
-         row.SERVICEID ?? string.Empty,
+         string.IsNullOrEmpty(row.SERVICEID) ? throw new InvalidCastException("Column SERVICEID of V_SERVICES_REQ holds null.") : row.SERVICEID,
          ToInt32(row.REQ_A_STATUS),
          ToInt32(row.REQ_NEED_A),
          row.APPROV_REF_NO);
@@ -733,6 +755,9 @@ public sealed class InvoiceQueries : IInvoiceQueries
         public decimal? LIST_ID { get; set; }
         public decimal? MAX_DEDUCTABLE { get; set; }
         public decimal? CARD_ID { get; set; }
+        public string? INS_NUMBER { get; set; }
+        public DateTime? CARD_END { get; set; }
+        public string? PAT_POLICY_NO { get; set; }
     }
 
     /// <summary>Row of <see cref="GetCreateRequestSql"/>.</summary>
@@ -741,6 +766,10 @@ public sealed class InvoiceQueries : IInvoiceQueries
         public decimal? INV_NO { get; set; }
         public string? PATIENTNO { get; set; }
         public object? COMPLETED_AT { get; set; }
+        public DateTime? INVDATE { get; set; }
+        public string? COMP_CODE { get; set; }
+        public string? SUB_COMP_CODE { get; set; }
+        public decimal? CLINIC_AGE_LIMIT { get; set; }
     }
 }
 

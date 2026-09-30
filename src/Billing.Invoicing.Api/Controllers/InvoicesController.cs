@@ -1,3 +1,4 @@
+using System.Globalization;
 using Billing.Invoicing.Api.Context;
 using Billing.Invoicing.Api.Contracts;
 using Billing.Invoicing.Api.Errors;
@@ -12,6 +13,11 @@ namespace Billing.Invoicing.Api.Controllers;
 [Route("api/invoices")]
 public sealed class InvoicesController : ControllerBase
 {
+    private const string ProblemJson = "application/problem+json";
+    private const string InvNoItem = "INV_NO";
+    private const string InvalidInvoiceNumberText = "Invoice number must be a positive whole number.";
+    private const string NoLastInvoiceText = "No invoice exists for the operator's information centre.";
+
     private static readonly string[] OperatorHeaders =
     [
         "X-His-User-No",
@@ -20,14 +26,6 @@ public sealed class InvoicesController : ControllerBase
         "X-His-Machine",
         "X-His-Session-Id",
     ];
-
-    private static readonly HashSet<string> DocumentKinds = new(StringComparer.Ordinal)
-    {
-        "invoice",
-        "patient-card",
-        "barcode-sms",
-        "iqama-check",
-    };
 
     private readonly InvoiceWorkflowService _workflow;
     private readonly ProblemDetailsWriter _problems;
@@ -46,7 +44,12 @@ public sealed class InvoicesController : ControllerBase
     /// <param name="draft">Draft to calculate; nothing is saved.</param>
     /// <returns>200 with the preview, or 422 with the blocking messages.</returns>
     [HttpPost("preview")]
-    public async Task<IActionResult> Preview([FromBody] DraftDto draft)
+    [ProducesResponseType<PreviewResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status501NotImplemented, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status500InternalServerError, ProblemJson)]
+    public async Task<ActionResult<PreviewResponse>> Preview([FromBody] DraftDto draft)
     {
         if (CurrentOperator() is not { } operatorContext)
         {
@@ -66,42 +69,62 @@ public sealed class InvoicesController : ControllerBase
     /// <param name="request">Draft to save with its request id and discount-limit choice.</param>
     /// <returns>201 with the saved or replayed invoice, or 422 with the blocking messages.</returns>
     [HttpPost]
-    public async Task<IActionResult> Create([FromBody] CreateInvoiceRequest request)
+    [ProducesResponseType<CreateInvoiceResponse>(StatusCodes.Status201Created)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status501NotImplemented, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status500InternalServerError, ProblemJson)]
+    public async Task<ActionResult<CreateInvoiceResponse>> Create([FromBody] CreateInvoiceRequest request)
     {
         if (CurrentOperator() is not { } operatorContext)
         {
             return await OperatorMissing();
         }
 
-        var response = await _workflow.Create(request, operatorContext, HttpContext.RequestAborted);
-        if (HasBlocking(response.Messages))
+        var outcome = await _workflow.Create(request, operatorContext, HttpContext.RequestAborted);
+        if (outcome.Invoice is not { } invoice)
         {
-            return await Rejected(response.Messages, response.OpenItems, null);
+            return await Rejected(outcome.Messages, outcome.OpenItems, null);
         }
 
-        return Created($"/api/invoices/{response.InvNo}", response);
+        return Created($"/api/invoices/{invoice.InvNo}", invoice);
     }
 
     /// <summary>Returns a saved invoice, read-only.</summary>
-    /// <param name="invNo">Invoice number.</param>
+    /// <param name="invNo">Invoice number, a positive whole number.</param>
     /// <param name="parameters">Entry parameters supplying the local document type filter.</param>
-    /// <returns>200 with the invoice, or 404 when it is not found.</returns>
-    [HttpGet("{invNo:long}")]
-    public async Task<IActionResult> Get(long invNo, [FromQuery] InvoiceEntryParameters parameters)
+    /// <returns>200 with the invoice; 404 <c>not-found</c> when it is not found; 422 for a missing operator header or an invalid invoice number.</returns>
+    [HttpGet("{invNo}")]
+    [ProducesResponseType<InvoiceViewResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status500InternalServerError, ProblemJson)]
+    public async Task<ActionResult<InvoiceViewResponse>> Get(string invNo, [FromQuery] InvoiceEntryParameters parameters)
     {
         if (CurrentOperator() is not { } operatorContext)
         {
             return await OperatorMissing();
         }
 
-        var response = await _workflow.GetInvoice(invNo, parameters, operatorContext, HttpContext.RequestAborted);
-        return response is null ? NotFound() : Ok(response);
+        if (!TryInvoiceNumber(invNo, out var number))
+        {
+            return await InvalidInvoiceNumber();
+        }
+
+        var response = await _workflow.GetInvoice(number, parameters, operatorContext, HttpContext.RequestAborted);
+        return response is null ? await InvoiceNotFound(number) : Ok(response);
     }
 
     /// <summary>Returns the last invoice number of the operator's information centre.</summary>
-    /// <returns>200 with <c>{ "invNo": n }</c>, or 404 when the centre has no invoice.</returns>
+    /// <returns>200 with <c>{ "invNo": n }</c>; 404 <c>not-found</c> when the centre has no invoice; 422 for a missing operator header.</returns>
     [HttpGet("last")]
-    public async Task<IActionResult> Last()
+    [ProducesResponseType<LastInvoiceNoResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status500InternalServerError, ProblemJson)]
+    public async Task<ActionResult<LastInvoiceNoResponse>> Last()
     {
         if (CurrentOperator() is not { } operatorContext)
         {
@@ -109,87 +132,120 @@ public sealed class InvoicesController : ControllerBase
         }
 
         var invNo = await _workflow.GetLastInvoiceNo(operatorContext, HttpContext.RequestAborted);
-        return invNo is { } value ? Ok(new { invNo = value }) : NotFound();
+        return invNo is { } value ? Ok(new LastInvoiceNoResponse { InvNo = value }) : await NotFoundProblem(NoLastInvoiceText);
     }
 
     /// <summary>Returns the MORE-canvas details of a saved invoice.</summary>
-    /// <param name="invNo">Invoice number.</param>
-    /// <returns>200 with the details, or 404 when the invoice is not found.</returns>
-    [HttpGet("{invNo:long}/more")]
-    public async Task<IActionResult> More(long invNo)
+    /// <param name="invNo">Invoice number, a positive whole number.</param>
+    /// <returns>200 with the details; 404 <c>not-found</c> when the invoice is not found; 422 for a missing operator header or an invalid invoice number.</returns>
+    [HttpGet("{invNo}/more")]
+    [ProducesResponseType<MoreDetailsResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status500InternalServerError, ProblemJson)]
+    public async Task<ActionResult<MoreDetailsResponse>> More(string invNo)
     {
         if (CurrentOperator() is not { } operatorContext)
         {
             return await OperatorMissing();
         }
 
-        var response = await _workflow.GetMoreDetails(invNo, operatorContext, HttpContext.RequestAborted);
-        return response is null ? NotFound() : Ok(response);
+        if (!TryInvoiceNumber(invNo, out var number))
+        {
+            return await InvalidInvoiceNumber();
+        }
+
+        var response = await _workflow.GetMoreDetails(number, operatorContext, HttpContext.RequestAborted);
+        return response is null ? await InvoiceNotFound(number) : Ok(response);
     }
 
     /// <summary>Sends the invoice SMS.</summary>
-    /// <param name="invNo">Invoice number.</param>
-    /// <returns>204 when the SMS is sent.</returns>
-    [HttpPost("{invNo:long}/sms")]
-    public async Task<IActionResult> Sms(long invNo)
+    /// <param name="invNo">Invoice number, a positive whole number.</param>
+    /// <returns>501 <c>open-item</c> OI-12 with OI-45 in this build; 422 for a missing operator header or an invalid invoice number.</returns>
+    [HttpPost("{invNo}/sms")]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status501NotImplemented, ProblemJson)]
+    public async Task<ActionResult> Sms(string invNo)
     {
         if (CurrentOperator() is not { } operatorContext)
         {
             return await OperatorMissing();
         }
 
-        await _workflow.SendSms(invNo, operatorContext, HttpContext.RequestAborted);
+        if (!TryInvoiceNumber(invNo, out var number))
+        {
+            return await InvalidInvoiceNumber();
+        }
+
+        await _workflow.SendSms(number, operatorContext, HttpContext.RequestAborted);
         return NoContent();
     }
 
     /// <summary>Builds a legacy invoice document.</summary>
-    /// <param name="invNo">Invoice number.</param>
+    /// <param name="invNo">Invoice number, a positive whole number.</param>
     /// <param name="kind">Document kind: invoice, patient-card, barcode-sms or iqama-check.</param>
-    /// <returns>204 when the document is built, or 404 for an unknown kind.</returns>
-    [HttpPost("{invNo:long}/documents/{kind}")]
-    public async Task<IActionResult> Documents(long invNo, string kind)
+    /// <returns>501 <c>open-item</c> in this build: OI-11 with OI-45, OI-46 and OI-49 for invoice, OI-47 for patient-card, OI-47 with OI-26 for barcode-sms, OI-48 for iqama-check; 422 for a missing operator header, an invalid invoice number or an unknown kind.</returns>
+    [HttpPost("{invNo}/documents/{kind}")]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status501NotImplemented, ProblemJson)]
+    public async Task<ActionResult> Documents(string invNo, string kind)
     {
         if (CurrentOperator() is not { } operatorContext)
         {
             return await OperatorMissing();
         }
 
-        if (!DocumentKinds.Contains(kind))
+        if (!TryInvoiceNumber(invNo, out var number))
         {
-            return NotFound();
+            return await InvalidInvoiceNumber();
         }
 
-        await _workflow.BuildDocument(invNo, kind, operatorContext, HttpContext.RequestAborted);
+        await _workflow.BuildDocument(number, kind, operatorContext, HttpContext.RequestAborted);
         return NoContent();
     }
 
     /// <summary>Updates a saved invoice.</summary>
-    /// <param name="invNo">Invoice number.</param>
-    /// <returns>204 when the invoice is updated.</returns>
-    [HttpPatch("{invNo:long}")]
-    public async Task<IActionResult> Update(long invNo)
+    /// <param name="invNo">Invoice number, a positive whole number.</param>
+    /// <returns>501 <c>open-item</c> OI-56 in this build; 422 for a missing operator header or an invalid invoice number.</returns>
+    [HttpPatch("{invNo}")]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status501NotImplemented, ProblemJson)]
+    public async Task<ActionResult> Update(string invNo)
     {
         if (CurrentOperator() is not { } operatorContext)
         {
             return await OperatorMissing();
         }
 
-        await _workflow.Update(invNo, operatorContext, HttpContext.RequestAborted);
+        if (!TryInvoiceNumber(invNo, out var number))
+        {
+            return await InvalidInvoiceNumber();
+        }
+
+        await _workflow.Update(number, operatorContext, HttpContext.RequestAborted);
         return NoContent();
     }
 
     /// <summary>Runs the store transfer of a saved invoice.</summary>
-    /// <param name="invNo">Invoice number.</param>
-    /// <returns>204 when the transfer is done.</returns>
-    [HttpPost("{invNo:long}/stock-transfer")]
-    public async Task<IActionResult> StockTransfer(long invNo)
+    /// <param name="invNo">Invoice number, a positive whole number.</param>
+    /// <returns>501 <c>open-item</c> OI-10 with OI-44 in this build; 422 for a missing operator header or an invalid invoice number.</returns>
+    [HttpPost("{invNo}/stock-transfer")]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status501NotImplemented, ProblemJson)]
+    public async Task<ActionResult> StockTransfer(string invNo)
     {
         if (CurrentOperator() is not { } operatorContext)
         {
             return await OperatorMissing();
         }
 
-        await _workflow.TransferStock(invNo, operatorContext, HttpContext.RequestAborted);
+        if (!TryInvoiceNumber(invNo, out var number))
+        {
+            return await InvalidInvoiceNumber();
+        }
+
+        await _workflow.TransferStock(number, operatorContext, HttpContext.RequestAborted);
         return NoContent();
     }
 
@@ -198,7 +254,7 @@ public sealed class InvoicesController : ControllerBase
         HttpContext.Items.TryGetValue(OperatorContextMiddleware.ItemKey, out var value) ? value as OperatorContext : null;
 
     /// <summary>Writes the 422 <c>operator-context-missing</c> body naming every operator header.</summary>
-    private async Task<IActionResult> OperatorMissing()
+    private async Task<ActionResult> OperatorMissing()
     {
         await _problems.WriteAsync(HttpContext, OperatorHeaders);
         return new EmptyResult();
@@ -208,8 +264,35 @@ public sealed class InvoicesController : ControllerBase
     private static bool HasBlocking(IReadOnlyList<MessageDto>? messages) =>
         messages?.Any(message => message.Severity == ValidationMessage.Blocking) == true;
 
+    /// <summary>Parses a route invoice number that is a positive whole number of ASCII digits.</summary>
+    /// <param name="value">Route value.</param>
+    /// <param name="number">The parsed invoice number; zero when the value is invalid.</param>
+    /// <returns>True when the value is a positive whole number.</returns>
+    private static bool TryInvoiceNumber(string? value, out long number) =>
+        long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out number) && number > 0;
+
+    /// <summary>Writes the 404 <c>not-found</c> body naming the invoice number.</summary>
+    /// <param name="number">Invoice number that was not found.</param>
+    private Task<ActionResult> InvoiceNotFound(long number) =>
+        NotFoundProblem(string.Create(CultureInfo.InvariantCulture, $"Invoice {number} was not found."));
+
+    /// <summary>Writes the 404 <c>not-found</c> body with the message.</summary>
+    /// <param name="message">Text naming what was not found.</param>
+    private async Task<ActionResult> NotFoundProblem(string message)
+    {
+        await _problems.WriteNotFoundAsync(HttpContext, message);
+        return new EmptyResult();
+    }
+
+    /// <summary>Writes the 422 <c>field-validation</c> body naming <c>INV_NO</c>.</summary>
+    private Task<ActionResult> InvalidInvoiceNumber() =>
+        Rejected(
+            [new MessageDto { Field = InvNoItem, Text = InvalidInvoiceNumberText, Severity = ValidationMessage.Blocking, Rule = null }],
+            [],
+            null);
+
     /// <summary>Writes the 422 <c>field-validation</c> body with the messages, open items and adjusted values.</summary>
-    private async Task<IActionResult> Rejected(
+    private async Task<ActionResult> Rejected(
         IReadOnlyList<MessageDto> messages,
         IReadOnlyList<string>? openItems,
         IReadOnlyDictionary<string, object?>? adjusted)

@@ -11,6 +11,7 @@ const OPEN_ITEM_TITLES: Record<string, string> = {
   'OI-31': 'Package consumption',
   'OI-32': 'Service admission sub-rules (OKA / CHK_ADV_CLASS)',
   'OI-33': 'Not saved in this build',
+  'OI-42': 'Reservation time display (GET_HTFN2)',
   'OI-44': 'Store-transfer commit (SILENT_COMMET00)',
   'OI-45': 'Cash invoice report (inv_small_cash.jsp)',
   'OI-46': 'Detailed invoice report (inv_form2.jsp)',

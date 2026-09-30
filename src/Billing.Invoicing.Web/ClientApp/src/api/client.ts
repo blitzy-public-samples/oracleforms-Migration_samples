@@ -184,6 +184,9 @@ function networkError(error: unknown): ApiError {
   });
 }
 
+/** ApiError for a successful response that carries no body. */
+class EmptyResponseError extends ApiError {}
+
 function operatorHeaders(withBody: boolean): Record<string, string> {
   const headers: Record<string, string> = {
     Accept: 'application/json, application/problem+json',
@@ -210,10 +213,13 @@ function parseErrorBody(text: string, contentType: string | null): unknown {
   }
 }
 
-async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
+async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   const init: RequestInit = { method, headers: operatorHeaders(body !== undefined) };
   if (body !== undefined) {
     init.body = JSON.stringify(body);
+  }
+  if (signal !== undefined) {
+    init.signal = signal;
   }
 
   let response: Response;
@@ -237,7 +243,12 @@ async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown):
     throw ApiError.fromResponse(response.status, parseErrorBody(text, response.headers.get('Content-Type')));
   }
   if (text.trim() === '') {
-    return undefined as T;
+    throw new EmptyResponseError({
+      status: response.status,
+      type: 'http-error',
+      title: 'Empty response',
+      message: `The response to ${method} ${path} has no body.`,
+    });
   }
   try {
     return JSON.parse(text) as T;
@@ -248,6 +259,17 @@ async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown):
       title: 'Invalid response',
       message: `The response to ${method} ${path} is not JSON.`,
     });
+  }
+}
+
+/** Sends a request whose success has no body; resolves once the call succeeds, with or without a body. */
+async function requestNoContent(method: 'POST', path: string): Promise<void> {
+  try {
+    await request<unknown>(method, path);
+  } catch (error) {
+    if (!(error instanceof EmptyResponseError)) {
+      throw error;
+    }
   }
 }
 
@@ -320,17 +342,17 @@ export async function getMoreDetails(invNo: number): Promise<MoreDetailsResponse
 
 /** POST /api/invoices/{invNo}/sms. */
 export async function sendSms(invNo: number): Promise<void> {
-  await request<void>('POST', `/api/invoices/${segment(invNo)}/sms`);
+  await requestNoContent('POST', `/api/invoices/${segment(invNo)}/sms`);
 }
 
 /** POST /api/invoices/{invNo}/documents/{kind}. */
 export async function buildDocument(invNo: number, kind: DocumentKind): Promise<void> {
-  await request<void>('POST', `/api/invoices/${segment(invNo)}/documents/${segment(kind)}`);
+  await requestNoContent('POST', `/api/invoices/${segment(invNo)}/documents/${segment(kind)}`);
 }
 
 /** POST /api/invoices/{invNo}/stock-transfer. */
 export async function transferStock(invNo: number): Promise<void> {
-  await request<void>('POST', `/api/invoices/${segment(invNo)}/stock-transfer`);
+  await requestNoContent('POST', `/api/invoices/${segment(invNo)}/stock-transfer`);
 }
 
 /** POST /api/imports/requests: imports the visit's selected service requests as draft lines. */
@@ -353,8 +375,8 @@ export async function importBundledOffer(req: BundledOfferRequest): Promise<Impo
   return request<ImportResponse>('POST', '/api/imports/bundled-offer', req);
 }
 
-/** GET /api/lov/{name} with the non-empty item binds. */
-export async function getLov(name: string, binds: LovBinds = {}): Promise<LovResponse> {
+/** GET /api/lov/{name} with the non-empty item binds; `signal` aborts the request. */
+export async function getLov(name: string, binds: LovBinds = {}, signal?: AbortSignal): Promise<LovResponse> {
   const query = new URLSearchParams();
   appendQuery(query, {
     compCode: binds.compCode,
@@ -364,7 +386,7 @@ export async function getLov(name: string, binds: LovBinds = {}): Promise<LovRes
     payType: binds.payType,
     draftDate: binds.draftDate,
   });
-  return request<LovResponse>('GET', withQuery(`/api/lov/${segment(name)}`, query));
+  return request<LovResponse>('GET', withQuery(`/api/lov/${segment(name)}`, query), undefined, signal);
 }
 
 /** GET /api/lookups/invoice-types. */

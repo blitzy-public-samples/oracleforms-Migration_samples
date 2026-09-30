@@ -1,5 +1,8 @@
 /** JSON shapes sent to and received from the Billing.Invoicing.Api host; dates are ISO 8601 strings. */
 
+/** Decimal of the Api contract: a number as the Api returns it, or decimal text as the operator entered it, which the Api reads unchanged. */
+export type DecimalValue = number | string;
+
 /** Invoice header draft: the T_INV fields of BIL_INVOICE_ENGINE.t_header_input in spec order, then the Form-only header items. */
 export interface InvoiceHeaderDraft {
   /** T_INV.PATIENTNO. */
@@ -29,13 +32,13 @@ export interface InvoiceHeaderDraft {
   /** T_INV.NOTE_NO. */
   noteNo: string | null;
   /** T_INV.FINALDISC_PERC. */
-  finalDiscPerc: number | null;
+  finalDiscPerc: DecimalValue | null;
   /** T_INV.FINALDISC. */
-  finalDisc: number | null;
+  finalDisc: DecimalValue | null;
   /** T_INV.AMOUNT_1. */
-  amount1: number | null;
+  amount1: DecimalValue | null;
   /** T_INV.AMOUNT_2. */
-  amount2: number | null;
+  amount2: DecimalValue | null;
   /** T_INV.ADD_TO_LIST. */
   addToList: number | null;
   /** T_INV.USER_NO. */
@@ -55,7 +58,7 @@ export interface InvoiceHeaderDraft {
   /** T_INV.DISC_T: 1 percent, 0 value. */
   discT: number | null;
   /** T_INV.CASH_PAYED. */
-  cashPayed: number | null;
+  cashPayed: DecimalValue | null;
   /** T_INV.COMP_CODE; '0' is the cash company. */
   compCode: string | null;
   /** T_INV.SUB_COMP_CODE. */
@@ -68,6 +71,12 @@ export interface InvoiceHeaderDraft {
   docId1?: number | null;
   /** T_INV.SEQ_NO. Display only; not saved (OI-33). Absent from a DraftDto header. */
   seqNo?: number | null;
+  /** T_INV.INS_NUMBER, copied from the claim's first invoice; not saved from the draft. */
+  insNumber: string | null;
+  /** T_INV.CARD_END, copied from the claim's first invoice; not saved from the draft. */
+  cardEnd: string | null;
+  /** T_INV.PAT_POLICY_NO, copied from the claim's first invoice; not saved from the draft. */
+  patPolicyNo: string | null;
 }
 
 /** Invoice line draft: the D_INV fields of BIL_INVOICE_ENGINE.t_line_input in spec order, then the client and display items. */
@@ -75,17 +84,17 @@ export interface InvoiceLineDraft {
   /** D_INV.SERVICEID. */
   serviceId: string | null;
   /** D_INV.QTY. */
-  qty: number | null;
+  qty: DecimalValue | null;
   /** Operator- or import-supplied price override; t_line_input.price_override. */
-  priceOverride: number | null;
+  priceOverride: DecimalValue | null;
   /** 'Y' or 'N'; t_line_input.use_price_override. */
   usePriceOverride: string | null;
   /** D_INV.LDISCT: 'N' none, 'R' rate, 'V' value. */
   discountType: string | null;
   /** D_INV.DISC, line discount rate. */
-  disc: number | null;
+  disc: DecimalValue | null;
   /** D_INV.MY_DISC, line discount value. */
-  myDisc: number | null;
+  myDisc: DecimalValue | null;
   /** D_INV.TEETH_NO. */
   teethNo: string | null;
   /** D_INV.TOOTH_SURFACE. */
@@ -469,6 +478,8 @@ export interface DraftDto {
   requestId: string;
   /** Database time read when the draft was created. */
   draftDate: string;
+  /** Seal of the request id and draft date issued with the draft. */
+  draftSeal: string | null;
   /** The T_INV header. */
   header: InvoiceHeaderDraft;
   /** The D_INV lines in grid order; a line's zero-based position is its line index. */
@@ -547,7 +558,7 @@ export interface BundledOfferRequest {
   /** Offer chosen in the OFFERS list (OFERID). */
   offerId: number;
   /** Number of bundles to load. */
-  bundleQty: number;
+  bundleQty: DecimalValue;
 }
 
 /** Upper-case legacy item names used as keys of adjusted values. */
@@ -588,6 +599,16 @@ export interface ValidateDraftResponse {
   openItems: string[];
   /** Automatic visit line chosen for a doctor validation; null otherwise. */
   visitLine: VisitLineChoice | null;
+  /** For a line target, whether an operator-entered PRICE is accepted on the validated line; null otherwise. */
+  priceEditable: boolean | null;
+  /** Service id of the validated line that priceEditable was judged on; null when priceEditable is null. */
+  priceJudgedServiceId: string | null;
+  /** Patient number of the request that priceEditable was judged on; null when priceEditable is null. */
+  priceJudgedPatientNo: string | null;
+  /** Company code of the request that priceEditable was judged on; null when priceEditable is null. */
+  priceJudgedCompCode: string | null;
+  /** Coverage of the validated patient for a PATIENTNO target with a patient number; null otherwise. */
+  coverage: CoverageResponse | null;
 }
 
 /** Response of GET /api/patients/{patientNo}/coverage. */
@@ -616,6 +637,12 @@ export interface PreviewResponse {
   messages: MessageDto[];
   /** Advisory open-item ids. */
   openItems: string[];
+  /** Client ids of the draft lines on which an operator-entered PRICE is accepted. */
+  priceEditableClientIds: string[];
+  /** Patient number of the request the PRICE editability was judged on. */
+  priceJudgedPatientNo: string | null;
+  /** Company code of the request the PRICE editability was judged on. */
+  priceJudgedCompCode: string | null;
 }
 
 /** Posting-stage flags 'Y' or 'N' of a saved invoice. */
@@ -635,7 +662,7 @@ export interface PostingFlags {
 /** Response of POST /api/invoices. */
 export interface CreateInvoiceResponse {
   /** Invoice number saved or returned by a replay (INV_NO). */
-  invNo: number | null;
+  invNo: number;
   /** Package result message. */
   message: string | null;
   /** Posting-stage flags. */
@@ -719,6 +746,8 @@ export interface LovResponse {
   viewOnly: boolean;
   /** Messages returned with the list. */
   messages: MessageDto[];
+  /** Advisory open-item ids that apply to the list. */
+  openItems: string[];
 }
 
 /** One entry of GET /api/lookups/invoice-types or /api/lookups/currencies. */
@@ -778,7 +807,12 @@ export type ProblemType =
   | 'oracle-error';
 
 /** Oracle error catalogue kinds carried by a problem body. */
-export type ProblemKind = 'RequestLinesStale' | 'DefinitionStale' | 'IdempotencyConflict' | 'OperatorContextMissing';
+export type ProblemKind =
+  | 'RequestLinesStale'
+  | 'DefinitionStale'
+  | 'IdempotencyConflict'
+  | 'OperatorContextMissing'
+  | 'UnexpandedPackageParent';
 
 /** An application/problem+json error body. */
 export interface ProblemPayload {

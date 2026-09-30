@@ -71,6 +71,9 @@ public interface ILookupQueries
     /// <summary>Service flags on a price list, or null when the service is not on it.</summary>
     Task<ServiceProfile?> GetServiceProfile(string serviceId, decimal listId, CancellationToken cancellationToken = default);
 
+    /// <summary>Service flags by service id on a price list; ids not on it are absent.</summary>
+    Task<IReadOnlyDictionary<string, ServiceProfile>> GetServiceProfiles(IReadOnlyCollection<string> serviceIds, decimal listId, CancellationToken cancellationToken = default);
+
     /// <summary>Service flags of every component of a package on a price list.</summary>
     Task<IReadOnlyList<ServiceProfile>> GetPackageComponentFlags(string packageServiceId, decimal listId, CancellationToken cancellationToken = default);
 
@@ -127,13 +130,19 @@ public interface IInvoiceQueries
     /// <summary>Header preload from the claim's first invoice with its price list, deductible and card id, or null.</summary>
     Task<(InvoiceHeaderDraft Header, decimal? ListId, decimal? MaxDeductable, int? CardId)?> GetClaimPreload(string claimNo, CancellationToken cancellationToken = default);
 
-    /// <summary>Recorded create request for a request id, or null when none exists.</summary>
-    Task<(long? InvNo, string? PatientNo, DateTimeOffset? CompletedAt)?> GetCreateRequest(string requestId, CancellationToken cancellationToken = default);
+    /// <summary>Recorded create request for a request id with its invoice's INVDATE, COMP_CODE, SUB_COMP_CODE and clinic age-limit flag, or null when none exists.</summary>
+    Task<(long? InvNo, string? PatientNo, DateTimeOffset? CompletedAt, DateTime? InvDate, string? CompCode, string? SubCompCode, bool ClinicHasAgeLimit)?> GetCreateRequest(string requestId, CancellationToken cancellationToken = default);
 }
 
 /// <summary>Calls to BIL_INVOICE_API operations.</summary>
 public interface IBilInvoiceApiGateway
 {
+    /// <summary>Most engine lines, rebuilt bundle parents included, that a create accepts and a preview returns.</summary>
+    int MaxDraftLines { get; }
+
+    /// <summary>Seal of the request id and draft date under the configured draft-seal key; equal on every instance sharing that key.</summary>
+    string SealDraftDate(string requestId, DateTime draftDate);
+
     /// <summary>Expands bundled offers and calculates the editable invoice preview.</summary>
     /// <param name="amount1Auto">Whether the package fills amount 1 automatically.</param>
     Task<(IReadOnlyList<EditablePreviewLine> Lines, PreviewTotalsRow Totals)> CalculatePreview(IOracleSession session, InvoiceHeaderDraft header, IReadOnlyList<InvoiceLineDraft> lines, OperatorContext operatorContext, bool amount1Auto, CancellationToken cancellationToken = default);

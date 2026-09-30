@@ -14,4 +14,7 @@ public sealed record LovResponse
 
     /// <summary>Messages returned with the list.</summary>
     public IReadOnlyList<MessageDto> Messages { get; init; } = [];
+
+    /// <summary>Advisory open-item ids that apply to the list.</summary>
+    public IReadOnlyList<string> OpenItems { get; init; } = [];
 }

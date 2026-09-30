@@ -1,13 +1,18 @@
-import { useEffect, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { UIEvent } from 'react';
 import { ApiError, getLov } from '../api/client';
 import type { LovBinds as ApiLovBinds, LovResponse } from '../api/types';
 import FieldMessage from './FieldMessage';
+import OpenItemNotice from './OpenItemNotice';
 
 /** The LOVs the picker can open. */
 export type LovName = 'COMPANY1_2' | 'SUB_COMPANY' | 'THE_CLASS' | 'PAY_TYPE1' | 'PAY_TYPE2' | 'DOC' | 'RESERV_NO' | 'OFFERS' | 'CAT';
 
 /** Bind values passed to getLov. */
 export type LovBinds = ApiLovBinds;
+
+/** Receives each LOV request's Oracle availability: false on a 503, true when its rows arrive. */
+export const LovConnectivityContext = createContext<((available: boolean) => void) | null>(null);
 
 type LovRow = LovResponse['rows'][number];
 
@@ -18,7 +23,29 @@ type LovPickerProps = {
   onClose: () => void;
 };
 
-type VisibleRow = { row: LovRow; index: number };
+/** A response row with its display text per column and the lower-cased text the filter matches. */
+type PreparedRow = { row: LovRow; index: number; texts: string[]; needles: string[] };
+
+/** The prepared rows of one response and each column's share of the table width in percent. */
+type PreparedRows = { rows: PreparedRow[]; widths: number[] };
+
+/** One rendered body row, or a gap standing in for unrendered rows. */
+type WindowPart = { kind: 'row'; position: number } | { kind: 'gap'; rows: number; ordinal: number };
+
+/** Rows rendered above and below the scroll viewport. */
+const OVERSCAN = 6;
+
+/** Rows rendered before the scroll viewport is measured. */
+const INITIAL_ROW_COUNT = 25;
+
+/** Row and header height in pixels until the rendered table is measured. */
+const FALLBACK_ROW_HEIGHT = 30;
+
+/** Widest column in characters, before padding. */
+const MAX_COLUMN_CHARS = 40;
+
+/** Characters added to each column width. */
+const COLUMN_PADDING_CHARS = 2;
 
 /** Dialog title per LOV, from the Form's LOV Title attribute. */
 const TITLES: Record<LovName, string> = {
@@ -47,7 +74,7 @@ const COLUMNS: Record<LovName, readonly string[]> = {
 };
 
 /** Elements the Tab key cycles through inside the dialog. */
-const FOCUSABLE_SELECTOR = 'input, button, [tabindex="0"]';
+const FOCUSABLE_SELECTOR = 'input:not([tabindex="-1"]), button:not([tabindex="-1"]), [tabindex="0"]';
 
 /** Returns a row's value for an upper-case column key as text, matching the key case-insensitively. */
 function cellText(row: LovRow, column: string): string {
@@ -82,16 +109,59 @@ function wrapFocus(container: HTMLElement, backwards: boolean): boolean {
   return false;
 }
 
-/** Scrolls an active row into the visible part of the list. */
-function scrollIntoViewNearest(element: HTMLTableRowElement | null): void {
-  element?.scrollIntoView({ block: 'nearest' });
+/** Returns each response row's display and filter texts, and each column's share of the table width in percent. */
+function prepareRows(response: LovResponse | null, columns: readonly string[]): PreparedRows {
+  const longest = columns.map((column) => column.length);
+  const rows = (response?.rows ?? []).map((row, index) => {
+    const texts = columns.map((column) => cellText(row, column));
+    texts.forEach((text, column) => {
+      longest[column] = Math.max(longest[column], text.length);
+    });
+    return { row, index, texts, needles: texts.map((text) => text.toLowerCase()) };
+  });
+  const chars = longest.map((length) => Math.min(MAX_COLUMN_CHARS, length) + COLUMN_PADDING_CHARS);
+  const totalChars = chars.reduce((sum, width) => sum + width, 0);
+  return { rows, widths: chars.map((width) => (width / totalChars) * 100) };
 }
 
-/** Focuses a sibling list row, if there is one. */
-function focusRow(row: Element | null): void {
-  if (row instanceof HTMLElement) {
-    row.focus();
+/** Returns the rendered positions in order, with a gap for each run of unrendered rows. */
+function windowParts(total: number, start: number, end: number, pinned: number | null): WindowPart[] {
+  const positions: number[] = [];
+  if (pinned !== null && pinned < start) {
+    positions.push(pinned);
   }
+  for (let position = start; position < end; position += 1) {
+    positions.push(position);
+  }
+  if (pinned !== null && pinned >= end) {
+    positions.push(pinned);
+  }
+  const parts: WindowPart[] = [];
+  let next = 0;
+  let gaps = 0;
+  for (const position of positions) {
+    if (position > next) {
+      parts.push({ kind: 'gap', rows: position - next, ordinal: gaps });
+      gaps += 1;
+    }
+    parts.push({ kind: 'row', position });
+    next = position + 1;
+  }
+  if (total > next) {
+    parts.push({ kind: 'gap', rows: total - next, ordinal: gaps });
+  }
+  return parts;
+}
+
+/** Returns the accessible name of a row's select button from its non-empty cell texts. */
+function pickLabel(texts: readonly string[], position: number): string {
+  const shown = texts.filter((text) => text.trim() !== '');
+  return shown.length === 0 ? `Select row ${position + 1}` : `Select ${shown.join(', ')}`;
+}
+
+/** Returns whether a failed getLov call reports Oracle as unavailable. */
+function isOracleUnavailable(reason: unknown): boolean {
+  return reason instanceof ApiError && (reason.status === 503 || reason.type === 'oracle-unavailable');
 }
 
 /** Renders a failed getLov call as field-level messages. */
@@ -121,49 +191,166 @@ export default function LovPicker({ name, binds = {}, onPick, onClose }: LovPick
   const [failure, setFailure] = useState<{ reason: unknown } | null>(null);
   const [filter, setFilter] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
+  const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
+  const [firstVisible, setFirstVisible] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
+  const [rowHeight, setRowHeight] = useState(FALLBACK_ROW_HEIGHT);
+  const [headerHeight, setHeaderHeight] = useState(FALLBACK_ROW_HEIGHT);
+  const pendingFocus = useRef<number | null>(null);
+
+  const reportConnectivity = useContext(LovConnectivityContext);
+  const latestReportConnectivity = useRef(reportConnectivity);
+  latestReportConnectivity.current = reportConnectivity;
 
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
     setLoading(true);
     setResponse(null);
     setFailure(null);
     setActiveIndex(0);
-    getLov(name, requestBinds).then(
+    setFirstVisible(0);
+    getLov(name, requestBinds, controller.signal).then(
       (result) => {
         if (!cancelled) {
           setResponse(result);
           setLoading(false);
+          latestReportConnectivity.current?.(true);
         }
       },
       (reason: unknown) => {
         if (!cancelled) {
           setFailure({ reason });
           setLoading(false);
+          if (isOracleUnavailable(reason)) {
+            latestReportConnectivity.current?.(false);
+          }
         }
       },
     );
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [name, requestBinds]);
 
   const columns = COLUMNS[name];
   const titleId = `lov-picker-title-${name}`;
 
-  const visibleRows = useMemo<VisibleRow[]>(() => {
-    if (response === null) {
-      return [];
-    }
+  const prepared = useMemo(() => prepareRows(response, columns), [response, columns]);
+
+  const filtered = useMemo(() => {
     const needle = filter.trim().toLowerCase();
-    const rows = response.rows.map((row, index) => ({ row, index }));
     if (needle === '') {
-      return rows;
+      return prepared.rows;
     }
-    return rows.filter(({ row }) => columns.some((column) => cellText(row, column).toLowerCase().includes(needle)));
-  }, [response, columns, filter]);
+    return prepared.rows.filter((item) => item.needles.some((text) => text.includes(needle)));
+  }, [prepared, filter]);
 
   const selectable = response !== null && !response.viewOnly;
-  const currentIndex = Math.max(0, Math.min(activeIndex, visibleRows.length - 1));
+  const total = filtered.length;
+  const currentIndex = Math.max(0, Math.min(activeIndex, total - 1));
+  const start = Math.min(total, Math.max(0, firstVisible - OVERSCAN));
+  const end =
+    viewportHeight > 0
+      ? Math.min(total, firstVisible + Math.ceil(viewportHeight / rowHeight) + 1 + OVERSCAN)
+      : Math.min(total, start + INITIAL_ROW_COUNT);
+  const pinned = selectable && total > 0 && (currentIndex < start || currentIndex >= end) ? currentIndex : null;
+  const pageSize = Math.max(1, Math.floor((viewportHeight - headerHeight) / rowHeight));
+
+  // Tracks the scroller's visible height.
+  useLayoutEffect(() => {
+    if (scroller === null) {
+      return;
+    }
+    const measure = () => {
+      const height = scroller.clientHeight;
+      setViewportHeight((current) => (current === height ? current : height));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(scroller);
+    return () => observer.disconnect();
+  }, [scroller]);
+
+  // Measures the rendered header and body-row heights.
+  useLayoutEffect(() => {
+    if (scroller === null) {
+      return;
+    }
+    const header = scroller.querySelector('thead')?.getBoundingClientRect().height ?? 0;
+    if (header > 0 && Math.abs(header - headerHeight) >= 0.5) {
+      setHeaderHeight(header);
+    }
+    const row = scroller.querySelector('tbody > tr.lov-row')?.getBoundingClientRect().height ?? 0;
+    if (row > 0 && Math.abs(row - rowHeight) >= 0.5) {
+      setRowHeight(row);
+    }
+  });
+
+  // Focuses the select button a keyboard move targeted once its row is rendered.
+  useLayoutEffect(() => {
+    const target = pendingFocus.current;
+    if (target === null || scroller === null) {
+      return;
+    }
+    pendingFocus.current = null;
+    scroller.querySelector<HTMLElement>(`tr[aria-rowindex="${target + 2}"] .lov-pick`)?.focus({ preventScroll: true });
+  });
+
+  /** Scrolls the list so the row at `position` shows below the sticky header. */
+  const reveal = (position: number) => {
+    if (scroller === null) {
+      return;
+    }
+    const top = position * rowHeight;
+    const bottom = headerHeight + (position + 1) * rowHeight;
+    if (top < scroller.scrollTop) {
+      scroller.scrollTop = top;
+    } else if (bottom > scroller.scrollTop + scroller.clientHeight) {
+      scroller.scrollTop = bottom - scroller.clientHeight;
+    }
+    setFirstVisible(Math.floor(scroller.scrollTop / rowHeight));
+  };
+
+  /** Makes the row at `position` active and scrolls it into view; `focus` moves focus to its select button. */
+  const moveTo = (position: number, focus: boolean) => {
+    if (total === 0) {
+      return;
+    }
+    const next = Math.max(0, Math.min(position, total - 1));
+    reveal(next);
+    if (next !== currentIndex) {
+      setActiveIndex(next);
+      if (focus) {
+        pendingFocus.current = next;
+      }
+    }
+  };
+
+  /** Returns the row position a navigation key moves to from `position`, or null for other keys. */
+  const keyTarget = (key: string, position: number): number | null => {
+    switch (key) {
+      case 'ArrowDown':
+        return position + 1;
+      case 'ArrowUp':
+        return position - 1;
+      case 'Home':
+        return 0;
+      case 'End':
+        return total - 1;
+      case 'PageDown':
+        return position + pageSize;
+      case 'PageUp':
+        return position - pageSize;
+      default:
+        return null;
+    }
+  };
+
+  const onScroll = (event: UIEvent<HTMLDivElement>) => {
+    setFirstVisible(Math.floor(event.currentTarget.scrollTop / rowHeight));
+  };
 
   const close = () => {
     onClose();
@@ -177,55 +364,80 @@ export default function LovPicker({ name, binds = {}, onPick, onClose }: LovPick
     close();
   };
 
+  /** Renders the body row at `position` of the filtered rows. */
+  const renderRow = (position: number) => {
+    const item = filtered[position];
+    const active = selectable && position === currentIndex;
+    const cells = item.texts.map((text, column) => (
+      <td key={columns[column]} title={text === '' ? undefined : text}>
+        {selectable && column === 0 ? (
+          <button
+            type="button"
+            className="lov-pick"
+            tabIndex={active ? 0 : -1}
+            aria-label={pickLabel(item.texts, position)}
+            onFocus={() => setActiveIndex(position)}
+            onKeyDown={(event) => {
+              const target = keyTarget(event.key, position);
+              if (target !== null) {
+                event.preventDefault();
+                moveTo(target, true);
+              }
+            }}
+          >
+            {text}
+          </button>
+        ) : (
+          text
+        )}
+      </td>
+    ));
+    if (!selectable) {
+      return (
+        <tr key={item.index} className="lov-row" aria-rowindex={position + 2}>
+          {cells}
+        </tr>
+      );
+    }
+    return (
+      <tr
+        key={item.index}
+        className={active ? 'lov-row lov-row-selected' : 'lov-row'}
+        aria-rowindex={position + 2}
+        onClick={() => choose(item.row)}
+      >
+        {cells}
+      </tr>
+    );
+  };
+
   const table =
     response === null ? null : (
-      <table className="lov-table">
+      <table className="lov-table" aria-rowcount={total + 1}>
+        <colgroup>
+          {columns.map((column, index) => (
+            <col key={column} style={{ inlineSize: `${prepared.widths[index]}%` }} />
+          ))}
+        </colgroup>
         <thead>
-          <tr>
+          <tr aria-rowindex={1}>
             {columns.map((column) => (
-              <th key={column} scope="col">
+              <th key={column} scope="col" title={column}>
                 {column}
               </th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {visibleRows.map(({ row, index }, position) => {
-            const cells = columns.map((column) => <td key={column}>{cellText(row, column)}</td>);
-            if (!selectable) {
-              return (
-                <tr key={index} className="lov-row">
-                  {cells}
-                </tr>
-              );
-            }
-            const active = position === currentIndex;
-            return (
-              <tr
-                key={index}
-                ref={active ? scrollIntoViewNearest : undefined}
-                className={active ? 'lov-row lov-row-selected' : 'lov-row'}
-                tabIndex={0}
-                onMouseEnter={() => setActiveIndex(position)}
-                onFocus={() => setActiveIndex(position)}
-                onClick={() => choose(row)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    event.preventDefault();
-                    choose(row);
-                  } else if (event.key === 'ArrowDown') {
-                    event.preventDefault();
-                    focusRow(event.currentTarget.nextElementSibling);
-                  } else if (event.key === 'ArrowUp') {
-                    event.preventDefault();
-                    focusRow(event.currentTarget.previousElementSibling);
-                  }
-                }}
-              >
-                {cells}
+          {windowParts(total, start, end, pinned).map((part) =>
+            part.kind === 'row' ? (
+              renderRow(part.position)
+            ) : (
+              <tr key={`gap-${part.ordinal}`} className="lov-spacer" aria-hidden="true">
+                <td colSpan={columns.length} style={{ blockSize: `${part.rows * rowHeight}px` }} />
               </tr>
-            );
-          })}
+            ),
+          )}
         </tbody>
       </table>
     );
@@ -264,28 +476,44 @@ export default function LovPicker({ name, binds = {}, onPick, onClose }: LovPick
             onChange={(event) => {
               setFilter(event.target.value);
               setActiveIndex(0);
+              setFirstVisible(0);
+              if (scroller !== null) {
+                scroller.scrollTop = 0;
+              }
             }}
             onKeyDown={(event) => {
-              if (!selectable || visibleRows.length === 0) {
+              if (!selectable || total === 0) {
                 return;
               }
               if (event.key === 'ArrowDown') {
                 event.preventDefault();
-                setActiveIndex(Math.min(currentIndex + 1, visibleRows.length - 1));
+                moveTo(currentIndex + 1, false);
               } else if (event.key === 'ArrowUp') {
                 event.preventDefault();
-                setActiveIndex(Math.max(currentIndex - 1, 0));
+                moveTo(currentIndex - 1, false);
               } else if (event.key === 'Enter') {
                 event.preventDefault();
-                choose(visibleRows[currentIndex].row);
+                choose(filtered[currentIndex].row);
               }
             }}
           />
           {loading && <div role="status">Loading…</div>}
           {failure !== null && <LovError reason={failure.reason} />}
           {response !== null && <FieldMessage messages={response.messages} />}
-          {response !== null && (response.viewOnly ? <div className="lov-view-only">{table}</div> : table)}
-          {response !== null && visibleRows.length === 0 && <div role="status">No rows</div>}
+          {response !== null && <OpenItemNotice ids={response.openItems ?? []} />}
+          {response !== null && (
+            <div
+              ref={setScroller}
+              className={response.viewOnly ? 'lov-scroll lov-view-only' : 'lov-scroll'}
+              tabIndex={response.viewOnly ? 0 : undefined}
+              role={response.viewOnly ? 'region' : undefined}
+              aria-label={response.viewOnly ? TITLES[name] : undefined}
+              onScroll={onScroll}
+            >
+              {table}
+            </div>
+          )}
+          {response !== null && total === 0 && <div role="status">No rows</div>}
         </div>
         <div className="modal-actions">
           <button type="button" onClick={close}>

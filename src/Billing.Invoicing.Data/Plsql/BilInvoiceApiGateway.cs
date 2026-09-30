@@ -1,4 +1,7 @@
 using System.Data;
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using Billing.Invoicing.Data.Errors;
 using Billing.Invoicing.Data.Oracle;
 using Billing.Invoicing.Data.Ports;
@@ -23,12 +26,22 @@ public sealed class BilInvoiceApiGateway : IBilInvoiceApiGateway
     private const string PreviewLineCountName = "pl_count";
     private const string EngineLineCountName = "el_count";
 
+    private const int BundledOfferType = 0;
+
+    private const string DraftSealKeyKey = "Invoicing:DraftSealKey";
+
+    /// <summary>Fewest bytes a configured <see cref="InvoicingDataOptions.DraftSealKey"/> decodes to.</summary>
+    public const int MinDraftSealKeyBytes = 32;
+
     private readonly InvoicingDataOptions _options;
 
-    /// <summary>Stores the data-layer settings; opens nothing.</summary>
-    /// <param name="options">Command timeout and OUT-array capacity applied to every call.</param>
+    private readonly byte[] _draftSealKey;
+
+    /// <summary>Stores the data-layer settings and the draft-seal key; opens nothing.</summary>
+    /// <param name="options">Command timeout, OUT-array capacity and draft-seal key applied to every call.</param>
     /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><see cref="InvoicingDataOptions.MaxOutputLines"/> or <see cref="InvoicingDataOptions.CommandTimeoutSeconds"/> is below 1.</exception>
+    /// <exception cref="ArgumentException"><see cref="InvoicingDataOptions.DraftSealKey"/> is set but is not base64 of at least <see cref="MinDraftSealKeyBytes"/> bytes.</exception>
     public BilInvoiceApiGateway(InvoicingDataOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -50,6 +63,24 @@ public sealed class BilInvoiceApiGateway : IBilInvoiceApiGateway
         }
 
         _options = options;
+        _draftSealKey = DraftSealKeyFrom(options.DraftSealKey, nameof(options));
+    }
+
+    /// <summary>Most engine lines, rebuilt bundle parents included, that a create accepts and a preview returns: <see cref="InvoicingDataOptions.MaxOutputLines"/>.</summary>
+    public int MaxDraftLines => _options.MaxOutputLines;
+
+    /// <summary>Returns the upper-case hexadecimal HMAC-SHA256 of the request id and the draft date's ticks under the draft-seal key.</summary>
+    /// <param name="requestId">Request id issued with the draft.</param>
+    /// <param name="draftDate">Draft date issued with the draft.</param>
+    /// <returns>A 64-character seal, equal on every gateway configured with the same key.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="requestId"/> is null.</exception>
+    public string SealDraftDate(string requestId, DateTime draftDate)
+    {
+        ArgumentNullException.ThrowIfNull(requestId);
+
+        return Convert.ToHexString(HMACSHA256.HashData(
+            _draftSealKey,
+            Encoding.UTF8.GetBytes(string.Create(CultureInfo.InvariantCulture, $"{requestId}|{draftDate.Ticks}"))));
     }
 
     /// <summary>Runs BIL_INVOICE_API.EXPAND_BUNDLED_OFFER_IG_LINES, then CALCULATE_EDITABLE_INVOICE_PREVIEW, for the draft.</summary>
@@ -128,7 +159,7 @@ public sealed class BilInvoiceApiGateway : IBilInvoiceApiGateway
     /// <param name="cancellationToken">Cancels the call.</param>
     /// <returns>The invoice result, posting flags and message as returned by the package.</returns>
     /// <exception cref="ArgumentNullException">An argument is null.</exception>
-    /// <exception cref="ArgumentException"><paramref name="requestId"/> is empty or whitespace, a value exceeds its destination width, <paramref name="session"/> is not an <see cref="OracleSession"/>, or a header or line value cannot be bound.</exception>
+    /// <exception cref="ArgumentException"><paramref name="requestId"/> is empty or whitespace, a value exceeds its destination width, the lines with their rebuilt bundle parents exceed Invoicing:MaxOutputLines, <paramref name="session"/> is not an <see cref="OracleSession"/>, or a header or line value cannot be bound.</exception>
     /// <exception cref="OracleException">The block failed; <see cref="Exception.Data"/> holds the operation name under <see cref="OracleErrorParser.OperationKey"/>.</exception>
     public async Task<FullInvoiceResultRow> CreateFullInvoice(
         IOracleSession session,
@@ -144,6 +175,14 @@ public sealed class BilInvoiceApiGateway : IBilInvoiceApiGateway
         ArgumentNullException.ThrowIfNull(operatorContext);
         ArgumentException.ThrowIfNullOrWhiteSpace(requestId);
         BoundedVarchar2.Validate("request_id", requestId, BoundedVarchar2.RequestIdBytes, nameof(requestId));
+        var engineLines = EngineLineCount(lines);
+        if (engineLines > _options.MaxOutputLines)
+        {
+            throw CapacityRejection(
+                $"The draft expands to {engineLines} invoice lines; an invoice can be created with at most {_options.MaxOutputLines} lines ({MaxOutputLinesKey}).",
+                nameof(lines));
+        }
+
         var oracleSession = AsOracleSession(session);
 
         return await ExecuteAsync(
@@ -293,6 +332,35 @@ public sealed class BilInvoiceApiGateway : IBilInvoiceApiGateway
         error.Data[OracleFailureTranslator.BindingRejectionKey] = text;
         return error;
     }
+
+    /// <summary>Decodes the configured draft-seal key, or returns a random key of this instance when none is configured.</summary>
+    /// <exception cref="ArgumentException">The configured key is not base64 of at least <see cref="MinDraftSealKeyBytes"/> bytes.</exception>
+    private static byte[] DraftSealKeyFrom(string? configuredKey, string paramName)
+    {
+        if (string.IsNullOrWhiteSpace(configuredKey))
+        {
+            return RandomNumberGenerator.GetBytes(MinDraftSealKeyBytes);
+        }
+
+        var key = new byte[configuredKey.Length];
+        if (!Convert.TryFromBase64String(configuredKey.Trim(), key, out var length) || length < MinDraftSealKeyBytes)
+        {
+            throw new ArgumentException(
+                $"{DraftSealKeyKey} ({nameof(InvoicingDataOptions)}.{nameof(InvoicingDataOptions.DraftSealKey)}) must be base64 of at least {MinDraftSealKeyBytes} bytes.",
+                paramName);
+        }
+
+        return key[..length];
+    }
+
+    /// <summary>Lines EXPAND_BUNDLED_OFFER_IG_LINES emits: every line plus one parent per distinct space-trimmed offer instance id of the bundled-offer lines.</summary>
+    private static int EngineLineCount(IReadOnlyList<InvoiceLineDraft?> lines) =>
+        lines.Count
+        + lines
+            .Select(line => line is { OfferType: BundledOfferType } ? line.OfferInstanceId?.Trim(' ') : null)
+            .Where(instanceId => !string.IsNullOrEmpty(instanceId))
+            .Distinct(StringComparer.Ordinal)
+            .Count();
 
     /// <summary>Reads an OUT line count; null counts as 0.</summary>
     /// <exception cref="InvalidCastException">The value is neither a number nor null.</exception>

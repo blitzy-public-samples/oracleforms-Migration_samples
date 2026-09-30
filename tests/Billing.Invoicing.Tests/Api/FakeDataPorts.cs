@@ -1,7 +1,12 @@
+using System.Globalization;
+using System.Reflection;
 using Billing.Invoicing.Api.Services;
+using Billing.Invoicing.Data.Errors;
+using Billing.Invoicing.Data.Oracle;
 using Billing.Invoicing.Data.Plsql;
 using Billing.Invoicing.Data.Ports;
 using Billing.Invoicing.Domain.Model;
+using Oracle.ManagedDataAccess.Client;
 
 namespace Billing.Invoicing.Tests.Api;
 
@@ -181,6 +186,9 @@ public sealed class FakeLookupQueries : ILookupQueries
     /// <summary>Service ids requested for any claim.</summary>
     public IReadOnlyList<string> RequestedServices { get; set; } = Array.Empty<string>();
 
+    /// <summary>Failure the requested-services read throws after recording the call; null returns <see cref="RequestedServices"/>.</summary>
+    public Func<Exception>? RequestedServicesFailure { get; set; }
+
     /// <summary>Database time.</summary>
     public DateTime DatabaseTime { get; set; } = new(2026, 9, 29, 10, 0, 0);
 
@@ -220,6 +228,22 @@ public sealed class FakeLookupQueries : ILookupQueries
         return Task.FromResult(ServiceProfile(serviceId));
     }
 
+    /// <summary>Returns the <see cref="ServiceProfile"/> of each distinct id that has one, recording a copy of the ids.</summary>
+    public Task<IReadOnlyDictionary<string, ServiceProfile>> GetServiceProfiles(IReadOnlyCollection<string> serviceIds, decimal listId, CancellationToken cancellationToken = default)
+    {
+        Record(nameof(GetServiceProfiles), [serviceIds.ToArray(), listId]);
+        var profiles = new Dictionary<string, ServiceProfile>(StringComparer.Ordinal);
+        foreach (var serviceId in serviceIds)
+        {
+            if (!profiles.ContainsKey(serviceId) && ServiceProfile(serviceId) is { } profile)
+            {
+                profiles[serviceId] = profile;
+            }
+        }
+
+        return Task.FromResult<IReadOnlyDictionary<string, ServiceProfile>>(profiles);
+    }
+
     public Task<IReadOnlyList<ServiceProfile>> GetPackageComponentFlags(string packageServiceId, decimal listId, CancellationToken cancellationToken = default)
     {
         Record(nameof(GetPackageComponentFlags), [packageServiceId, listId]);
@@ -253,6 +277,11 @@ public sealed class FakeLookupQueries : ILookupQueries
     public Task<IReadOnlyList<string>> GetRequestedServices(string claimNo, decimal listId, CancellationToken cancellationToken = default)
     {
         Record(nameof(GetRequestedServices), [claimNo, listId]);
+        if (RequestedServicesFailure is { } failure)
+        {
+            throw failure();
+        }
+
         return Task.FromResult(RequestedServices);
     }
 
@@ -344,8 +373,8 @@ public sealed class FakeInvoiceQueries : IInvoiceQueries
     public Func<string, (InvoiceHeaderDraft Header, decimal? ListId, decimal? MaxDeductable, int? CardId)?> ClaimPreload { get; set; } =
         _ => null;
 
-    /// <summary>Recorded create request by request id.</summary>
-    public Func<string, (long? InvNo, string? PatientNo, DateTimeOffset? CompletedAt)?> CreateRequest { get; set; } =
+    /// <summary>Recorded create request, with its invoice's date, company, sub-company and clinic age-limit flag, by request id.</summary>
+    public Func<string, (long? InvNo, string? PatientNo, DateTimeOffset? CompletedAt, DateTime? InvDate, string? CompCode, string? SubCompCode, bool ClinicHasAgeLimit)?> CreateRequest { get; set; } =
         _ => null;
 
     public Task<(InvoiceHeaderDraft Header, IReadOnlyList<InvoiceLineDraft> Lines, IReadOnlyDictionary<string, object?> Display)?> GetInvoice(long invNo, int? localDocType, CancellationToken cancellationToken = default)
@@ -378,7 +407,7 @@ public sealed class FakeInvoiceQueries : IInvoiceQueries
         return Task.FromResult(ClaimPreload(claimNo));
     }
 
-    public Task<(long? InvNo, string? PatientNo, DateTimeOffset? CompletedAt)?> GetCreateRequest(string requestId, CancellationToken cancellationToken = default)
+    public Task<(long? InvNo, string? PatientNo, DateTimeOffset? CompletedAt, DateTime? InvDate, string? CompCode, string? SubCompCode, bool ClinicHasAgeLimit)?> GetCreateRequest(string requestId, CancellationToken cancellationToken = default)
     {
         Record(nameof(GetCreateRequest), [requestId]);
         return Task.FromResult(CreateRequest(requestId));
@@ -445,7 +474,14 @@ public sealed class FakeBilInvoiceApiGateway : IBilInvoiceApiGateway
     private const string Posted = "Y";
     private const string NotRequested = "N";
 
+    /// <summary>Draft-seal key every fake gateway shares by default, as instances configured with one Invoicing:DraftSealKey do.</summary>
+    public const string SharedDraftSealKey = "RmFrZURhdGFQb3J0cyBzaGFyZWQgZHJhZnQtc2VhbCBrZXkgMDE=";
+
     private readonly List<string> _journal;
+
+    private string _draftSealKey = SharedDraftSealKey;
+
+    private BilInvoiceApiGateway _sealer = Sealer(SharedDraftSealKey);
 
     /// <summary>Creates the gateway writing its calls to <paramref name="journal"/>.</summary>
     public FakeBilInvoiceApiGateway(List<string> journal)
@@ -454,14 +490,31 @@ public sealed class FakeBilInvoiceApiGateway : IBilInvoiceApiGateway
         _journal = journal;
     }
 
+    /// <summary>Base64 draft-seal key the seals are computed under by <see cref="BilInvoiceApiGateway.SealDraftDate"/>; empty gives this fake a key of its own.</summary>
+    public string DraftSealKey
+    {
+        get => _draftSealKey;
+        set
+        {
+            _sealer = Sealer(value);
+            _draftSealKey = value;
+        }
+    }
+
     /// <summary>Recorded calls.</summary>
     public List<FakeCall> Calls { get; } = new();
+
+    /// <summary>Most engine lines a create accepts; reading it is not recorded as a call.</summary>
+    public int MaxDraftLines { get; set; } = 1000;
 
     /// <summary>Price list carried by every default preview line.</summary>
     public decimal? PreviewListId { get; set; } = 10m;
 
     /// <summary>Preview result by header and lines; null echoes each input line with <see cref="PreviewListId"/>, zero totals and status No Amount Due.</summary>
     public Func<InvoiceHeaderDraft, IReadOnlyList<InvoiceLineDraft>, (IReadOnlyList<EditablePreviewLine> Lines, PreviewTotalsRow Totals)>? Preview { get; set; }
+
+    /// <summary>Failure the preview throws for a header and lines after recording the call; null, or a null result, previews normally.</summary>
+    public Func<InvoiceHeaderDraft, IReadOnlyList<InvoiceLineDraft>, Exception?>? PreviewFailure { get; set; }
 
     /// <summary>Invoice number of the default create result.</summary>
     public long InvoiceNo { get; set; } = 9001;
@@ -478,9 +531,21 @@ public sealed class FakeBilInvoiceApiGateway : IBilInvoiceApiGateway
     /// <summary>Package lines by package service id, price list and parent source id; null returns none with a zero import result.</summary>
     public Func<string, decimal, string?, (IReadOnlyList<EngineLineInput> Lines, ImportResultRow Result)>? PackageLines { get; set; }
 
+    /// <summary>Seals through a real gateway configured with <see cref="DraftSealKey"/>; not recorded as a call.</summary>
+    public string SealDraftDate(string requestId, DateTime draftDate) => _sealer.SealDraftDate(requestId, draftDate);
+
+    /// <summary>Real gateway used only to seal draft dates under <paramref name="draftSealKey"/>.</summary>
+    private static BilInvoiceApiGateway Sealer(string draftSealKey) =>
+        new(new InvoicingDataOptions { DraftSealKey = draftSealKey });
+
     public Task<(IReadOnlyList<EditablePreviewLine> Lines, PreviewTotalsRow Totals)> CalculatePreview(IOracleSession session, InvoiceHeaderDraft header, IReadOnlyList<InvoiceLineDraft> lines, OperatorContext operatorContext, bool amount1Auto, CancellationToken cancellationToken = default)
     {
         Record(nameof(CalculatePreview), [session, header, lines, operatorContext, amount1Auto]);
+        if (PreviewFailure?.Invoke(header, lines) is { } failure)
+        {
+            throw failure;
+        }
+
         return Task.FromResult(Preview is { } preview ? preview(header, lines) : EchoPreview(lines));
     }
 
@@ -586,6 +651,63 @@ public sealed class FakeBilInvoiceApiGateway : IBilInvoiceApiGateway
 
     private void Record(string method, IReadOnlyList<object?> args) =>
         FakeRecorder.Record(_journal, Calls, nameof(IBilInvoiceApiGateway), method, args);
+}
+
+/// <summary>ODP.NET exceptions of package refusals and connectivity failures, built through the driver's non-public constructor.</summary>
+public static class FakeOracleFailures
+{
+    private const string DataSource = "HISDB";
+    private const string PreviewProcedure = "BIL_INVOICE_API.CALCULATE_PREVIEW";
+    private const string PreviewOperation = "CalculatePreview";
+    private const string EngineFrameName = "HIS.BIL_INVOICE_ENGINE";
+
+    private static readonly ConstructorInfo? OracleExceptionConstructor = typeof(OracleException).GetConstructor(
+        BindingFlags.Instance | BindingFlags.NonPublic,
+        binder: null,
+        new[] { typeof(int), typeof(string), typeof(string), typeof(string), typeof(Exception) },
+        modifiers: null);
+
+    /// <summary>Returns the preview's BIL_INVOICE_ENGINE -20949 refusal of a package service line without its package instance.</summary>
+    public static OracleException UnexpandedParent() =>
+        PreviewRefusal(20949, "Invoice create failed: package instance identity is required.", 2496);
+
+    /// <summary>Returns the preview's BIL_INVOICE_ENGINE -20906 refusal of a negative discount percent on line 1.</summary>
+    public static OracleException DiscountRefused() =>
+        PreviewRefusal(20906, "Invoice create failed: discount percent cannot be negative on line 1.", 575);
+
+    /// <summary>Returns the ORA-12541 connectivity failure of a lookup.</summary>
+    public static OracleException NoListener() => Driver(12541, "ORA-12541: TNS:no listener", string.Empty);
+
+    /// <summary>Returns an ORA-20001 application error raised under a lookup's SELECT, with no gateway operation attached.</summary>
+    public static OracleException LookupApplicationError() =>
+        Driver(20001, "ORA-20001: Lookup refused by a database trigger.\nORA-06512: at \"HIS.SERVICES_GUARD\", line 7", string.Empty);
+
+    private static OracleException PreviewRefusal(int number, string text, int engineLine)
+    {
+        var failure = Driver(
+            number,
+            string.Create(CultureInfo.InvariantCulture, $"ORA-{number}: {text}\nORA-06512: at \"{EngineFrameName}\", line {engineLine}"),
+            PreviewProcedure);
+        failure.Data[OracleErrorParser.OperationKey] = PreviewOperation;
+        return failure;
+    }
+
+    private static OracleException Driver(int number, string message, string procedure)
+    {
+        if (OracleExceptionConstructor is null)
+        {
+            throw new InvalidOperationException("OracleException has no non-public (int, string, string, string, Exception) constructor.");
+        }
+
+        return (OracleException)OracleExceptionConstructor.Invoke(new object[]
+        {
+            number,
+            DataSource,
+            procedure,
+            message,
+            new InvalidOperationException("driver detail"),
+        });
+    }
 }
 
 /// <summary>Zero-count import results.</summary>

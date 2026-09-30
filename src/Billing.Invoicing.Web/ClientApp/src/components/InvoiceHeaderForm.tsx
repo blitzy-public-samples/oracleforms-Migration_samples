@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { ChangeEvent, Dispatch, FocusEvent } from 'react';
 import { ApiError, getCurrencies, getInvoiceTypes } from '../api/client';
 import type { InvoiceHeaderDraft, LookupItem, MessageDto, ValidateTarget } from '../api/types';
+import { fieldErrorFor } from '../state/invoiceDraft';
 import type { InvoiceDraftAction, InvoiceDraftState } from '../state/invoiceDraft';
 import LovPicker from './LovPicker';
 import type { LovBinds, LovName } from './LovPicker';
@@ -34,6 +35,29 @@ type TargetMessages = {
   refs: MessageRef[][];
   fieldError: { text: string; oracleErrorNumber: number | null } | null;
   invalid: boolean;
+};
+
+/** A lookup list and whether it is still loading, loaded or failed to load. */
+type LookupList = { status: 'loading' | 'loaded' | 'failed'; items: LookupItem[] };
+
+/** Note texts a lookup shows while its list is loading, failed or empty. */
+type LookupNotes = { loading: string; failed: string; empty: string };
+
+type LookupNote = { text: string; className: string };
+
+const LOOKUP_LOADING: LookupList = { status: 'loading', items: [] };
+const LOOKUP_FAILED: LookupList = { status: 'failed', items: [] };
+
+const INVOICE_TYPE_NOTES: LookupNotes = {
+  loading: 'Loading invoice types…',
+  failed: 'Invoice types could not be loaded.',
+  empty: 'No invoice types are available.',
+};
+
+const CURRENCY_NOTES: LookupNotes = {
+  loading: 'Loading currencies…',
+  failed: 'Currencies could not be loaded.',
+  empty: 'No currencies are available.',
 };
 
 /** Message sources rendered at form level by the screen. */
@@ -126,6 +150,23 @@ function selectOptions(items: readonly LookupItem[], current: string): LookupIte
   return items.some((item) => item.code === current) ? [...items] : [{ code: current, name: current }, ...items];
 }
 
+/** Lookup list for a resolved response body; a body that is not an array counts as failed. */
+function resolvedLookup(body: unknown): LookupList {
+  return Array.isArray(body) ? { status: 'loaded', items: body } : LOOKUP_FAILED;
+}
+
+/** Note for a lookup list, or null when the list is loaded and holds at least one item. */
+function lookupNote(list: LookupList, notes: LookupNotes): LookupNote | null {
+  switch (list.status) {
+    case 'loading':
+      return { text: notes.loading, className: 'msg' };
+    case 'failed':
+      return { text: notes.failed, className: 'msg msg-warning' };
+    case 'loaded':
+      return list.items.length === 0 ? { text: notes.empty, className: 'msg msg-warning' } : null;
+  }
+}
+
 /** Space-separated class names of the entry flags that apply. */
 function classNames(entries: Record<string, boolean>): string | undefined {
   const names = Object.keys(entries).filter((name) => entries[name]);
@@ -158,8 +199,8 @@ function targetMessages(state: InvoiceDraftState, target: HeaderTarget): TargetM
       }
     });
   }
-  const error = state.fieldErrors[target];
-  const fieldError = error === undefined ? null : { text: error.text, oracleErrorNumber: error.oracleErrorNumber };
+  const error = fieldErrorFor(state, target);
+  const fieldError = error === null ? null : { text: error.text, oracleErrorNumber: error.oracleErrorNumber };
   return {
     messages,
     refs,
@@ -195,8 +236,8 @@ export default function InvoiceHeaderForm({
   onShowReservations,
 }: InvoiceHeaderFormProps) {
   const id = useId();
-  const [invoiceTypes, setInvoiceTypes] = useState<LookupItem[]>([]);
-  const [currencies, setCurrencies] = useState<LookupItem[]>([]);
+  const [invoiceTypes, setInvoiceTypes] = useState<LookupList>(LOOKUP_LOADING);
+  const [currencies, setCurrencies] = useState<LookupList>(LOOKUP_LOADING);
   const [lov, setLov] = useState<HeaderLov | null>(null);
   const [pending, setPending] = useState<PendingValidation[]>([]);
   const nextSeq = useRef(0);
@@ -205,10 +246,11 @@ export default function InvoiceHeaderForm({
 
   useEffect(() => {
     let cancelled = false;
-    const fail = (source: string) => (reason: unknown) => {
+    const fail = (source: string, markFailed: () => void) => (reason: unknown) => {
       if (cancelled) {
         return;
       }
+      markFailed();
       const error =
         reason instanceof ApiError
           ? reason
@@ -222,14 +264,14 @@ export default function InvoiceHeaderForm({
     };
     getInvoiceTypes().then((items) => {
       if (!cancelled) {
-        setInvoiceTypes(Array.isArray(items) ? items : []);
+        setInvoiceTypes(resolvedLookup(items));
       }
-    }, fail('INVTYPEID'));
+    }, fail('INVTYPEID', () => setInvoiceTypes(LOOKUP_FAILED)));
     getCurrencies().then((items) => {
       if (!cancelled) {
-        setCurrencies(Array.isArray(items) ? items : []);
+        setCurrencies(resolvedLookup(items));
       }
-    }, fail('CURR_CODE'));
+    }, fail('CURR_CODE', () => setCurrencies(LOOKUP_FAILED)));
     return () => {
       cancelled = true;
     };
@@ -268,6 +310,8 @@ export default function InvoiceHeaderForm({
 
   const invTypeValue = shown(header?.invTypeId);
   const currencyValue = shown(header?.currCode);
+  const invTypeNote = lookupNote(invoiceTypes, INVOICE_TYPE_NOTES);
+  const currencyNote = lookupNote(currencies, CURRENCY_NOTES);
 
   const setField = <K extends keyof InvoiceHeaderDraft>(field: K, value: InvoiceHeaderDraft[K]): void => {
     if (!locked) {
@@ -406,16 +450,23 @@ export default function InvoiceHeaderForm({
             <select
               id={`${id}-invtype`}
               value={invTypeValue}
-              disabled={locked}
+              disabled={locked || invTypeNote !== null}
+              aria-busy={invoiceTypes.status === 'loading' || undefined}
+              aria-describedby={invTypeNote === null ? undefined : `${id}-invtype-note`}
               className={inputClass()}
               onChange={(event) => setField('invTypeId', toNumber(event.currentTarget.value))}
             >
-              {selectOptions(invoiceTypes, invTypeValue).map((item, index) => (
+              {selectOptions(invoiceTypes.items, invTypeValue).map((item, index) => (
                 <option key={`${index}-${item.code}`} value={item.code}>
                   {item.name}
                 </option>
               ))}
             </select>
+            {invTypeNote !== null && (
+              <div id={`${id}-invtype-note`} role="status" className={invTypeNote.className}>
+                {invTypeNote.text}
+              </div>
+            )}
           </div>
 
           <div className="field">
@@ -533,16 +584,23 @@ export default function InvoiceHeaderForm({
             <select
               id={`${id}-currcode`}
               value={currencyValue}
-              disabled={locked}
+              disabled={locked || currencyNote !== null}
+              aria-busy={currencies.status === 'loading' || undefined}
+              aria-describedby={currencyNote === null ? undefined : `${id}-currcode-note`}
               className={inputClass()}
               onChange={(event) => setField('currCode', enteredText(event.currentTarget.value))}
             >
-              {selectOptions(currencies, currencyValue).map((item, index) => (
+              {selectOptions(currencies.items, currencyValue).map((item, index) => (
                 <option key={`${index}-${item.code}`} value={item.code}>
                   {item.name}
                 </option>
               ))}
             </select>
+            {currencyNote !== null && (
+              <div id={`${id}-currcode-note`} role="status" className={currencyNote.className}>
+                {currencyNote.text}
+              </div>
+            )}
           </div>
 
           <div className="field">

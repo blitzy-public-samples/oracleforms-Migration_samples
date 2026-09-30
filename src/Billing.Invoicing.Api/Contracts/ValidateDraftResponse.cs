@@ -22,4 +22,19 @@ public sealed record ValidateDraftResponse
 
     /// <summary>Automatic visit line chosen for a doctor validation; null otherwise.</summary>
     public VisitLineChoice? VisitLine { get; init; }
+
+    /// <summary>For a line target, whether an operator-entered PRICE is accepted on the validated line; null otherwise.</summary>
+    public bool? PriceEditable { get; init; }
+
+    /// <summary>Service id of the validated line that PriceEditable was judged on; null when PriceEditable is null.</summary>
+    public string? PriceJudgedServiceId { get; init; }
+
+    /// <summary>Patient number of the request that PriceEditable was judged on; null when PriceEditable is null.</summary>
+    public string? PriceJudgedPatientNo { get; init; }
+
+    /// <summary>Company code of the request that PriceEditable was judged on; null when PriceEditable is null.</summary>
+    public string? PriceJudgedCompCode { get; init; }
+
+    /// <summary>Coverage of the validated patient for a PATIENTNO target with a patient number; null otherwise.</summary>
+    public CoverageResponse? Coverage { get; init; }
 }

@@ -33,6 +33,12 @@ public sealed class LookupQueries : ILookupQueries
         + "NVL(CONS_REV,0) CONS_REV, NVL(IS_PACKAGE,0) IS_PACKAGE, PKG_TYPE, PRICE_IS_FIXED "
         + "FROM SERVICES WHERE SERVICEID = :serviceId AND LIST_ID = :listId";
 
+    /// <summary>SELECT of the SERVICES flags of several services on one price list read by T052, T066, T068 and OKA.</summary>
+    public const string GetServiceProfilesSql =
+        "SELECT SERVICEID, SHOW_QTY, NVL(BEGIN_OF_CLAIM,0) BEGIN_OF_CLAIM, NVL(ADD_TO_QUE,0) ADD_TO_QUE, SERV_LOC_ID, "
+        + "NVL(CONS_REV,0) CONS_REV, NVL(IS_PACKAGE,0) IS_PACKAGE, PKG_TYPE, PRICE_IS_FIXED "
+        + "FROM SERVICES WHERE LIST_ID = :listId AND SERVICEID IN :serviceIds";
+
     /// <summary>SELECT of the SERVICES flags of a package's PACKAGE_DTL components read by T066 and OKA.</summary>
     public const string GetPackageComponentFlagsSql =
         "SELECT S.SERVICEID, S.SHOW_QTY, NVL(S.BEGIN_OF_CLAIM,0) BEGIN_OF_CLAIM, NVL(S.ADD_TO_QUE,0) ADD_TO_QUE, S.SERV_LOC_ID, "
@@ -91,9 +97,11 @@ public sealed class LookupQueries : ILookupQueries
     /// <summary>Stores the data-layer settings; opens nothing.</summary>
     /// <param name="options">Connection string and command settings.</param>
     /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><see cref="InvoicingDataOptions.CommandTimeoutSeconds"/> is below 1.</exception>
     public LookupQueries(InvoicingDataOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
+        options.EnsureCommandTimeout(nameof(options));
 
         _options = options;
     }
@@ -204,6 +212,45 @@ public sealed class LookupQueries : ILookupQueries
         var row = await connection.QueryFirstOrDefaultAsync<ServiceRow>(Command(GetServiceProfileSql, parameters, cancellationToken)).ConfigureAwait(false);
 
         return row is null ? null : ToServiceProfile(row);
+    }
+
+    /// <summary>SERVICES flags by service id on a price list; ids without a row are absent, and an empty input opens no connection.</summary>
+    /// <param name="serviceIds">Service ids; duplicates, null and blank entries are ignored.</param>
+    /// <param name="listId">Price list id.</param>
+    /// <param name="cancellationToken">Cancels the queries.</param>
+    public async Task<IReadOnlyDictionary<string, ServiceProfile>> GetServiceProfiles(IReadOnlyCollection<string> serviceIds, decimal listId, CancellationToken cancellationToken = default)
+    {
+        var profiles = new Dictionary<string, ServiceProfile>(StringComparer.Ordinal);
+        if (serviceIds is null || serviceIds.Count == 0)
+        {
+            return profiles;
+        }
+
+        var distinctIds = serviceIds.Where(serviceId => !string.IsNullOrWhiteSpace(serviceId)).Distinct(StringComparer.Ordinal).ToArray();
+        if (distinctIds.Length == 0)
+        {
+            return profiles;
+        }
+
+        var requestedIds = new HashSet<string>(distinctIds, StringComparer.Ordinal);
+        await using var connection = await OracleSessionFactory.OpenConnection(_options, cancellationToken).ConfigureAwait(false);
+        foreach (var chunk in distinctIds.Chunk(MaxInListIds))
+        {
+            var parameters = new DynamicParameters();
+            parameters.Add("listId", listId, DbType.Decimal);
+            parameters.Add("serviceIds", chunk);
+
+            var rows = await connection.QueryAsync<ServiceRow>(Command(GetServiceProfilesSql, parameters, cancellationToken)).ConfigureAwait(false);
+            foreach (var row in rows)
+            {
+                if (RequestedServiceId(row.SERVICEID, requestedIds) is { } serviceId)
+                {
+                    profiles.TryAdd(serviceId, ToServiceProfile(row));
+                }
+            }
+        }
+
+        return profiles;
     }
 
     /// <summary>SERVICES flags of every PACKAGE_DTL component of a package on a price list; empty when it has none.</summary>
@@ -430,6 +477,18 @@ public sealed class LookupQueries : ILookupQueries
             ReqNeedA = null,
             Components = Array.Empty<ServiceProfile>(),
         };
+
+    /// <summary>Requested id that a SERVICES row's SERVICEID equals as returned or without trailing blanks, or null.</summary>
+    private static string? RequestedServiceId(string? serviceId, IReadOnlySet<string> requestedIds)
+    {
+        if (serviceId is null || requestedIds.Contains(serviceId))
+        {
+            return serviceId;
+        }
+
+        var trimmed = serviceId.TrimEnd();
+        return requestedIds.Contains(trimmed) ? trimmed : null;
+    }
 
     /// <summary>Converts a scalar to a decimal; null and DBNull give null.</summary>
     /// <exception cref="InvalidCastException">The value is not a number.</exception>

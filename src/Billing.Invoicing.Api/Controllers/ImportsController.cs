@@ -12,6 +12,8 @@ namespace Billing.Invoicing.Api.Controllers;
 [Route("api/imports")]
 public sealed class ImportsController : ControllerBase
 {
+    private const string ProblemJson = "application/problem+json";
+
     private static readonly string[] OperatorHeaders =
     [
         "X-His-User-No",
@@ -39,7 +41,11 @@ public sealed class ImportsController : ControllerBase
     /// <param name="request">Draft supplying the patient, doctor, pay type and visit.</param>
     /// <returns>200 with the imported lines, counts and notices; 422 with the blocking messages.</returns>
     [HttpPost("requests")]
-    public async Task<IActionResult> Requests([FromBody] ImportRequestsRequest request)
+    [ProducesResponseType<ImportResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status500InternalServerError, ProblemJson)]
+    public async Task<ActionResult<ImportResponse>> Requests([FromBody] ImportRequestsRequest request)
     {
         if (CurrentOperator() is not { } operatorContext)
         {
@@ -54,7 +60,11 @@ public sealed class ImportsController : ControllerBase
     /// <param name="request">Draft from which the visit line is chosen.</param>
     /// <returns>200 with zero or one visit line and, for a consultation or review line, its import result; 422 with the blocking messages.</returns>
     [HttpPost("visit-line")]
-    public async Task<IActionResult> VisitLine([FromBody] VisitLineRequest request)
+    [ProducesResponseType<ImportResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status500InternalServerError, ProblemJson)]
+    public async Task<ActionResult<ImportResponse>> VisitLine([FromBody] VisitLineRequest request)
     {
         if (CurrentOperator() is not { } operatorContext)
         {
@@ -69,7 +79,12 @@ public sealed class ImportsController : ControllerBase
     /// <param name="request">Draft, package service id and optional parent source id.</param>
     /// <returns>200 with the component lines, import result, warnings and adjusted values; 422 with the blocking messages.</returns>
     [HttpPost("package")]
-    public async Task<IActionResult> Package([FromBody] PackageImportRequest request)
+    [ProducesResponseType<ImportResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status501NotImplemented, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status500InternalServerError, ProblemJson)]
+    public async Task<ActionResult<ImportResponse>> Package([FromBody] PackageImportRequest request)
     {
         if (CurrentOperator() is not { } operatorContext)
         {
@@ -84,7 +99,11 @@ public sealed class ImportsController : ControllerBase
     /// <param name="request">Draft, offer id and bundle quantity.</param>
     /// <returns>200 with the offer lines; 422 with the blocking messages.</returns>
     [HttpPost("bundled-offer")]
-    public async Task<IActionResult> BundledOffer([FromBody] BundledOfferRequest request)
+    [ProducesResponseType<ImportResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status500InternalServerError, ProblemJson)]
+    public async Task<ActionResult<ImportResponse>> BundledOffer([FromBody] BundledOfferRequest request)
     {
         if (CurrentOperator() is not { } operatorContext)
         {
@@ -104,7 +123,7 @@ public sealed class ImportsController : ControllerBase
 
     /// <summary>Writes the 422 <c>operator-context-missing</c> body naming the operator-context headers.</summary>
     /// <returns>An empty result, the body being already written.</returns>
-    private async Task<IActionResult> OperatorMissing()
+    private async Task<ActionResult> OperatorMissing()
     {
         await _problems.WriteAsync(HttpContext, OperatorHeaders);
         return new EmptyResult();
@@ -113,7 +132,7 @@ public sealed class ImportsController : ControllerBase
     /// <summary>Returns 422 when the import carries a blocking message, else 200 with the import.</summary>
     /// <param name="response">The workflow's import response.</param>
     /// <returns>The action result.</returns>
-    private async Task<IActionResult> Respond(ImportResponse response) =>
+    private async Task<ActionResult<ImportResponse>> Respond(ImportResponse response) =>
         HasBlocking(response.Messages)
             ? await Rejected(response.Messages, response.OpenItems, response.Adjusted)
             : Ok(response);
@@ -130,7 +149,7 @@ public sealed class ImportsController : ControllerBase
     /// <param name="openItems">Open-item ids; null writes none.</param>
     /// <param name="adjusted">Adjusted values keyed by legacy item name; null omits them.</param>
     /// <returns>An empty result, the body being already written.</returns>
-    private async Task<IActionResult> Rejected(
+    private async Task<ActionResult> Rejected(
         IReadOnlyList<MessageDto> messages,
         IReadOnlyList<string>? openItems,
         IReadOnlyDictionary<string, object?>? adjusted)

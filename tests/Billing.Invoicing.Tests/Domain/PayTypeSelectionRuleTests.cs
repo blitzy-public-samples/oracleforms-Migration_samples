@@ -56,7 +56,7 @@ public sealed class PayTypeSelectionRuleTests
             fixture.Compare);
     }
 
-    /// <summary>Checks that the DR-24 fixture is a domain fixture traced to T015, T023, T026 and the PAYTYPE item whose cases expect both cash and credit.</summary>
+    /// <summary>Checks that the DR-24 fixture is a domain fixture traced to T015, T023, T026 and the PAYTYPE item whose cases expect both cash and credit, and null only for an inherited null claim-preload pay type.</summary>
     [Fact]
     [Trait("Rule", RuleId)]
     public void Fixture_DR_24_expects_cash_and_credit()
@@ -73,7 +73,14 @@ public sealed class PayTypeSelectionRuleTests
         var expectedPayTypes = new HashSet<int>();
         foreach (var fixtureCase in fixture.Cases)
         {
-            var payType = ExpectedPayType(fixtureCase);
+            if (ExpectedPayType(fixtureCase) is not { } payType)
+            {
+                Assert.True(
+                    InheritsNullPayType(ReadInput(fixtureCase)),
+                    $"Case '{fixtureCase.Name}' expects a null {PayTypeKey} without a claim preload whose pay type is null and CASH_OR_CREDIT other than {CashPayType} or {CreditPayType}.");
+                continue;
+            }
+
             Assert.True(
                 payType is CashPayType or CreditPayType,
                 $"Case '{fixtureCase.Name}' expects {PayTypeKey} {payType}, not {CashPayType} or {CreditPayType}.");
@@ -96,19 +103,24 @@ public sealed class PayTypeSelectionRuleTests
         }
     }
 
-    private static int ExpectedPayType(FixtureCase fixtureCase)
+    private static int? ExpectedPayType(FixtureCase fixtureCase)
     {
         if (fixtureCase.Expected.Values is not { ValueKind: JsonValueKind.Object } values
             || !values.TryGetProperty(PayTypeKey, out var payType)
-            || payType.ValueKind != JsonValueKind.Number
-            || !payType.TryGetInt32(out var value))
+            || (payType.ValueKind != JsonValueKind.Null
+                && (payType.ValueKind != JsonValueKind.Number || !payType.TryGetInt32(out _))))
         {
-            Assert.Fail($"Case '{fixtureCase.Name}' has no integer {PayTypeKey}.");
-            return 0;
+            Assert.Fail($"Case '{fixtureCase.Name}' has no integer or null {PayTypeKey}.");
+            return null;
         }
 
-        return value;
+        return payType.ValueKind == JsonValueKind.Null ? null : payType.GetInt32();
     }
+
+    /// <summary>Returns whether the input has a claim preload with a null pay type and a CASH_OR_CREDIT other than 1 or 2.</summary>
+    private static bool InheritsNullPayType(PayTypeInput input) =>
+        input.ClaimPreload is { PayType: null }
+        && input.Parameters?.CashOrCredit is not (CashPayType or CreditPayType);
 
     private sealed record PayTypeInput(
         [property: JsonRequired] string? CompCode,

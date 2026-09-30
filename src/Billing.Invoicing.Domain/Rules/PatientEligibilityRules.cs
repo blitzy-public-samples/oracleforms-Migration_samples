@@ -29,17 +29,23 @@ public static class PatientEligibilityRules
     private const string PolicyIsHoled = "Policy Is Holed";
     private const string ClassIsHoled = "Class Is Holed";
     private const string ReferralRequired = "Refral Required For This Class";
+    private const string CoverageRowMissing = "FRM-40735: WHEN-VALIDATE-ITEM trigger raised unhandled exception ORA-01403.";
 
     /// <summary>Evaluates the contract, company, card, policy and class checks of the patient's coverage.</summary>
-    /// <param name="coverage">Coverage snapshot read from <c>V_PAT_DATA</c>; null when the patient has none.</param>
+    /// <param name="coverage">Coverage snapshot read from <c>V_PAT_DATA</c> for a nonblank patient; null when <c>V_PAT_DATA</c> has no row.</param>
     /// <param name="parameters">Entry parameters; <c>INV_DATE_ADMIN</c> and <c>CASH_OR_CREDIT</c> are read.</param>
     /// <param name="draftDate">The draft's invoice date and time (<c>INVDATE</c>).</param>
-    /// <returns>Messages on <c>PATIENTNO</c> in legacy order, ending at the first blocking message; no adjusted values.</returns>
+    /// <returns>The single blocking FRM-40735 message when the row is missing; otherwise messages on <c>PATIENTNO</c> in legacy order, ending at the first blocking message; no adjusted values.</returns>
     public static RuleResult Evaluate(PatientCoverageSnapshot? coverage, InvoiceEntryParameters parameters, DateTime draftDate)
     {
         ArgumentNullException.ThrowIfNull(parameters);
 
-        if (coverage is null || IsCashCompany(coverage, parameters))
+        if (coverage is null)
+        {
+            return Stop(new List<ValidationMessage>(), CoverageRowMissing);
+        }
+
+        if (IsCashCompany(coverage, parameters))
         {
             return RuleResult.Empty;
         }

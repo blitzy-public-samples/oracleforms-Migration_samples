@@ -14,8 +14,8 @@ public static class PayTypeSelectionRule
     /// <param name="companyType">Company type (<c>COMPANYS.COMP_TYPE</c>) of that company, when known.</param>
     /// <param name="parameters">Entry parameters; <see cref="InvoiceEntryParameters.CashOrCredit"/> is read.</param>
     /// <param name="claimPreload">Header preloaded from the claim's first invoice; when set, it decides the pay type before any company rule. Null when there is no claim preload.</param>
-    /// <returns>1 for a cash invoice, 2 for a credit invoice.</returns>
-    public static int Decide(string? compCode, int? companyType, InvoiceEntryParameters parameters, InvoiceHeaderDraft? claimPreload)
+    /// <returns>1 for a cash invoice, 2 for a credit invoice; null only when a claim preload's inherited pay type is null.</returns>
+    public static int? Decide(string? compCode, int? companyType, InvoiceEntryParameters parameters, InvoiceHeaderDraft? claimPreload)
     {
         ArgumentNullException.ThrowIfNull(parameters);
 
@@ -25,7 +25,7 @@ public static class PayTypeSelectionRule
             {
                 Cash => Cash,
                 Credit => Credit,
-                _ => claimPreload.PayType ?? Credit,
+                _ => claimPreload.PayType,
             };
         }
 

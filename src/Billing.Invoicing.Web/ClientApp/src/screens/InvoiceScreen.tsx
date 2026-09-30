@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import type { Dispatch } from 'react';
+import type { Dispatch, FormEvent, KeyboardEvent } from 'react';
 import {
   ApiError,
   buildDocument,
   createInvoice,
-  getCoverage,
   getInvoice,
   getLastInvoiceNo,
   importBundledOffer,
@@ -24,12 +23,12 @@ import type {
   MessageDto,
   ValidateTarget,
 } from '../api/types';
-import { canSave } from '../state/invoiceDraft';
-import type { InvoiceDraftAction, InvoiceDraftState } from '../state/invoiceDraft';
+import { canSave, ENTRY_NOT_A_NUMBER, isSuperseded, parseDecimalEntry, requestOrigin } from '../state/invoiceDraft';
+import type { InvoiceDraftAction, InvoiceDraftState, RequestOrigin } from '../state/invoiceDraft';
 import FieldMessage from '../components/FieldMessage';
 import InvoiceHeaderForm from '../components/InvoiceHeaderForm';
 import InvoiceLinesGrid from '../components/InvoiceLinesGrid';
-import LovPicker from '../components/LovPicker';
+import LovPicker, { LovConnectivityContext } from '../components/LovPicker';
 import OpenItemNotice from '../components/OpenItemNotice';
 import PaymentPanel from '../components/PaymentPanel';
 import TotalsPanel from '../components/TotalsPanel';
@@ -71,6 +70,8 @@ const PREVIEW_AFTER = new Set<ValidateTarget>([
   'DISC',
   'MY_DISC',
   'LDISCT',
+  'AMOUNT_1',
+  'AMOUNT_2',
 ]);
 
 /** Fields whose messages InvoiceHeaderForm renders beside the field. */
@@ -99,6 +100,10 @@ const LINE_SOURCE = /^LINE:\d+:(.+)$/;
 const ATTEMPT_SOURCES: ReadonlySet<string> = new Set(['CREATE', IMPORT_SOURCE]);
 const SAVED_READ_ONLY_OPEN_ITEM = 'OI-56';
 
+/** Enabled controls the keyboard can reach. */
+const FOCUSABLE =
+  'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])';
+
 /** Reducer source key of a validation target: `LINE:<i>:<TARGET>` for a line, else the target. */
 function messageKey(target: ValidateTarget, lineIndex: number | null): string {
   return lineIndex !== null ? `LINE:${lineIndex}:${target}` : target;
@@ -114,9 +119,31 @@ function isLocked(state: InvoiceDraftState): boolean {
   return state.draft === null || state.saved !== null || state.readOnly;
 }
 
-/** Save enablement: `canSave` without the messages of the last Save or import press (D-59). */
-function saveAllowed(state: InvoiceDraftState): boolean {
-  const messages = Object.fromEntries(Object.entries(state.messages).filter(([source]) => !ATTEMPT_SOURCES.has(source)));
+/** Messages of a Save or import press and the draft on screen when they arrived. */
+type AttemptVerdict = { messages: MessageDto[]; draft: InvoiceDraftState['draft'] };
+
+/** Records each Save or import press message list with its draft; a list that only lost dismissed messages keeps its draft. */
+function recordVerdicts(state: InvoiceDraftState, verdicts: Map<string, AttemptVerdict>): void {
+  for (const source of ATTEMPT_SOURCES) {
+    const messages = state.messages[source];
+    const recorded = verdicts.get(source);
+    if (messages === undefined) {
+      verdicts.delete(source);
+    } else if (recorded === undefined || recorded.messages !== messages) {
+      const dismissedOnly = recorded !== undefined && messages.every((message) => recorded.messages.includes(message));
+      verdicts.set(source, { messages, draft: dismissedOnly ? recorded.draft : state.draft });
+    }
+  }
+}
+
+/** Save enablement: `canSave` without the Save or import press messages returned for an earlier draft (D-59). */
+function saveAllowed(state: InvoiceDraftState, verdicts: ReadonlyMap<string, AttemptVerdict>): boolean {
+  const messages = Object.fromEntries(
+    Object.entries(state.messages).filter(([source, list]) => {
+      const recorded = verdicts.get(source);
+      return !ATTEMPT_SOURCES.has(source) || recorded === undefined || recorded.messages !== list || recorded.draft === state.draft;
+    }),
+  );
   return canSave({ ...state, messages });
 }
 
@@ -197,12 +224,17 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
   const baseId = useId();
   const latest = useRef(state);
   latest.current = state;
+  const verdicts = useRef(new Map<string, AttemptVerdict>());
+  recordVerdicts(state, verdicts.current);
 
   const [queue, setQueue] = useState<Step[]>([]);
   const running = useRef<Step | null>(null);
   const [lov, setLov] = useState<ScreenLov | null>(null);
   const [bundleQty, setBundleQty] = useState('1');
+  const [bundleQtyError, setBundleQtyError] = useState<string | null>(null);
   const [importSummary, setImportSummary] = useState<ImportSummary | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+  const messagesRef = useRef<HTMLDivElement>(null);
 
   const enqueue = useCallback((...steps: Step[]) => {
     setQueue((current) => [...current, ...steps]);
@@ -228,23 +260,28 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
     [enqueue],
   );
 
-  /** Routes a failed call to the reducer and starts the recovery a stale-data error asks for. */
-  function handleError(error: unknown, source: string): void {
+  const reportLovConnectivity = useCallback(
+    (available: boolean) => dispatch({ type: available ? 'connectivityRestored' : 'connectivityLost' }),
+    [dispatch],
+  );
+
+  /** Routes a failed call to the reducer and starts the recovery a stale-data error asks for, unless `origin` is superseded; `lineClientId` names the line of a line source. */
+  function handleError(error: unknown, source: string, origin?: RequestOrigin, lineClientId?: string | null): void {
     if (!(error instanceof ApiError)) {
       throw error;
     }
     if (error.type === 'field-validation') {
-      dispatch({ type: 'validationFailed', target: source, lineIndex: null, error });
+      dispatch({ type: 'validationFailed', target: source, lineIndex: null, error, origin });
       return;
     }
-    dispatch({ type: 'errorReceived', source, error });
-    if (error.type !== 'oracle-business-error') {
+    dispatch({ type: 'errorReceived', source, lineClientId, error, origin });
+    if (error.type !== 'oracle-business-error' || (origin !== undefined && isSuperseded(latest.current, origin))) {
       return;
     }
     if (error.kind === 'RequestLinesStale') {
       const draft = latest.current.draft;
       if (draft !== null) {
-        dispatch({ type: 'linesReplaced', lines: draft.lines.filter((line) => line.patServReqRowId == null) });
+        dispatch({ type: 'linesReplaced', lines: draft.lines.filter((line) => line.patServReqRowId == null), origin });
       }
       enqueue({ kind: 'reimportRequests' });
     } else if (error.kind === 'DefinitionStale') {
@@ -271,16 +308,24 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
     }
   }
 
-  /** POST /api/drafts/validate for one target, then the visit line or preview it leads to. */
+  /** POST /api/drafts/validate for one target, with a PATIENTNO target's coverage, then the visit line or preview it leads to. */
   async function validate(target: ValidateTarget, lineIndex: number | null): Promise<void> {
     const current = latest.current;
     const draft = current.draft;
     if (draft === null || isLocked(current) || (lineIndex !== null && lineIndex >= draft.lines.length)) {
       return;
     }
+    const lineClientId = lineIndex === null ? null : (draft.lines[lineIndex]?.clientId ?? null);
+    const origin = requestOrigin(draft, target === 'PATIENTNO');
     try {
       const response = await validateDraft({ draft, target, lineIndex });
-      dispatch({ type: 'validationApplied', target, lineIndex, response });
+      if (target === 'PATIENTNO') {
+        dispatch({ type: 'coverageApplied', response: response.coverage ?? null, origin });
+      }
+      dispatch({ type: 'validationApplied', target, lineIndex, lineClientId, response, origin });
+      if (isSuperseded(latest.current, origin)) {
+        return;
+      }
       const followUps: Step[] = [];
       if (target === 'DOCIDX' && response.visitLine != null && response.visitLine.kind !== 'None') {
         followUps.push({ kind: 'visitLine' });
@@ -293,44 +338,41 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
       }
     } catch (error) {
       if (isFieldValidation(error)) {
-        dispatch({ type: 'validationFailed', target, lineIndex, error });
+        if (target === 'PATIENTNO') {
+          dispatch({ type: 'coverageApplied', response: null, origin });
+        }
+        dispatch({ type: 'validationFailed', target, lineIndex, lineClientId, error, origin });
         return;
       }
-      handleError(error, messageKey(target, lineIndex));
+      handleError(error, messageKey(target, lineIndex), origin, lineClientId);
     }
   }
 
-  /** Coverage of the entered patient, then the PATIENTNO validation. */
+  /** Clears the previous patient's context, then queues the PATIENTNO validation, which also returns the new patient's coverage. */
   async function patientChanged(): Promise<void> {
     const current = latest.current;
     const draft = current.draft;
     if (draft === null || isLocked(current)) {
       return;
     }
-    const patientNo = draft.header.patientNo;
-    if (patientNo == null || patientNo.trim() === '') {
-      enqueue({ kind: 'validate', target: 'PATIENTNO' });
-      return;
-    }
-    try {
-      const response = await getCoverage(patientNo, draft.draftDate, draft.parameters);
-      dispatch({ type: 'coverageApplied', response });
-      enqueue({ kind: 'validate', target: 'PATIENTNO' });
-    } catch (error) {
-      handleError(error, 'COVERAGE');
-    }
+    dispatch({ type: 'patientContextCleared', origin: requestOrigin(draft, true) });
+    enqueue({ kind: 'validate', target: 'PATIENTNO' });
   }
 
-  /** POST /api/invoices/preview for an editable draft with lines. */
+  /** POST /api/invoices/preview for an editable draft with lines; an editable draft without lines has its preview cleared. */
   async function runPreview(): Promise<void> {
     const current = latest.current;
     const draft = current.draft;
-    if (draft === null || isLocked(current) || draft.lines.length === 0) {
+    if (draft === null || isLocked(current)) {
+      return;
+    }
+    if (draft.lines.length === 0) {
+      dispatch({ type: 'previewCleared' });
       return;
     }
     try {
       const response = await previewInvoice(draft);
-      dispatch({ type: 'previewApplied', response });
+      dispatch({ type: 'previewApplied', response, sent: draft.lines });
     } catch (error) {
       handleError(error, 'PREVIEW');
     }
@@ -345,41 +387,42 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
     [dispatch, enqueue],
   );
 
-  /** Saves the draft, reloads it read-only and, for Save & Print, requests the invoice document. */
+  /** Saves the draft, reloads it read-only and, for Save & Print, requests the invoice document, while the draft is still current. */
   async function save(print: boolean): Promise<void> {
     const current = latest.current;
     const draft = current.draft;
-    if (draft === null || !saveAllowed(current)) {
+    if (draft === null || !saveAllowed(current, verdicts.current)) {
       return;
     }
-    let invNo: number | null;
+    const origin = requestOrigin(draft);
+    let invNo: number;
     try {
       const response = await createInvoice({ draft });
-      dispatch({ type: 'saved', response });
+      dispatch({ type: 'saved', response, origin });
       invNo = response.invNo;
     } catch (error) {
       if (isFieldValidation(error)) {
-        dispatch({ type: 'validationFailed', target: 'CREATE', lineIndex: null, error });
+        dispatch({ type: 'validationFailed', target: 'CREATE', lineIndex: null, error, origin });
         return;
       }
-      handleError(error, 'CREATE');
+      handleError(error, 'CREATE', origin);
       return;
     }
-    if (invNo == null) {
+    if (isSuperseded(latest.current, origin)) {
       return;
     }
     try {
       const view = await getInvoice(invNo);
-      dispatch({ type: 'invoiceLoaded', invNo, response: view });
+      dispatch({ type: 'invoiceLoaded', invNo, response: view, origin });
     } catch (error) {
-      handleError(error, 'SAVED');
+      handleError(error, 'SAVED', origin);
     }
-    if (print) {
+    if (print && !isSuperseded(latest.current, origin)) {
       try {
         await buildDocument(invNo, 'invoice');
         dispatch({ type: 'connectivityRestored' });
       } catch (error) {
-        handleError(error, 'PRINT');
+        handleError(error, 'PRINT', origin);
       }
     }
   }
@@ -391,19 +434,23 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
     if (draft === null || isLocked(current)) {
       return;
     }
+    const origin = requestOrigin(draft, true);
     try {
       const response = await importRequests({ draft });
-      dispatch({ type: 'linesImported', source: IMPORT_SOURCE, response });
+      dispatch({ type: 'linesImported', source: IMPORT_SOURCE, response, origin });
+      if (isSuperseded(latest.current, origin)) {
+        return;
+      }
       rememberImport('Import Request', draft.requestId, response);
       if (linesChanged || (response.lines ?? []).length > 0) {
         enqueue({ kind: 'preview' });
       }
     } catch (error) {
       if (isFieldValidation(error)) {
-        dispatch({ type: 'validationFailed', target: IMPORT_SOURCE, lineIndex: null, error });
+        dispatch({ type: 'validationFailed', target: IMPORT_SOURCE, lineIndex: null, error, origin });
         return;
       }
-      handleError(error, IMPORT_SOURCE);
+      handleError(error, IMPORT_SOURCE, origin);
     }
   }
 
@@ -419,6 +466,7 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
     if (line === undefined || packageServiceId === '') {
       return;
     }
+    const origin = requestOrigin(draft, true);
     try {
       const response = await importPackage({ draft, packageServiceId, parentSourceId: null });
       const imported = response.lines ?? [];
@@ -431,17 +479,20 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
             );
       if (now !== null && position >= 0 && imported.some((candidate) => candidate.packageLineRole === 'PARENT')) {
         const lines: InvoiceLineDraft[] = [...now.lines.slice(0, position), ...imported, ...now.lines.slice(position + 1)];
-        dispatch({ type: 'linesReplaced', lines });
-        dispatch({ type: 'linesImported', source: IMPORT_SOURCE, response: { ...response, lines: [] } });
+        dispatch({ type: 'linesReplaced', lines, origin });
+        dispatch({ type: 'linesImported', source: IMPORT_SOURCE, response: { ...response, lines: [] }, origin });
       } else {
-        dispatch({ type: 'linesImported', source: IMPORT_SOURCE, response });
+        dispatch({ type: 'linesImported', source: IMPORT_SOURCE, response, origin });
+      }
+      if (isSuperseded(latest.current, origin)) {
+        return;
       }
       rememberImport('Import Package', draft.requestId, response);
       if (imported.length > 0) {
         enqueue({ kind: 'preview' });
       }
     } catch (error) {
-      handleError(error, IMPORT_SOURCE);
+      handleError(error, IMPORT_SOURCE, origin);
     }
   }
 
@@ -452,19 +503,28 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
     if (draft === null || isLocked(current)) {
       return;
     }
+    const quantity = parseDecimalEntry(bundleQty);
+    if (quantity.kind !== 'value') {
+      setBundleQtyError(quantity.kind === 'invalid' ? quantity.message : ENTRY_NOT_A_NUMBER);
+      return;
+    }
+    const origin = requestOrigin(draft, true);
     try {
       const response = await importBundledOffer({
         draft,
         offerId: Number(rowValue(row, 'OFERID')),
-        bundleQty: Number(bundleQty),
+        bundleQty: quantity.text,
       });
-      dispatch({ type: 'linesImported', source: IMPORT_SOURCE, response });
+      dispatch({ type: 'linesImported', source: IMPORT_SOURCE, response, origin });
+      if (isSuperseded(latest.current, origin)) {
+        return;
+      }
       rememberImport('Load offer', draft.requestId, response);
       if ((response.lines ?? []).length > 0) {
         enqueue({ kind: 'preview' });
       }
     } catch (error) {
-      handleError(error, IMPORT_SOURCE);
+      handleError(error, IMPORT_SOURCE, origin);
     }
   }
 
@@ -475,15 +535,19 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
     if (draft === null || isLocked(current)) {
       return;
     }
+    const origin = requestOrigin(draft, true);
     try {
       const response = await importVisitLine({ draft });
-      dispatch({ type: 'linesImported', source: IMPORT_SOURCE, response });
+      dispatch({ type: 'linesImported', source: IMPORT_SOURCE, response, origin });
+      if (isSuperseded(latest.current, origin)) {
+        return;
+      }
       rememberImport('Visit line', draft.requestId, response);
       if ((response.lines ?? []).length > 0) {
         enqueue({ kind: 'preview' });
       }
     } catch (error) {
-      handleError(error, IMPORT_SOURCE);
+      handleError(error, IMPORT_SOURCE, origin);
     }
   }
 
@@ -538,6 +602,7 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
     setQueue((current) => current.filter((step) => step === running.current));
     setLov(null);
     setBundleQty('1');
+    setBundleQtyError(null);
     try {
       const response = await newDraft(window.location.search);
       dispatch({ type: 'draftLoaded', response });
@@ -549,12 +614,13 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
   const draft = state.draft;
   const header = draft?.header ?? null;
   const locked = isLocked(state);
-  const saveEnabled = saveAllowed(state);
+  const bundleQtyMessage = locked ? null : bundleQtyError;
+  const saveEnabled = saveAllowed(state, verdicts.current);
   const savedInvNo = savedInvoiceNo(state);
   const currentServiceId = draft?.lines[state.currentLineIndex]?.serviceId?.trim() ?? '';
 
-  // A queried invoice not saved from this draft has no draft preview of its own.
-  const draftPreview = state.saved?.view != null && state.saved.createResponse == null ? null : state.preview;
+  // A saved or queried invoice shows no draft preview.
+  const draftPreview = state.saved !== null ? null : state.preview;
   const paymentStatus = draftPreview?.totals?.paymentStatus ?? null;
 
   const formLevel = formLevelMessages(state.messages);
@@ -563,7 +629,14 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
     createMessage !== null &&
     createMessage.trim() !== '' &&
     !Object.values(state.messages).some((list) => list.some((message) => message.text === createMessage));
-  const shownImport = importSummary !== null && draft !== null && importSummary.requestId === draft.requestId ? importSummary : null;
+  // The import result shows only while the screen shows its draft or the invoice saved from it.
+  const shownImport =
+    importSummary !== null &&
+    draft !== null &&
+    importSummary.requestId === draft.requestId &&
+    (state.saved === null || state.saved.createResponse != null)
+      ? importSummary
+      : null;
   const openItemIds = [
     ...new Set([
       ...Object.values(state.openItems).flat(),
@@ -572,14 +645,43 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
   ];
 
   const dismissFormLevel = (index: number): void => {
+    // The first control after the messages group, focused when the dismissal leaves focus on the body.
+    const group = messagesRef.current;
+    const next =
+      group === null || formRef.current === null
+        ? undefined
+        : Array.from(formRef.current.querySelectorAll<HTMLElement>(FOCUSABLE)).find(
+            (element) =>
+              !group.contains(element) && (group.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+          );
     const refs = [...(formLevel.refs[index] ?? [])].sort((a, b) => b.index - a.index);
     for (const ref of refs) {
       dispatch({ type: 'messageDismissed', source: ref.source, index: ref.index });
     }
+    window.setTimeout(() => {
+      const active = document.activeElement;
+      if ((active === null || active === document.body) && next?.isConnected && next.matches(FOCUSABLE)) {
+        next.focus();
+      }
+    }, 0);
   };
 
-  return (
-    <main className="screen" aria-labelledby={`${baseId}-title`}>
+  /** Saves on form submission without navigating. */
+  const onSubmit = (event: FormEvent<HTMLFormElement>): void => {
+    event.preventDefault();
+    void save(false);
+  };
+
+  /** Keeps Enter in an input of a modal dialog from submitting the form. */
+  const onFormKeyDown = (event: KeyboardEvent<HTMLFormElement>): void => {
+    if (event.key === 'Enter' && event.target instanceof HTMLInputElement && event.target.closest('[aria-modal="true"]') !== null) {
+      event.preventDefault();
+    }
+  };
+
+  const screen = (
+    <main aria-labelledby={`${baseId}-title`}>
+    <form ref={formRef} className="screen" aria-labelledby={`${baseId}-title`} noValidate onSubmit={onSubmit} onKeyDown={onFormKeyDown}>
       <h1 className="screen-title" id={`${baseId}-title`}>
         Front Office Cashier Invoice
       </h1>
@@ -600,7 +702,7 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
       </div>
 
       {formLevel.messages.length > 0 && (
-        <div role="group" aria-label="Invoice messages">
+        <div ref={messagesRef} role="group" aria-label="Invoice messages">
           <FieldMessage messages={formLevel.messages} onDismiss={dismissFormLevel} />
         </div>
       )}
@@ -658,11 +760,11 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
         <button type="button" disabled={!saveEnabled} onClick={() => void save(true)}>
           Save &amp; Print
         </button>
-        <button type="button" disabled={!saveEnabled} onClick={() => void save(false)}>
+        <button type="submit" disabled={!saveEnabled}>
           Save
         </button>
         {paymentStatus !== null && paymentStatus !== '' && (
-          <span className="payment-status" aria-label="Payment status">
+          <span className="payment-status" role="status" aria-live="off" aria-label="Payment status">
             {paymentStatus}
           </span>
         )}
@@ -689,9 +791,17 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
           step={1}
           inputMode="numeric"
           disabled={locked}
+          className={bundleQtyMessage !== null ? 'invalid' : undefined}
+          aria-invalid={bundleQtyMessage !== null || undefined}
           value={bundleQty}
-          onChange={(event) => setBundleQty(event.currentTarget.value)}
+          onChange={(event) => {
+            setBundleQty(event.currentTarget.value);
+            setBundleQtyError(null);
+          }}
         />
+        {bundleQtyMessage !== null && (
+          <FieldMessage messages={[]} fieldError={{ text: bundleQtyMessage, oracleErrorNumber: null }} />
+        )}
         <button type="button" disabled={locked} aria-haspopup="dialog" onClick={() => setLov('OFFERS')}>
           Load offer
         </button>
@@ -717,6 +827,9 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
           onClose={() => setLov(null)}
         />
       )}
+    </form>
     </main>
   );
+
+  return <LovConnectivityContext.Provider value={reportLovConnectivity}>{screen}</LovConnectivityContext.Provider>;
 }

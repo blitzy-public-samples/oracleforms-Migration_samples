@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using Billing.Invoicing.Domain.Model;
 using Billing.Invoicing.Domain.Rules;
@@ -28,6 +29,16 @@ public sealed class ClinicSuitabilityRulesTests
     private const string WarningOutcome = "Warning";
 
     private const string PassOutcome = "Pass";
+
+    private const string ClinicField = "CLINICID";
+
+    private const string AgeNotSuitable = "Patient age  not suitable for this clinic";
+
+    private const decimal MinimumAgeYears = 1m;
+
+    private static readonly decimal[] GridAgesYears = [0m, 0.5m, 1m, 5m, 12m, 13m, 17m, 18m, 30m, 60m, 61m];
+
+    private static readonly decimal?[] GridAgeBounds = [null, 1m, 12m, 18m, 60m];
 
     /// <summary>Runs the check named by the case and compares outcome, messages and exact adjusted values; DR-04 never blocks.</summary>
     /// <param name="caseName">Fixture case name.</param>
@@ -118,6 +129,84 @@ public sealed class ClinicSuitabilityRulesTests
         Assert.Empty(age.Messages);
         Assert.Empty(age.Adjusted);
     }
+
+    /// <summary>Over every AGE_MIN, AGE_MAX and age of the grid, CheckAge warns exactly when T031's age predicate is TRUE in SQL three-valued logic.</summary>
+    [Fact]
+    [Trait("Rule", RuleId)]
+    public void Check_age_matches_T031_three_valued_predicate()
+    {
+        var rows = (
+            from ageMin in GridAgeBounds
+            from ageMax in GridAgeBounds
+            from ageYears in GridAgesYears
+            let clinic = new ClinicProfile { ClinicId = 5, AgeMin = ageMin, AgeMax = ageMax }
+            select (
+                Inputs: $"ageMin={Format(ageMin)}, ageMax={Format(ageMax)}, ageYears={Format(ageYears)}",
+                Expected: ExpectedAgeResult(T031WarnsOnAge(ageMin, ageMax, ageYears)),
+                Actual: Describe(ClinicSuitabilityRules.CheckAge(clinic, ageYears)))).ToList();
+
+        Assert.Contains(rows, row => row.Expected == ExpectedAgeResult(true));
+        Assert.Contains(rows, row => row.Expected == ExpectedAgeResult(false));
+        Assert.All(rows, row => Assert.Equal(row.Expected, row.Actual));
+    }
+
+    /// <summary>Every DR-04 CheckAge fixture case expects T031's three-valued outcome for its inputs, and the minimum-only and maximum-only clinics each have Warning and Pass cases.</summary>
+    [Fact]
+    [Trait("Rule", RuleId)]
+    public void Fixture_DR_04_age_cases_match_T031_three_valued_predicate()
+    {
+        var ageCases = ParityFixture.Load(RuleId).Cases
+            .Where(fixtureCase => ReadMethod(fixtureCase) == CheckAgeMethod)
+            .Select(fixtureCase => (fixtureCase.Name, Clinic: ReadClinic(fixtureCase), AgeYears: ReadAgeYears(fixtureCase), fixtureCase.Expected.Outcome))
+            .ToList();
+
+        Assert.NotEmpty(ageCases);
+        Assert.All(ageCases, ageCase => Assert.Equal(
+            ageCase.Clinic is { } clinic && T031WarnsOnAge(clinic.AgeMin, clinic.AgeMax, ageCase.AgeYears) ? WarningOutcome : PassOutcome,
+            ageCase.Outcome));
+
+        foreach (var minimumOnly in new[] { true, false })
+        {
+            var outcomes = ageCases
+                .Where(ageCase => ageCase.Clinic is { } clinic && clinic.AgeMin.HasValue == minimumOnly && clinic.AgeMax.HasValue != minimumOnly)
+                .Select(ageCase => ageCase.Outcome)
+                .ToList();
+            Assert.Contains(WarningOutcome, outcomes);
+            Assert.Contains(PassOutcome, outcomes);
+        }
+    }
+
+    /// <summary>True only when T031's <c>not (age &gt;= AGE_MIN and age &lt;= AGE_MAX)</c> is TRUE after <c>nvl(age,0) &lt; 1</c> sets the age to 1; null inputs are SQL NULL.</summary>
+    private static bool T031WarnsOnAge(decimal? ageMin, decimal? ageMax, decimal? ageYears)
+    {
+        decimal? age = (ageYears ?? 0m) < MinimumAgeYears ? MinimumAgeYears : ageYears;
+        return Not(And(AtLeast(age, ageMin), AtMost(age, ageMax))) == true;
+    }
+
+    /// <summary>SQL <c>AND</c>: FALSE when either operand is FALSE, TRUE when both are TRUE, otherwise UNKNOWN (null).</summary>
+    private static bool? And(bool? left, bool? right) => (left, right) switch
+    {
+        (false, _) or (_, false) => false,
+        (true, true) => true,
+        _ => null,
+    };
+
+    /// <summary>SQL <c>NOT</c>: negates TRUE and FALSE; UNKNOWN (null) stays UNKNOWN.</summary>
+    private static bool? Not(bool? operand) => operand is { } value ? !value : null;
+
+    /// <summary>SQL <c>value &gt;= bound</c>: UNKNOWN (null) when either operand is NULL.</summary>
+    private static bool? AtLeast(decimal? value, decimal? bound) => value is { } v && bound is { } b ? v >= b : null;
+
+    /// <summary>SQL <c>value &lt;= bound</c>: UNKNOWN (null) when either operand is NULL.</summary>
+    private static bool? AtMost(decimal? value, decimal? bound) => value is { } v && bound is { } b ? v <= b : null;
+
+    private static string ExpectedAgeResult(bool warns) =>
+        warns ? $"{WarningOutcome} {ClinicField}|{AgeNotSuitable}|{ValidationMessage.Warning}|{RuleId}" : PassOutcome;
+
+    private static string Describe(RuleResult result) =>
+        Outcome(result) + string.Concat(result.Messages.Select(message => $" {message.Field}|{message.Text}|{message.Severity}|{message.Rule}"));
+
+    private static string Format(decimal? value) => value?.ToString(CultureInfo.InvariantCulture) ?? "null";
 
     private static string Outcome(RuleResult result) =>
         result.IsBlocking ? BlockingOutcome

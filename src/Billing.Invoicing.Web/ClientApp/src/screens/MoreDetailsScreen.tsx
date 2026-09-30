@@ -1,7 +1,8 @@
-import { useEffect, useId, useRef } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { ChangeEvent, Dispatch, FocusEvent } from 'react';
 import { ApiError, getMoreDetails, transferStock, validateDraft } from '../api/client';
-import type { InvoiceLineDraft, MessageDto, MoreDetailsLineKey } from '../api/types';
+import type { InvoiceLineDraft, MessageDto, MoreDetailsLineKey, MoreDetailsResponse } from '../api/types';
+import { currentCoverage, fieldErrorFor } from '../state/invoiceDraft';
 import type { InvoiceDraftAction, InvoiceDraftState } from '../state/invoiceDraft';
 import FieldMessage from '../components/FieldMessage';
 import OpenItemNotice from '../components/OpenItemNotice';
@@ -23,13 +24,20 @@ interface ReadOnlyLineField {
   labels?: Readonly<Record<string, string>>;
 }
 
+/** State of the saved-details load of the selected invoice. */
+type LoadStatus = 'pending' | 'loaded' | 'failed';
+
 const APPROV_REF_NO = 'APPROV_REF_NO';
+
+const NUMBER_LITERAL = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
+
+const NUMBER_ENTRY_ERROR = 'FRM-50016: Legal characters are 0-9 - + E.';
 
 const EDITABLE_FIELDS: readonly EditableLineField[] = [
   { key: 'teethNo', item: 'TEETH_NO', label: 'Teeth No', kind: 'text', maxLength: 2 },
   { key: 'toothSurface', item: 'TOOTH_SURFACE', label: 'Tooth Surface', kind: 'text', maxLength: 7 },
   { key: 'approvDate', item: 'APPROV_DATE', label: 'Approval Date', kind: 'date' },
-  { key: 'approvValidity', item: 'APPROV_VALIDITY', label: 'Approval Validity', kind: 'number' },
+  { key: 'approvValidity', item: 'APPROV_VALIDITY', label: 'Approval Validity', kind: 'number', maxLength: 4 },
   { key: 'approvRefNo', item: APPROV_REF_NO, label: 'Approval Ref No', kind: 'text', maxLength: 20 },
 ];
 
@@ -97,6 +105,17 @@ function parseInput(field: EditableLineField, text: string): string | number | n
   return field.kind === 'number' ? Number(text) : text;
 }
 
+/** Entry error for number `text`: illegal characters, then more characters than the field's maximum length; null when valid. */
+function numberEntryError(field: EditableLineField, text: string): string | null {
+  if (!NUMBER_LITERAL.test(text) || !Number.isFinite(Number(text))) {
+    return NUMBER_ENTRY_ERROR;
+  }
+  if (field.maxLength !== undefined && text.length > field.maxLength) {
+    return `${field.label} accepts at most ${field.maxLength} characters.`;
+  }
+  return null;
+}
+
 /** Element at `index`, or undefined when the index is outside the list. */
 function itemAt<T>(items: readonly T[] | undefined, index: number): T | undefined {
   return items !== undefined && Number.isInteger(index) && index >= 0 && index < items.length ? items[index] : undefined;
@@ -125,6 +144,33 @@ function toApiError(error: unknown): ApiError {
   });
 }
 
+/** True when a more-details response is an object carrying the details of invoice `invNo`. */
+function isDetailsOf(response: unknown, invNo: number): response is MoreDetailsResponse {
+  return typeof response === 'object' && response !== null && 'invNo' in response && response.invNo === invNo;
+}
+
+/** ApiError for a more-details response that carries no details of invoice `invNo`. */
+function invalidDetailsError(invNo: number): ApiError {
+  return new ApiError({
+    status: 200,
+    type: 'http-error',
+    title: 'Invalid response',
+    message: `The more-details response carries no details of invoice ${invNo}.`,
+  });
+}
+
+/** Status text of the saved-details load of invoice `invNo`. */
+function loadStatusText(status: LoadStatus, invNo: number): string {
+  switch (status) {
+    case 'pending':
+      return `Loading saved details of invoice ${invNo}…`;
+    case 'loaded':
+      return `Saved details of invoice ${invNo} loaded.`;
+    case 'failed':
+      return `Saved details of invoice ${invNo} were not loaded. Return and open More Details again to retry.`;
+  }
+}
+
 /** Oracle error number in `ORA-nnnnn` form. */
 function oraText(oracleErrorNumber: number): string {
   return `ORA-${String(Math.abs(oracleErrorNumber)).padStart(5, '0')}`;
@@ -144,15 +190,24 @@ function ReadOnlyField({ id, label, value }: { id: string; label: string; value:
 export default function MoreDetailsScreen({
   state,
   dispatch,
+  active,
+  outageCount,
   onBack,
 }: {
   state: InvoiceDraftState;
   dispatch: Dispatch<InvoiceDraftAction>;
+  active: boolean;
+  outageCount: () => number;
   onBack: () => void;
 }) {
   const latest = useRef(state);
   latest.current = state;
   const requestedInvNo = useRef<number | null>(null);
+  const failedInvNo = useRef<number | null>(null);
+  const failedLoadText = useRef<string | null>(null);
+  const [failedInvNoShown, setFailedInvNoShown] = useState<number | null>(null);
+  const [entryText, setEntryText] = useState<{ key: string; text: string } | null>(null);
+  const [entryError, setEntryError] = useState<{ key: string; text: string } | null>(null);
   const refNoOnFocus = useRef('');
   const baseId = useId();
 
@@ -161,31 +216,90 @@ export default function MoreDetailsScreen({
   const editable = !isSaved && !state.readOnly;
   const index = state.currentLineIndex;
   const loadedInvNo = state.moreDetails?.invNo;
-  const details = isSaved && state.moreDetails !== null && state.moreDetails.invNo === invNo ? state.moreDetails : null;
+  const details = isSaved && state.moreDetails?.invNo === invNo ? state.moreDetails : null;
+  const loadStatus: LoadStatus =
+    details !== null ? 'loaded' : isSaved && failedInvNoShown === invNo ? 'failed' : 'pending';
 
-  // Loads the persisted MORE fields once per saved invoice number.
+  /** Requests the persisted MORE fields of `forInvNo`; a success clears the form error its failed attempt left, and a deliberate one the banner unless an outage was reported after it started. */
+  function load(forInvNo: number, deliberate: boolean) {
+    const outagesAtStart = outageCount();
+    requestedInvNo.current = forInvNo;
+    failedInvNo.current = null;
+    setFailedInvNoShown(null);
+
+    /** Ends the attempt; true when `forInvNo` is still the selected invoice. */
+    const settle = (): boolean => {
+      if (requestedInvNo.current === forInvNo) {
+        requestedInvNo.current = null;
+      }
+      return latest.current.saved?.invNo === forInvNo;
+    };
+
+    /** Records the failed attempt and reports its error. */
+    const fail = (error: ApiError) => {
+      failedInvNo.current = forInvNo;
+      failedLoadText.current = error.message;
+      setFailedInvNoShown(forInvNo);
+      dispatch({ type: 'errorReceived', source: 'SAVED', error });
+    };
+
+    getMoreDetails(forInvNo).then(
+      (response: unknown) => {
+        if (!settle()) {
+          return;
+        }
+        if (!isDetailsOf(response, forInvNo)) {
+          fail(invalidDetailsError(forInvNo));
+          return;
+        }
+        dispatch({ type: 'moreDetailsLoaded', response });
+        if (failedLoadText.current !== null && latest.current.formError?.text === failedLoadText.current) {
+          dispatch({ type: 'formErrorCleared' });
+        }
+        failedLoadText.current = null;
+        if (deliberate && outageCount() === outagesAtStart) {
+          dispatch({ type: 'connectivityRestored' });
+        }
+      },
+      (error: unknown) => {
+        if (settle()) {
+          fail(toApiError(error));
+        }
+      },
+    );
+  }
+
+  // Starts one attempt on each entry to MORE while the saved invoice's details are absent and none is in flight.
+  useEffect(() => {
+    const current = latest.current;
+    const forInvNo = current.saved?.invNo;
+    if (!active || forInvNo == null || current.moreDetails?.invNo === forInvNo || requestedInvNo.current === forInvNo) {
+      return;
+    }
+    load(forInvNo, true);
+  }, [active]);
+
+  // Loads the persisted MORE fields once per saved invoice number, unless its last attempt failed; no invoice resets the failure.
   useEffect(() => {
     if (invNo == null) {
-      requestedInvNo.current = null;
+      failedInvNo.current = null;
+      setFailedInvNoShown(null);
       return;
     }
-    if (loadedInvNo === invNo || requestedInvNo.current === invNo) {
+    if (loadedInvNo === invNo || requestedInvNo.current === invNo || failedInvNo.current === invNo) {
       return;
     }
-    requestedInvNo.current = invNo;
-    getMoreDetails(invNo).then(
-      (response) => dispatch({ type: 'moreDetailsLoaded', response }),
-      (error: unknown) => dispatch({ type: 'errorReceived', source: 'SAVED', error: toApiError(error) }),
-    );
+    load(invNo, false);
   }, [invNo, loadedInvNo, dispatch]);
 
-  const header = isSaved ? details : (state.coverage?.coverage ?? null);
+  const header = isSaved ? details : (currentCoverage(state)?.coverage ?? null);
   const draftLine = isSaved ? undefined : itemAt(state.draft?.lines, index);
   const savedLine = isSaved ? itemAt(details?.lines, index) : undefined;
   const lineEditable = editable && draftLine !== undefined;
   const serviceId = displayText(isSaved ? savedLine?.SERVICEID : draftLine?.serviceId);
   const transfers = details?.transMRowIds ?? [];
 
+  const titleId = `${baseId}-title`;
   const insuranceTitleId = `${baseId}-insurance`;
   const lineTitleId = `${baseId}-line`;
   const transfersTitleId = `${baseId}-transfers`;
@@ -199,9 +313,25 @@ export default function MoreDetailsScreen({
     return field.draftKey !== null ? draftLine?.[field.draftKey] : undefined;
   }
 
-  /** Writes an edited line field into the current draft line. */
+  /** Key of an editable field of the current line for its local entry text and entry error. */
+  function entryKey(field: EditableLineField): string {
+    return `${index}:${draftLine?.clientId ?? ''}:${field.item}`;
+  }
+
+  /** Writes an edited line field into the current draft line; number text that is not a number or is too long is rejected. */
   function changeLineField(field: EditableLineField, event: ChangeEvent<HTMLInputElement>) {
-    dispatch({ type: 'lineFieldChanged', index, field: field.key, value: parseInput(field, event.target.value) });
+    const text = event.target.value;
+    if (field.kind === 'number') {
+      const key = entryKey(field);
+      const error = text === '' ? null : numberEntryError(field, text);
+      if (error !== null) {
+        setEntryError({ key, text: error });
+        return;
+      }
+      setEntryError((current) => (current?.key === key ? null : current));
+      setEntryText(text === '' ? null : { key, text });
+    }
+    dispatch({ type: 'lineFieldChanged', index, field: field.key, value: parseInput(field, text) });
   }
 
   /** Remembers the approval reference held when the field gains focus. */
@@ -221,14 +351,15 @@ export default function MoreDetailsScreen({
       return;
     }
     const lineIndex = index;
+    const lineClientId = draft.lines[lineIndex]?.clientId ?? null;
     validateDraft({ draft, target: APPROV_REF_NO, lineIndex }).then(
-      (response) => dispatch({ type: 'validationApplied', target: APPROV_REF_NO, lineIndex, response }),
+      (response) => dispatch({ type: 'validationApplied', target: APPROV_REF_NO, lineIndex, lineClientId, response }),
       (error: unknown) => {
         const apiError = toApiError(error);
         if (apiError.status === 422 && apiError.type === 'field-validation') {
-          dispatch({ type: 'validationFailed', target: APPROV_REF_NO, lineIndex, error: apiError });
+          dispatch({ type: 'validationFailed', target: APPROV_REF_NO, lineIndex, lineClientId, error: apiError });
         } else {
-          dispatch({ type: 'errorReceived', source: lineKey(lineIndex, APPROV_REF_NO), error: apiError });
+          dispatch({ type: 'errorReceived', source: lineKey(lineIndex, APPROV_REF_NO), lineClientId, error: apiError });
         }
       },
     );
@@ -250,46 +381,67 @@ export default function MoreDetailsScreen({
     const id = `${baseId}-${field.item}`;
     const source = lineKey(index, field.item);
     const messages: MessageDto[] = state.messages[source] ?? [];
-    const fieldError = state.fieldErrors[field.item] ?? null;
+    const fieldError = isSaved ? null : fieldErrorFor(state, field.item, draftLine?.clientId ?? null);
     const invalid = fieldError !== null || messages.some((message) => message.severity === 'Blocking');
     const isRefNo = field.item === APPROV_REF_NO;
     const value = isSaved ? savedLine?.[field.item] : draftLine?.[field.key];
+    const key = entryKey(field);
+    const entryInvalid = lineEditable && entryError?.key === key;
+    const typed = lineEditable && entryText?.key === key && Number(entryText.text) === value ? entryText.text : null;
     return (
       <div className="field" key={field.item}>
         <label htmlFor={id}>{field.label}</label>
         <input
           id={id}
-          type={field.kind}
-          className={lineEditable ? (invalid ? 'invalid' : undefined) : 'read-only'}
-          value={inputText(field, value)}
-          maxLength={field.maxLength}
+          type={field.kind === 'number' ? 'text' : field.kind}
+          inputMode={field.kind === 'number' ? 'decimal' : undefined}
+          className={lineEditable ? (invalid || entryInvalid ? 'invalid' : undefined) : 'read-only'}
+          value={typed ?? inputText(field, value)}
+          maxLength={field.kind === 'number' ? undefined : field.maxLength}
           readOnly={!lineEditable}
-          aria-invalid={lineEditable && invalid ? true : undefined}
+          aria-invalid={lineEditable && (invalid || entryInvalid) ? true : undefined}
+          aria-describedby={entryInvalid ? `${id}-entry-error` : undefined}
           onChange={lineEditable ? (event) => changeLineField(field, event) : undefined}
           onFocus={lineEditable && isRefNo ? focusRefNo : undefined}
           onBlur={lineEditable && isRefNo ? blurRefNo : undefined}
         />
+        {entryInvalid && (
+          <div id={`${id}-entry-error`} className="msg msg-blocking" role="alert">
+            {entryError?.text}
+          </div>
+        )}
         <FieldMessage
           messages={messages}
           fieldError={fieldError}
-          onDismiss={(messageIndex) => dispatch({ type: 'messageDismissed', source, index: messageIndex })}
+          onDismiss={(messageIndex) => {
+            dispatch({ type: 'messageDismissed', source, index: messageIndex });
+            document.getElementById(id)?.focus();
+          }}
         />
       </div>
     );
   }
 
-  return (
-    <div className="screen">
-      <h1 className="screen-title">More Details</h1>
+  // A draft shows the coverage snapshot once the patient has been validated, else the card fields its claim preload carried.
+  const insurance = isSaved || state.coverage !== null ? header : (state.draft?.header ?? null);
 
-      <div className="more-grid">
+  return (
+    <main className="screen" aria-labelledby={titleId}>
+      <h1 className="screen-title" id={titleId}>More Details</h1>
+      {invNo != null && (
+        <div className="msg" role="status">
+          {loadStatusText(loadStatus, invNo)}
+        </div>
+      )}
+
+      <div className="more-grid" aria-busy={isSaved && loadStatus === 'pending' ? true : undefined}>
         <section aria-labelledby={insuranceTitleId}>
           <div className="panel-title" role="heading" aria-level={2} id={insuranceTitleId}>
             Insurance
           </div>
-          <ReadOnlyField id={`${baseId}-INS_NUMBER`} label="Insurance Number" value={displayText(header?.insNumber)} />
-          <ReadOnlyField id={`${baseId}-CARD_END`} label="Card Expire Date" value={datePart(header?.cardEnd)} />
-          <ReadOnlyField id={`${baseId}-PAT_POLICY_NO`} label="Policy No" value={displayText(header?.patPolicyNo)} />
+          <ReadOnlyField id={`${baseId}-INS_NUMBER`} label="Insurance Number" value={displayText(insurance?.insNumber)} />
+          <ReadOnlyField id={`${baseId}-CARD_END`} label="Card Expire Date" value={datePart(insurance?.cardEnd)} />
+          <ReadOnlyField id={`${baseId}-PAT_POLICY_NO`} label="Policy No" value={displayText(insurance?.patPolicyNo)} />
         </section>
 
         <section aria-labelledby={lineTitleId}>
@@ -344,6 +496,15 @@ export default function MoreDetailsScreen({
         serverMessages={state.openItemMessages}
       />
 
+      {state.idempotencyConflict !== null && (
+        <div className="form-error" role="alert">
+          <span>{state.idempotencyConflict.text}</span>
+          {state.idempotencyConflict.oracleErrorNumber !== null && (
+            <span className="oracle-number">{oraText(state.idempotencyConflict.oracleErrorNumber)}</span>
+          )}
+        </div>
+      )}
+
       {state.formError !== null && (
         <div className="form-error" role="alert">
           <span>{state.formError.text}</span>
@@ -371,7 +532,7 @@ export default function MoreDetailsScreen({
           Return
         </button>
       </div>
-    </div>
+    </main>
   );
 }
 

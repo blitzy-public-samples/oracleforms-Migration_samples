@@ -686,6 +686,66 @@ public sealed class OracleFailureTranslatorTests
     }
 
     [Fact]
+    public async Task Translate_OpenDeadlineExpiry_Is503WithoutNumber()
+    {
+        var never = new TaskCompletionSource();
+
+        TimeoutException timeout = await Assert.ThrowsAsync<TimeoutException>(() => OracleSession.RunWithinDeadline(
+            "connection open",
+            TimeSpan.FromMilliseconds(100),
+            _ => never.Task,
+            _ => { },
+            CancellationToken.None));
+        timeout.Data[OracleErrorParser.DuringOpenKey] = true;
+        DataFailure? failure = translator.Translate(timeout);
+
+        Assert.NotNull(failure);
+        Assert.Equal(503, failure.Status);
+        Assert.Equal(DataFailure.OracleUnavailableType, failure.Type);
+        Assert.Null(failure.Number);
+        Assert.Equal(UnavailableMessage, failure.Message);
+    }
+
+    [Fact]
+    public async Task Translate_DeadlineExpiryWithDriverCancelError_Is503WithNumber()
+    {
+        OracleException cancelled = Driver(1013, "ORA-01013: user requested cancel of current operation");
+
+        TimeoutException timeout = await Assert.ThrowsAsync<TimeoutException>(() => OracleSession.RunWithinDeadline(
+            "commit",
+            TimeSpan.FromMilliseconds(100),
+            token =>
+            {
+                var call = new TaskCompletionSource();
+                token.Register(() => call.TrySetException(cancelled));
+                return call.Task;
+            },
+            _ => { },
+            CancellationToken.None));
+        DataFailure? failure = translator.Translate(timeout);
+
+        Assert.Same(cancelled, timeout.InnerException);
+        Assert.NotNull(failure);
+        Assert.Equal(503, failure.Status);
+        Assert.Equal(DataFailure.OracleUnavailableType, failure.Type);
+        Assert.Equal(1013, failure.Number);
+        Assert.Equal(UnavailableMessage, failure.Message);
+    }
+
+    [Fact]
+    public async Task Translate_CallerCancellationOfADeadlineCall_ReturnsNull()
+    {
+        var never = new TaskCompletionSource();
+        using var caller = new CancellationTokenSource();
+
+        Task run = OracleSession.RunWithinDeadline("connection open", TimeSpan.FromSeconds(30), _ => never.Task, _ => { }, caller.Token);
+        await caller.CancelAsync();
+        OperationCanceledException cancelled = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run.WaitAsync(TimeSpan.FromSeconds(5)));
+
+        Assert.Null(translator.Translate(cancelled));
+    }
+
+    [Fact]
     public void Translate_SocketFailure_Is503WithFixedMessage()
     {
         var socket = new SocketException(10061);

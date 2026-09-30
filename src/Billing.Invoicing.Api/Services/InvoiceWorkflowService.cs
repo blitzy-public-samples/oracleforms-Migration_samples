@@ -1,6 +1,9 @@
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using Billing.Invoicing.Api.Contracts;
 using Billing.Invoicing.Api.Errors;
+using Billing.Invoicing.Data.Errors;
 using Billing.Invoicing.Data.Plsql;
 using Billing.Invoicing.Data.Ports;
 using Billing.Invoicing.Domain.Model;
@@ -15,7 +18,6 @@ public sealed class InvoiceWorkflowService
     private const int CashPayType = 1;
     private const int CreditPayType = 2;
     private const int ApprovalPreference = 422;
-    private const int EnforcedApprovalCheck = 1;
     private const int DirectCompany = 1;
     private const int BundledOfferType = 0;
     private const string PriceNotFixed = "N";
@@ -44,6 +46,7 @@ public sealed class InvoiceWorkflowService
     private const string CompCodeItem = "COMP_CODE";
     private const string SubCompCodeItem = "SUB_COMP_CODE";
     private const string PatientNoItem = "PATIENTNO";
+    private const int PatientNoBytes = 12;
     private const string InvDateItem = "INVDATE";
     private const string ServiceIdItem = "SERVICEID";
     private const string VisitUniqueItem = "VISIT_UNIQUE";
@@ -56,6 +59,7 @@ public sealed class InvoiceWorkflowService
     private const string PackageServiceRequiredText = "Package service id is required.";
     private const string DocumentKindText = "Document kind must be invoice, patient-card, barcode-sms or iqama-check.";
     private const string VisitUniqueRequiredText = "Request import failed: visit unique is required.";
+    private const string RequestImportFailedPrefix = "Request import failed: ";
 
     private const string RequestSourceType = "REQUEST";
     private const string NoFlag = "N";
@@ -65,7 +69,12 @@ public sealed class InvoiceWorkflowService
     private const string RequestIdItem = "REQUEST_ID";
     private const int RequestIdLength = 32;
     private const string RequestIdText = "Request id must be 32 upper-case hexadecimal characters.";
+    private const int DraftSealLength = 64;
+    private const string DraftSealText = "Draft date does not match the date issued with this draft; start a new draft.";
     private const string PriceItem = "PRICE";
+    private const int RefusedStatus = 422;
+    private const int OpenItemStatus = 501;
+    private const string PreviewRefusalKey = "Billing.Invoicing.Api.PreviewRefusal";
 
     private const string InvoiceDocument = "invoice";
     private const string PatientCardDocument = "patient-card";
@@ -81,8 +90,8 @@ public sealed class InvoiceWorkflowService
     private const string UnavailableTitle = "This operation is not available in this build.";
 
     private static readonly IReadOnlySet<int> NoExcludedLines = new HashSet<int>();
-    private static readonly IReadOnlyDictionary<decimal, IReadOnlyList<string>> NoRequestedServices =
-        new Dictionary<decimal, IReadOnlyList<string>>();
+    private static readonly OracleFailureTranslator Failures = new();
+    private static readonly IReadOnlySet<string> NoRequestedServiceIds = new HashSet<string>();
 
     private readonly IOracleSessionFactory _sessionFactory;
     private readonly ILookupQueries _lookups;
@@ -154,19 +163,21 @@ public sealed class InvoiceWorkflowService
         var header = WithOperator(
             InvoiceDefaultsRule.Apply(parameters, databaseTime, preload?.Header, visitDoctor),
             operatorContext);
-        header = header with { PayType = await DecidePayType(header.CompCode, null, parameters, preload, cancellationToken) };
+        header = header with { PayType = await DecideDraftPayType(header.CompCode, null, parameters, preload, cancellationToken) };
 
         if (ClaimNumberFromParameter(parameters))
         {
             header = header with { ClaimNo = ClaimNumberRule.Build(header, parameters) };
         }
 
+        var requestId = NewId();
         return new NewDraftResponse
         {
             Draft = new DraftDto
             {
-                RequestId = NewId(),
+                RequestId = requestId,
                 DraftDate = databaseTime,
+                DraftSeal = _invoiceApi.SealDraftDate(requestId, databaseTime),
                 Header = header,
                 Lines = Array.Empty<InvoiceLineDraft>(),
                 Parameters = parameters,
@@ -214,7 +225,7 @@ public sealed class InvoiceWorkflowService
     /// <param name="parameters">Entry parameters of the draft.</param>
     /// <param name="operatorContext">Operator identity of the request.</param>
     /// <param name="cancellationToken">Cancels the reads.</param>
-    /// <returns>The coverage response, or the blocking DR-01 patient message when the patient number is blank.</returns>
+    /// <returns>The coverage response; the blocking DR-01 patient message when the patient number is blank; the blocking DR-03 message alone when V_PAT_DATA has no row.</returns>
     public async Task<CoverageResponse> GetCoverage(
         string patientNo,
         DateTime? draftDate,
@@ -230,20 +241,23 @@ public sealed class InvoiceWorkflowService
             return new CoverageResponse { Messages = PatientRequired() };
         }
 
+        if (PatientNoTooLong(patientNo) is { } tooLong)
+        {
+            return new CoverageResponse { Messages = new[] { tooLong } };
+        }
+
         var coverage = await _lookups.GetPatientCoverage(patientNo, cancellationToken);
         var asOf = draftDate ?? await _lookups.GetDatabaseTime(cancellationToken);
         var findings = new Findings();
         findings.Add(PatientEligibilityRules.Evaluate(coverage, parameters, asOf));
+        if (coverage is null)
+        {
+            return new CoverageResponse { Messages = findings.Messages };
+        }
 
         var preload = await ReadPatientClaimPreload(parameters, patientNo, cancellationToken);
         var payType = await DecidePayType(coverage?.CompCode, coverage, parameters, preload, cancellationToken);
         var (subCompCode, classCode) = ServerSubCompanyAndClass(payType, coverage, preload);
-
-        findings.AddOpenItem(OpenItemIds.OI24);
-        if (!IsBlank(subCompCode))
-        {
-            findings.AddOpenItem(OpenItemIds.OI21);
-        }
 
         var header = new InvoiceHeaderDraft
         {
@@ -254,20 +268,7 @@ public sealed class InvoiceWorkflowService
             ClassCode = classCode,
             DraftDate = asOf,
         };
-        var gate = await ReadGateInputs(header, coverage, preload, readCard: false, cancellationToken);
-        if (OpenItemGate.Evaluate(header, Array.Empty<ServiceProfile>(), null, gate.MaxDeductable, gate.UseAdvanced, parameters)
-            .Contains(OpenItemIds.OI23, StringComparer.Ordinal))
-        {
-            findings.AddOpenItem(OpenItemIds.OI23);
-        }
-
-        return new CoverageResponse
-        {
-            Coverage = coverage,
-            PayType = payType,
-            Messages = findings.Messages,
-            OpenItems = findings.OpenItems,
-        };
+        return await CoverageOf(header, payType, coverage, preload, parameters, findings.Messages, cancellationToken);
     }
 
     /// <summary>Returns the package preview of the draft with the refund and the total collected.</summary>
@@ -290,6 +291,7 @@ public sealed class InvoiceWorkflowService
             return new PreviewResponse { Messages = clientIdMessages };
         }
 
+        var profileReads = new ProfileReads(_lookups);
         var parameters = sanitized.Parameters;
         var context = await ReadServerContext(sanitized, patientCompanyFirst: false, cancellationToken);
         var header = context.Header;
@@ -302,13 +304,25 @@ public sealed class InvoiceWorkflowService
             await ThrowGate(headerIds, Array.Empty<MessageDto>(), header, cancellationToken);
         }
 
-        var preview = await CalculateVettedPreview(header, sanitized.Lines, operatorContext, cancellationToken);
+        var preview = await CalculateVettedPreview(header, sanitized.Lines, operatorContext, profileReads, cancellationToken);
 
         var lists = await RequireLists(
             sanitized.Lines, LineLists(sanitized.Lines, preview, context.Preload), header, operatorContext, cancellationToken);
-        var profiles = await BuildProfiles(sanitized.Lines, lists, cancellationToken);
+        var profiles = await BuildProfiles(sanitized.Lines, lists, profileReads, cancellationToken);
         var findings = new Findings();
-        await AddPriceOverrideRules(findings, header, sanitized.Lines, profiles.ByLine, preview, cancellationToken);
+        var isDirect = CompanyIsDirect(header, cancellationToken);
+        await AddPriceOverrideRules(
+            findings, header, sanitized.Lines, profiles.ByLine, preview, cancellationToken, isDirect: isDirect);
+        var priceEditableClientIds = new List<string>();
+        for (var index = 0; index < sanitized.Lines.Count; index++)
+        {
+            var line = sanitized.Lines[index];
+            if (await PriceEditable(header, line, profiles.ByLine[index], preview, isDirect))
+            {
+                priceEditableClientIds.Add(line.ClientId!);
+            }
+        }
+
         var openItems = OpenItemGate.Evaluate(
             header,
             profiles.TopLevel,
@@ -334,6 +348,9 @@ public sealed class InvoiceWorkflowService
             TotalCollected = PaymentAllocationRules.TotalCollected(preview.Totals.Amount1, preview.Totals.Amount2),
             Messages = findings.Messages,
             OpenItems = openItems,
+            PriceEditableClientIds = priceEditableClientIds,
+            PriceJudgedPatientNo = Trimmed(sanitized.Header.PatientNo),
+            PriceJudgedCompCode = Trimmed(sanitized.Header.CompCode),
         };
     }
 
@@ -341,8 +358,8 @@ public sealed class InvoiceWorkflowService
     /// <param name="request">Draft to save, carrying its request id and discount-limit choice.</param>
     /// <param name="operatorContext">Operator identity bound into the package header.</param>
     /// <param name="cancellationToken">Cancels the reads and the save.</param>
-    /// <returns>The saved invoice with its posting flags, warnings and open items, or the blocking messages when the draft cannot be saved.</returns>
-    public async Task<CreateInvoiceResponse> Create(
+    /// <returns>The saved or replayed invoice with its warnings and open items, or no invoice with the blocking and warning messages and gate ids when the draft cannot be saved.</returns>
+    public async Task<CreateInvoiceOutcome> Create(
         CreateInvoiceRequest request,
         OperatorContext operatorContext,
         CancellationToken cancellationToken = default)
@@ -355,10 +372,21 @@ public sealed class InvoiceWorkflowService
             return RequestIdRejected();
         }
 
-        if (await _invoices.GetCreateRequest(request.Draft.RequestId, cancellationToken) is not null)
+        if (await _invoices.GetCreateRequest(request.Draft.RequestId, cancellationToken) is { } recorded)
         {
-            return await Replay(
-                request.Draft.RequestId, request.Draft.Header?.PatientNo, request.Draft.DraftDate, operatorContext, cancellationToken);
+            return Saved(await Replay(
+                request.Draft.RequestId, request.Draft.Header?.PatientNo, request.Draft.DraftDate, recorded, operatorContext, cancellationToken));
+        }
+
+        if (!HasIssuedDraftDate(request.Draft))
+        {
+            return DraftDateRejected();
+        }
+
+        var engineLines = EngineLineCount(request.Draft.Lines ?? Array.Empty<InvoiceLineDraft>());
+        if (engineLines > _invoiceApi.MaxDraftLines)
+        {
+            return LinesRejected(engineLines, _invoiceApi.MaxDraftLines);
         }
 
         var draft = Sanitize(request.Draft, operatorContext);
@@ -370,11 +398,20 @@ public sealed class InvoiceWorkflowService
 
         var parameters = draft.Parameters;
         var lines = draft.Lines;
-        var context = await ReadServerContext(draft, patientCompanyFirst: false, cancellationToken);
+        var preload = await ReadPatientClaimPreload(parameters, draft.Header.PatientNo, cancellationToken);
+        var coverage = await ReadCoverage(draft.Header.PatientNo, cancellationToken);
+        if (LacksCoverageRow(draft.Header.PatientNo, coverage))
+        {
+            var missingRow = new Findings();
+            missingRow.Add(PatientEligibilityRules.Evaluate(coverage, parameters, draft.DraftDate));
+            return new CreateInvoiceOutcome { Messages = missingRow.Messages };
+        }
+
+        var context = await DecideServerContext(draft, preload, coverage, patientCompanyFirst: false, cancellationToken);
         var gate = await ReadGateInputs(context.Header, context.Coverage, context.Preload, readCard: true, cancellationToken);
         var clinic = await ReadClinic(context.Header, cancellationToken);
         var maxDisc = await _lookups.GetUserMaxDiscount(operatorContext.UserNo, cancellationToken);
-        var x422 = await ReadX422(cancellationToken);
+        var x422 = await ReadX422(parameters, cancellationToken);
 
         var findings = new Findings();
         var header = await ApplyVisitDoctor(context.Header, parameters, cancellationToken);
@@ -384,7 +421,11 @@ public sealed class InvoiceWorkflowService
 
         findings.Add(HeaderRecordRules.ValidateRecord(header));
         findings.Add(InvoiceDetailRules.RequireDetails(lines.Count));
-        findings.Add(PatientEligibilityRules.Evaluate(context.Coverage, parameters, draft.DraftDate));
+        if (!IsBlank(draft.Header.PatientNo))
+        {
+            findings.Add(PatientEligibilityRules.Evaluate(context.Coverage, parameters, draft.DraftDate));
+        }
+
         findings.Add(ClinicSuitabilityRules.CheckSex(clinic));
         await CheckClinicAge(clinic, header, draft.DraftDate, findings, cancellationToken);
         findings.Add(ErClinicRule.Validate(header, clinic));
@@ -399,19 +440,22 @@ public sealed class InvoiceWorkflowService
             header, Array.Empty<ServiceProfile>(), gate.CardId, gate.MaxDeductable, gate.UseAdvanced, parameters);
         var previewAllowed = !headerGate.Contains(OpenItemIds.OI23, StringComparer.Ordinal) && clientIdMessages.Count == 0;
 
+        var profileReads = new ProfileReads(_lookups);
         var succeeded = new List<PreviewResult>();
         LineContext lineContext;
-        IReadOnlyDictionary<decimal, IReadOnlyList<string>> requested;
+        IReadOnlyDictionary<decimal, IReadOnlySet<string>> requested;
+        string? preflightOpenItem = null;
         try
         {
             lineContext = await ReadLineContext(
-                lines, header, context.Preload, Array.Empty<string>(), previewAllowed, succeeded, operatorContext, cancellationToken);
+                lines, header, context.Preload, Array.Empty<string>(), previewAllowed, succeeded, operatorContext, profileReads, cancellationToken);
             requested = await ReadRequestedServices(header.ClaimNo, lineContext.Profiles.Lists, cancellationToken);
         }
-        catch (Exception failure) when (failure is not OperationCanceledException)
+        catch (Exception failure) when (RefusesDraft(failure))
         {
+            preflightOpenItem = OpenItemIdOf(failure);
             (lineContext, requested) = await FallbackLineContext(
-                lines, succeeded, context.Preload, header.ClaimNo, cancellationToken);
+                lines, succeeded, context.Preload, header.ClaimNo, profileReads, cancellationToken);
             if (!findings.IsBlocking
                 && !LineRulesBlock(header, lines, Enumerable.Range(0, lines.Count), lineContext.Preview, x422, lineContext.Profiles, requested)
                 && !await PriceOverridesBlock(header, lines, lineContext.Profiles.ByLine, cancellationToken)
@@ -460,9 +504,13 @@ public sealed class InvoiceWorkflowService
 
         if (findings.IsBlocking)
         {
-            return new CreateInvoiceResponse
+            if (preflightOpenItem is not null)
             {
-                InvNo = null,
+                gateIds.Add(preflightOpenItem);
+            }
+
+            return new CreateInvoiceOutcome
+            {
                 Messages = findings.Messages,
                 OpenItems = gateIds.ToArray(),
             };
@@ -475,7 +523,7 @@ public sealed class InvoiceWorkflowService
 
         if (discountChanged)
         {
-            var discounted = await RulesPreview(header, lines, NoExcludedLines, operatorContext, cancellationToken);
+            var discounted = await RulesPreview(header, lines, NoExcludedLines, operatorContext, profileReads, cancellationToken);
             var reset = PaymentAllocationRules.ResetAfterDiscountChange(discounted?.Totals.CashCollected);
             header = header with
             {
@@ -485,7 +533,7 @@ public sealed class InvoiceWorkflowService
             header = ApplySubPayType(header, findings.Add(HeaderRecordRules.ApplyPaymentTypeDefault(header)));
         }
 
-        return await CreateNew(draft.RequestId, header, lines, clinic, findings, operatorContext, cancellationToken);
+        return Saved(await CreateNew(draft.RequestId, header, lines, clinic, findings, operatorContext, cancellationToken));
     }
 
     /// <summary>Returns a saved invoice as a read-only view, or null when it is not found.</summary>
@@ -675,7 +723,7 @@ public sealed class InvoiceWorkflowService
     /// <param name="request">Draft supplying the patient, doctor, pay type and visit.</param>
     /// <param name="operatorContext">Operator identity keying the request selection.</param>
     /// <param name="cancellationToken">Cancels the reads and the import.</param>
-    /// <returns>Imported lines, the import result (zero counts when no request row is selected) and the notices, or the blocking doctor, patient or visit message.</returns>
+    /// <returns>Imported lines, the import result (zero counts when no request row is selected) and the notices, or the blocking doctor, patient, visit or rejected-selected-row message.</returns>
     public async Task<ImportResponse> ImportRequests(
         ImportRequestsRequest request,
         OperatorContext operatorContext,
@@ -706,10 +754,31 @@ public sealed class InvoiceWorkflowService
         var context = await ReadServerContext(draft, patientCompanyFirst: false, cancellationToken);
         var header = context.Header;
         var payType = header.PayType.GetValueOrDefault();
-        var x422 = await ReadX422(cancellationToken);
+        var x422 = await ReadX422(parameters, cancellationToken);
 
-        var rows = await _invoices.GetSelectedRequestRows(
-            header.PatientNo!, parameters.VisitUnique!, payType, cancellationToken);
+        IReadOnlyList<(long PatServReqRowId, string ServiceId, int? ReqAStatus, int? ReqNeedA, string? ApprovRefNo)> rows;
+        try
+        {
+            rows = await _invoices.GetSelectedRequestRows(
+                header.PatientNo!, parameters.VisitUnique!, payType, cancellationToken);
+        }
+        catch (Exception failure) when (failure is InvalidCastException or OverflowException)
+        {
+            return new ImportResponse
+            {
+                Messages = new[]
+                {
+                    new MessageDto
+                    {
+                        Field = null,
+                        Text = RequestImportFailedPrefix + failure.Message,
+                        Severity = ValidationMessage.Blocking,
+                        Rule = null,
+                    },
+                },
+            };
+        }
+
         var notices = RequestImportRules.Notices(
             rows.Select(row => (row.ServiceId, row.ReqAStatus, row.ReqNeedA, row.ApprovRefNo)),
             x422,
@@ -818,6 +887,7 @@ public sealed class InvoiceWorkflowService
             return new ImportResponse { Messages = clientIdMessages };
         }
 
+        var profileReads = new ProfileReads(_lookups);
         var (_, preview) = await ContextPreview(
             draft.Lines,
             LocallyRejectedLines(draft.Lines),
@@ -826,6 +896,7 @@ public sealed class InvoiceWorkflowService
             header,
             new List<PreviewResult>(),
             operatorContext,
+            profileReads,
             cancellationToken);
         var listId = await ResolveListId(preview, preload, header, operatorContext, cancellationToken);
 
@@ -844,7 +915,7 @@ public sealed class InvoiceWorkflowService
             .Select(list => (decimal?)(list ?? listId))
             .Concat(imported.Select(_ => (decimal?)listId))
             .ToArray();
-        var profiles = await BuildProfiles(draft.Lines.Concat(imported).ToArray(), lists, cancellationToken);
+        var profiles = await BuildProfiles(draft.Lines.Concat(imported).ToArray(), lists, profileReads, cancellationToken);
         findings.Adjust(AddToListItem, AddToListRule.Derive(profiles.TopLevel));
 
         return new ImportResponse
@@ -939,6 +1010,11 @@ public sealed class InvoiceWorkflowService
                     return MissingBind(lov, PatientNoItem);
                 }
 
+                if (PatientNoTooLong(patientNo) is { } tooLong)
+                {
+                    return BindRejected(lov, tooLong);
+                }
+
                 if (draftDate is not { } reservationDate)
                 {
                     return MissingBind(lov, InvDateItem);
@@ -947,6 +1023,7 @@ public sealed class InvoiceWorkflowService
                 return Rows(lov, await _lovs.ReservNo(reservationDate, docId, patientNo, cancellationToken)) with
                 {
                     ViewOnly = true,
+                    OpenItems = new[] { OpenItemIds.OI42 },
                 };
             case "OFFERS":
                 if (BindInt(values, PayTypeItem) is not { } payType)
@@ -994,26 +1071,38 @@ public sealed class InvoiceWorkflowService
         return currencies.Select(currency => new LookupItem { Code = currency.Code, Name = currency.Name }).ToArray();
     }
 
+    /// <summary>Replays a recorded request id through the package and returns the advisory open items of the recorded invoice without any read after the commit.</summary>
     private async Task<CreateInvoiceResponse> Replay(
         string requestId,
         string? patientNo,
         DateTime draftDate,
+        (long? InvNo, string? PatientNo, DateTimeOffset? CompletedAt, DateTime? InvDate, string? CompCode, string? SubCompCode, bool ClinicHasAgeLimit) recorded,
         OperatorContext operatorContext,
         CancellationToken cancellationToken)
     {
+        var invDate = recorded.InvDate ?? draftDate;
         var header = WithOperator(
-            new InvoiceHeaderDraft { PatientNo = patientNo, DraftDate = draftDate, InvDate = draftDate },
+            new InvoiceHeaderDraft { PatientNo = patientNo, DraftDate = invDate, InvDate = invDate },
             operatorContext);
 
         FullInvoiceResultRow result;
-        long invNo;
+        var replayed = recorded;
         await using (var session = await _sessionFactory.Open(cancellationToken))
         {
             try
             {
                 result = await _invoiceApi.CreateFullInvoice(
                     session, header, Array.Empty<InvoiceLineDraft>(), operatorContext, requestId, cancellationToken);
-                invNo = RequireInvoiceNumber(result);
+                var invNo = RequireInvoiceNumber(result);
+                if (replayed.InvNo != invNo)
+                {
+                    replayed = await _invoices.GetCreateRequest(requestId, cancellationToken) is { } reread && reread.InvNo == invNo
+                        ? reread
+                        : throw new InvalidOperationException(
+                            string.Create(
+                                CultureInfo.InvariantCulture,
+                                $"The package replayed invoice {invNo}, which is not the invoice recorded for request {requestId}."));
+                }
             }
             catch (Exception)
             {
@@ -1025,18 +1114,15 @@ public sealed class InvoiceWorkflowService
         }
 
         var openItems = new SortedSet<string>(StringComparer.Ordinal) { OpenItemIds.OI20 };
-        if (await _invoices.GetInvoice(invNo, null, cancellationToken) is { } saved)
+        AddHeaderOpenItems(openItems, new InvoiceHeaderDraft { CompCode = replayed.CompCode, SubCompCode = replayed.SubCompCode });
+        if (replayed.ClinicHasAgeLimit)
         {
-            AddHeaderOpenItems(openItems, saved.Header);
-            if (HasAgeLimit(await ReadClinic(saved.Header, cancellationToken)))
-            {
-                openItems.Add(OpenItemIds.OI22);
-            }
+            openItems.Add(OpenItemIds.OI22);
         }
 
         return new CreateInvoiceResponse
         {
-            InvNo = result.InvNo,
+            InvNo = RequireInvoiceNumber(result),
             Message = result.Message,
             PostingFlags = PostingFlags(result),
             Messages = Array.Empty<MessageDto>(),
@@ -1101,7 +1187,7 @@ public sealed class InvoiceWorkflowService
 
         return new CreateInvoiceResponse
         {
-            InvNo = result.InvNo,
+            InvNo = RequireInvoiceNumber(result),
             Message = result.Message,
             PostingFlags = PostingFlags(result),
             Messages = findings.Warnings,
@@ -1131,16 +1217,68 @@ public sealed class InvoiceWorkflowService
 
     private async Task<ValidateDraftResponse> ValidatePatient(DraftDto draft, CancellationToken cancellationToken)
     {
-        var context = await ReadServerContext(draft, patientCompanyFirst: true, cancellationToken);
+        var patientNo = draft.Header.PatientNo;
+        var preload = await ReadPatientClaimPreload(draft.Parameters, patientNo, cancellationToken);
+        var coverage = await ReadCoverage(patientNo, cancellationToken);
         var findings = new Findings();
-        findings.Add(PatientEligibilityRules.Evaluate(context.Coverage, draft.Parameters, draft.DraftDate));
+        if (!IsBlank(patientNo))
+        {
+            findings.Add(PatientEligibilityRules.Evaluate(coverage, draft.Parameters, draft.DraftDate));
+        }
+
+        if (LacksCoverageRow(patientNo, coverage))
+        {
+            return findings.ToValidateResponse();
+        }
+
+        var context = await DecideServerContext(draft, preload, coverage, patientCompanyFirst: true, cancellationToken);
         findings.Adjust(PayTypeItem, context.Header.PayType);
         if (!IsBlank(context.Header.SubCompCode))
         {
             findings.AddOpenItem(OpenItemIds.OI21);
         }
 
-        return findings.ToValidateResponse();
+        if (IsBlank(draft.Header.PatientNo) || context.Header.PayType is not int payType)
+        {
+            return findings.ToValidateResponse();
+        }
+
+        var coverageResponse = await CoverageOf(
+            context.Header, payType, context.Coverage, context.Preload, draft.Parameters, findings.Messages, cancellationToken);
+        findings.AddOpenItems(coverageResponse.OpenItems);
+        return findings.ToValidateResponse() with { Coverage = coverageResponse };
+    }
+
+    /// <summary>Returns the coverage response of a server-read header: OI-24 always, OI-21 for a sub-company, OI-23 when the credit gate holds.</summary>
+    private async Task<CoverageResponse> CoverageOf(
+        InvoiceHeaderDraft header,
+        int payType,
+        PatientCoverageSnapshot? coverage,
+        ClaimPreloadData? preload,
+        InvoiceEntryParameters parameters,
+        IReadOnlyList<MessageDto> messages,
+        CancellationToken cancellationToken)
+    {
+        var openItems = new SortedSet<string>(StringComparer.Ordinal) { OpenItemIds.OI24 };
+        if (!IsBlank(header.SubCompCode))
+        {
+            openItems.Add(OpenItemIds.OI21);
+        }
+
+        var gate = await ReadGateInputs(header, coverage, preload, readCard: false, cancellationToken);
+        if (OpenItemGate.Evaluate(header, Array.Empty<ServiceProfile>(), null, gate.MaxDeductable, gate.UseAdvanced, parameters)
+            .Contains(OpenItemIds.OI23, StringComparer.Ordinal))
+        {
+            openItems.Add(OpenItemIds.OI23);
+        }
+
+        return new CoverageResponse
+        {
+            Coverage = coverage,
+            PayType = payType,
+            Messages = messages,
+            OpenItems = openItems.ToArray(),
+        };
     }
 
     private async Task<ValidateDraftResponse> ValidateCompany(DraftDto draft, CancellationToken cancellationToken)
@@ -1158,6 +1296,7 @@ public sealed class InvoiceWorkflowService
         OperatorContext operatorContext,
         CancellationToken cancellationToken)
     {
+        var profileReads = new ProfileReads(_lookups);
         var parameters = draft.Parameters;
         var findings = new Findings();
         var header = ApplyDoctor(draft.Header, findings.Add(DoctorSelectionRules.Validate(draft.Header, parameters)));
@@ -1187,6 +1326,7 @@ public sealed class InvoiceWorkflowService
                 previewAllowed: true,
                 new List<PreviewResult>(),
                 operatorContext,
+                profileReads,
                 cancellationToken);
             profiles = lineContext.Profiles;
         }
@@ -1222,12 +1362,13 @@ public sealed class InvoiceWorkflowService
         OperatorContext operatorContext,
         CancellationToken cancellationToken)
     {
+        var profileReads = new ProfileReads(_lookups);
         var context = await ReadServerContext(draft, patientCompanyFirst: false, cancellationToken);
         var header = context.Header;
         await GuardDeductible(header, draft.Parameters, context, cancellationToken);
 
         var maxDisc = await _lookups.GetUserMaxDiscount(operatorContext.UserNo, cancellationToken);
-        var preview = await RulesPreview(header, draft.Lines, NoExcludedLines, operatorContext, cancellationToken);
+        var preview = await RulesPreview(header, draft.Lines, NoExcludedLines, operatorContext, profileReads, cancellationToken);
 
         var offerHeader = header with { OferId = BundledOfferId(preview) };
         var evaluated = FinalDiscountLimitRule.Evaluate(offerHeader, maxDisc, preview?.Totals.PatPay);
@@ -1242,7 +1383,7 @@ public sealed class InvoiceWorkflowService
             var adjusted = ApplyDiscount(header, outcome.Adjusted);
             if (!ReferenceEquals(outcome, evaluated) && adjusted != header)
             {
-                preview = await RulesPreview(adjusted, draft.Lines, NoExcludedLines, operatorContext, cancellationToken);
+                preview = await RulesPreview(adjusted, draft.Lines, NoExcludedLines, operatorContext, profileReads, cancellationToken);
             }
 
             findings.Add(PaymentAllocationRules.ResetAfterDiscountChange(preview?.Totals.CashCollected));
@@ -1256,11 +1397,12 @@ public sealed class InvoiceWorkflowService
         OperatorContext operatorContext,
         CancellationToken cancellationToken)
     {
+        var profileReads = new ProfileReads(_lookups);
         var context = await ReadServerContext(draft, patientCompanyFirst: false, cancellationToken);
         var header = context.Header;
         await GuardDeductible(header, draft.Parameters, context, cancellationToken);
 
-        var preview = await RulesPreview(header, draft.Lines, NoExcludedLines, operatorContext, cancellationToken);
+        var preview = await RulesPreview(header, draft.Lines, NoExcludedLines, operatorContext, profileReads, cancellationToken);
         var findings = new Findings();
         findings.Adjust(
             Amount2Item,
@@ -1305,11 +1447,12 @@ public sealed class InvoiceWorkflowService
             return RejectedInput(LineField, LineIndexText);
         }
 
+        var profileReads = new ProfileReads(_lookups);
         var parameters = draft.Parameters;
         var context = await ReadServerContext(draft, patientCompanyFirst: false, cancellationToken);
         var header = context.Header with { ClaimNo = ClaimNumberRule.Build(context.Header, parameters) };
         var line = draft.Lines[index];
-        var x422 = await ReadX422(cancellationToken);
+        var x422 = await ReadX422(parameters, cancellationToken);
         var gate = await ReadGateInputs(header, context.Coverage, context.Preload, readCard: true, cancellationToken);
 
         var findings = new Findings();
@@ -1325,17 +1468,19 @@ public sealed class InvoiceWorkflowService
 
         var succeeded = new List<PreviewResult>();
         LineContext lineContext;
-        IReadOnlyDictionary<decimal, IReadOnlyList<string>> requested;
+        IReadOnlyDictionary<decimal, IReadOnlySet<string>> requested;
+        string? preflightOpenItem = null;
         try
         {
             lineContext = await ReadLineContext(
-                draft.Lines, header, context.Preload, Array.Empty<string>(), previewAllowed, succeeded, operatorContext, cancellationToken);
+                draft.Lines, header, context.Preload, Array.Empty<string>(), previewAllowed, succeeded, operatorContext, profileReads, cancellationToken);
             requested = await ReadRequestedServices(header.ClaimNo, lineContext.Profiles.Lists, cancellationToken);
         }
-        catch (Exception failure) when (failure is not OperationCanceledException)
+        catch (Exception failure) when (RefusesDraft(failure))
         {
+            preflightOpenItem = OpenItemIdOf(failure);
             (lineContext, requested) = await FallbackLineContext(
-                draft.Lines, succeeded, context.Preload, header.ClaimNo, cancellationToken);
+                draft.Lines, succeeded, context.Preload, header.ClaimNo, profileReads, cancellationToken);
             if (!findings.IsBlocking
                 && !LineRulesBlock(header, draft.Lines, new[] { index }, lineContext.Preview, x422, lineContext.Profiles, requested)
                 && !await PriceOverridesBlock(
@@ -1348,7 +1493,10 @@ public sealed class InvoiceWorkflowService
         var profiles = lineContext.Profiles;
         var profile = profiles.ByLine[index];
         AddLineRules(findings, header, line, profile, lineContext.Preview, x422, RequestedFor(requested, profiles.Lists, index));
-        await AddPriceOverrideRules(findings, header, new[] { line }, new[] { profile }, lineContext.Preview, cancellationToken);
+        var isDirect = CompanyIsDirect(header, cancellationToken);
+        await AddPriceOverrideRules(
+            findings, header, new[] { line }, new[] { profile }, lineContext.Preview, cancellationToken, isDirect: isDirect);
+        var priceEditable = await PriceEditable(header, line, profile, lineContext.Preview, isDirect);
         if (lineContext.Resolved)
         {
             findings.Adjust(AddToListItem, AddToListRule.Derive(profiles.TopLevel));
@@ -1365,7 +1513,12 @@ public sealed class InvoiceWorkflowService
         if (findings.IsBlocking)
         {
             findings.AddOpenItems(gateIds);
-            return findings.ToValidateResponse();
+            if (preflightOpenItem is not null)
+            {
+                findings.AddOpenItem(preflightOpenItem);
+            }
+
+            return WithPriceJudgement(findings.ToValidateResponse(), draft, line, priceEditable);
         }
 
         if (gateIds.Count > 0)
@@ -1373,7 +1526,7 @@ public sealed class InvoiceWorkflowService
             await ThrowGate(gateIds, findings.Warnings, header, cancellationToken);
         }
 
-        return findings.ToValidateResponse();
+        return WithPriceJudgement(findings.ToValidateResponse(), draft, line, priceEditable);
     }
 
     private static void AddLineRules(
@@ -1383,7 +1536,7 @@ public sealed class InvoiceWorkflowService
         ServiceProfile? profile,
         PreviewResult? preview,
         int? x422ApprovCheck,
-        IReadOnlyList<string> requestedServices)
+        IReadOnlySet<string> requestedServices)
     {
         findings.Add(LineEntryRules.RequireService(line.ServiceId));
         findings.Add(LineEntryRules.ValidateQuantity(profile, line.Qty));
@@ -1401,7 +1554,7 @@ public sealed class InvoiceWorkflowService
         PreviewResult? preview,
         int? x422ApprovCheck,
         ProfileSet profiles,
-        IReadOnlyDictionary<decimal, IReadOnlyList<string>> requested)
+        IReadOnlyDictionary<decimal, IReadOnlySet<string>> requested)
     {
         var scratch = new Findings();
         foreach (var index in indexes)
@@ -1473,9 +1626,10 @@ public sealed class InvoiceWorkflowService
         IReadOnlyList<InvoiceLineDraft> lines,
         IReadOnlyList<ServiceProfile?> profiles,
         PreviewResult? preview,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Lazy<Task<int?>>? isDirect = null)
     {
-        var isDirect = CompanyIsDirect(header, cancellationToken);
+        isDirect ??= CompanyIsDirect(header, cancellationToken);
         for (var index = 0; index < lines.Count; index++)
         {
             var line = lines[index];
@@ -1484,9 +1638,7 @@ public sealed class InvoiceWorkflowService
                 continue;
             }
 
-            var refused = preview is not null && preview.CheckedOverrides.Contains(line)
-                ? preview.RefusedOverrides.Contains(line)
-                : !await PriceOverrideAllowed(header, profiles[index], isDirect);
+            var refused = !await OverrideAllowed(header, line, profiles[index], preview, isDirect);
             if (refused)
             {
                 findings.Add(new MessageDto
@@ -1501,11 +1653,44 @@ public sealed class InvoiceWorkflowService
     }
 
     private static bool IsManualPriceOverride(InvoiceLineDraft line) =>
-        line.PriceOverride is not null
-        && line.PatServReqRowId is null
+        line.PriceOverride is not null && AcceptsManualPrice(line);
+
+    private static bool AcceptsManualPrice(InvoiceLineDraft line) =>
+        line.PatServReqRowId is null
         && !HasRole(line, ComponentRole)
         && line.OfferId is null
         && IsBlank(line.OfferLineRole);
+
+    private static async Task<bool> OverrideAllowed(
+        InvoiceHeaderDraft header,
+        InvoiceLineDraft line,
+        ServiceProfile? profile,
+        PreviewResult? preview,
+        Lazy<Task<int?>> isDirect) =>
+        preview is not null && preview.CheckedOverrides.Contains(line)
+            ? !preview.RefusedOverrides.Contains(line)
+            : await PriceOverrideAllowed(header, profile, isDirect);
+
+    /// <summary>Returns true when an operator-entered PRICE is accepted on the line.</summary>
+    private static async Task<bool> PriceEditable(
+        InvoiceHeaderDraft header,
+        InvoiceLineDraft line,
+        ServiceProfile? profile,
+        PreviewResult? preview,
+        Lazy<Task<int?>> isDirect) =>
+        !IsBlank(line.ServiceId) && AcceptsManualPrice(line) && await OverrideAllowed(header, line, profile, preview, isDirect);
+
+    private static ValidateDraftResponse WithPriceJudgement(
+        ValidateDraftResponse response,
+        DraftDto draft,
+        InvoiceLineDraft line,
+        bool priceEditable) => response with
+        {
+            PriceEditable = priceEditable,
+            PriceJudgedServiceId = Trimmed(line.ServiceId),
+            PriceJudgedPatientNo = Trimmed(draft.Header.PatientNo),
+            PriceJudgedCompCode = Trimmed(draft.Header.CompCode),
+        };
 
     private Lazy<Task<int?>> CompanyIsDirect(InvoiceHeaderDraft header, CancellationToken cancellationToken) =>
         new(() => IsBlank(header.CompCode)
@@ -1605,6 +1790,23 @@ public sealed class InvoiceWorkflowService
     private static bool IsOpenItem(NotImplementedException failure, string openItemId) =>
         failure.Message.StartsWith($"{openItemId}: ", StringComparison.Ordinal);
 
+    /// <summary>Returns true when the failure refuses the draft rather than a server read: the package's or binder's refusal of a workflow preview, or the price plan's OI-24.</summary>
+    private static bool RefusesDraft(Exception failure) =>
+        IsPreviewRefusal(failure)
+        || (failure is NotImplementedException openItem && IsOpenItem(openItem, OpenItemIds.OI24));
+
+    /// <summary>Returns true when the failure is the package's or binder's refusal (422) of a workflow preview.</summary>
+    private static bool IsPreviewRefusal(Exception failure) => failure.Data[PreviewRefusalKey] is true;
+
+    /// <summary>Returns true when the package refused a workflow preview as holding an unexpanded package parent.</summary>
+    private static bool IsUnexpandedParentRefusal(Exception failure) =>
+        IsPreviewRefusal(failure)
+        && string.Equals(Failures.Translate(failure)?.Kind, OracleErrorCatalog.UnexpandedPackageParentKind, StringComparison.Ordinal);
+
+    /// <summary>Returns the open-item id of a 501 failure, or null.</summary>
+    private static string? OpenItemIdOf(Exception failure) =>
+        Failures.Translate(failure) is { Status: OpenItemStatus, OpenItemId: { } openItemId } ? openItemId : null;
+
     private static async Task<bool> TryRollback(IOracleSession session)
     {
         try
@@ -1623,9 +1825,19 @@ public sealed class InvoiceWorkflowService
         bool patientCompanyFirst,
         CancellationToken cancellationToken)
     {
+        var preload = await ReadPatientClaimPreload(draft.Parameters, draft.Header.PatientNo, cancellationToken);
+        var coverage = await ReadCoverage(draft.Header.PatientNo, cancellationToken);
+        return await DecideServerContext(draft, preload, coverage, patientCompanyFirst, cancellationToken);
+    }
+
+    private async Task<ServerContext> DecideServerContext(
+        DraftDto draft,
+        ClaimPreloadData? preload,
+        PatientCoverageSnapshot? coverage,
+        bool patientCompanyFirst,
+        CancellationToken cancellationToken)
+    {
         var header = draft.Header;
-        var preload = await ReadPatientClaimPreload(draft.Parameters, header.PatientNo, cancellationToken);
-        var coverage = await ReadCoverage(header.PatientNo, cancellationToken);
         var compCode = patientCompanyFirst
             ? (IsBlank(coverage?.CompCode) ? header.CompCode : coverage!.CompCode)
             : (IsBlank(header.CompCode) ? coverage?.CompCode : header.CompCode);
@@ -1656,7 +1868,17 @@ public sealed class InvoiceWorkflowService
         return (coverage?.SubCompCode, coverage?.ClassCode);
     }
 
+    /// <summary>Returns the DR-24 pay type to decide or bind; a null inherited pay type throws <see cref="PayTypeRequired"/>.</summary>
     private async Task<int> DecidePayType(
+        string? compCode,
+        PatientCoverageSnapshot? coverage,
+        InvoiceEntryParameters parameters,
+        ClaimPreloadData? preload,
+        CancellationToken cancellationToken) =>
+        await DecideDraftPayType(compCode, coverage, parameters, preload, cancellationToken) ?? throw PayTypeRequired();
+
+    /// <summary>Returns the DR-24 pay type of the draft; null when the claim preload's inherited pay type is null.</summary>
+    private async Task<int?> DecideDraftPayType(
         string? compCode,
         PatientCoverageSnapshot? coverage,
         InvoiceEntryParameters parameters,
@@ -1672,6 +1894,16 @@ public sealed class InvoiceWorkflowService
         }
 
         return PayTypeSelectionRule.Decide(compCode, companyType, parameters, preload?.Header);
+    }
+
+    private const string PayTypeRequiredText = "FRM-40202: Field must be entered.";
+
+    /// <summary>Returns the 422 field-validation failure carrying the blocking PAYTYPE required message.</summary>
+    private static ArgumentException PayTypeRequired()
+    {
+        var failure = new ArgumentException(PayTypeRequiredText, PayTypeItem);
+        failure.Data[ProblemDetailsWriter.MessagesDataKey] = new[] { Blocking(PayTypeItem, PayTypeRequiredText) };
+        return failure;
     }
 
     private async Task<InvoiceHeaderDraft> ApplyVisitDoctor(
@@ -1715,6 +1947,9 @@ public sealed class InvoiceWorkflowService
     private async Task<PatientCoverageSnapshot?> ReadCoverage(string? patientNo, CancellationToken cancellationToken) =>
         IsBlank(patientNo) ? null : await _lookups.GetPatientCoverage(patientNo!, cancellationToken);
 
+    private static bool LacksCoverageRow(string? patientNo, PatientCoverageSnapshot? coverage) =>
+        !IsBlank(patientNo) && coverage is null;
+
     private async Task<ClinicProfile?> ReadClinic(InvoiceHeaderDraft header, CancellationToken cancellationToken) =>
         header.ClinicId is int clinicId
             ? await _lookups.GetClinicProfile(clinicId, header.PatientNo, cancellationToken)
@@ -1745,13 +1980,22 @@ public sealed class InvoiceWorkflowService
         return new GateInputs(maxDeductable, useAdvanced, cardId);
     }
 
-    private async Task<int> ReadX422(CancellationToken cancellationToken)
+    private async Task<int?> ReadX422(InvoiceEntryParameters parameters, CancellationToken cancellationToken)
     {
         var preferences = await _lookups.GetPreferences(cancellationToken);
-        return preferences.TryGetValue(ApprovalPreference, out var value)
-            && int.TryParse(value?.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var mode)
-                ? mode
-                : EnforcedApprovalCheck;
+        if (!preferences.TryGetValue(ApprovalPreference, out var value))
+        {
+            return parameters.X422ApprovCheck;
+        }
+
+        if (value is null)
+        {
+            return null;
+        }
+
+        return int.TryParse(value.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var mode)
+            ? mode
+            : parameters.X422ApprovCheck;
     }
 
     /// <summary>Returns the rolled-back package preview of the service lines not in the excluded indexes, or null when none remains.</summary>
@@ -1760,6 +2004,7 @@ public sealed class InvoiceWorkflowService
         IReadOnlyList<InvoiceLineDraft> lines,
         IReadOnlySet<int> excludedLines,
         OperatorContext operatorContext,
+        ProfileReads profileReads,
         CancellationToken cancellationToken)
     {
         var eligible = lines
@@ -1770,13 +2015,14 @@ public sealed class InvoiceWorkflowService
             return null;
         }
 
-        return await CalculateVettedPreview(header, eligible, operatorContext, cancellationToken);
+        return await CalculateVettedPreview(header, eligible, operatorContext, profileReads, cancellationToken);
     }
 
     private async Task<PreviewResult> CalculateVettedPreview(
         InvoiceHeaderDraft header,
         IReadOnlyList<InvoiceLineDraft> lines,
         OperatorContext operatorContext,
+        ProfileReads profileReads,
         CancellationToken cancellationToken)
     {
         var manual = lines.Where(IsManualPriceOverride).ToHashSet();
@@ -1787,13 +2033,19 @@ public sealed class InvoiceWorkflowService
         }
 
         var isDirect = CompanyIsDirect(header, cancellationToken);
+        var listsByClientId = ListsByClientId(probe.Lines);
+        var firstListId = FirstPreviewList(probe);
+        var overrides = manual
+            .Select(line => (
+                Line: line,
+                ListId: OwnOrFirstListId(line.ClientId, listsByClientId, firstListId),
+                ServiceId: Trimmed(line.ServiceId)))
+            .ToArray();
+        await profileReads.Load(overrides.Select(entry => (entry.ListId, entry.ServiceId)), cancellationToken);
         var refused = new HashSet<InvoiceLineDraft>();
-        foreach (var line in manual)
+        foreach (var (line, listId, serviceId) in overrides)
         {
-            var profile = OwnOrFirstListId(line.ClientId, probe) is { } listId && Trimmed(line.ServiceId) is { } serviceId
-                ? await _lookups.GetServiceProfile(serviceId, listId, cancellationToken)
-                : null;
-            if (!await PriceOverrideAllowed(header, profile, isDirect))
+            if (!await PriceOverrideAllowed(header, profileReads.Get(listId, serviceId), isDirect))
             {
                 refused.Add(line);
             }
@@ -1812,9 +2064,17 @@ public sealed class InvoiceWorkflowService
         CancellationToken cancellationToken)
     {
         await using var session = await _sessionFactory.Open(cancellationToken);
-        var (previewLines, totals) = await _invoiceApi.CalculatePreview(
-            session, header, lines, operatorContext, header.Amount1 is null, cancellationToken);
-        return new PreviewResult(previewLines, totals);
+        try
+        {
+            var (previewLines, totals) = await _invoiceApi.CalculatePreview(
+                session, header, lines, operatorContext, header.Amount1 is null, cancellationToken);
+            return new PreviewResult(previewLines, totals);
+        }
+        catch (Exception failure) when (Failures.Translate(failure) is { Status: RefusedStatus })
+        {
+            failure.Data[PreviewRefusalKey] = true;
+            throw;
+        }
     }
 
     private static IReadOnlyList<InvoiceLineDraft> WithoutPriceOverrides(
@@ -1824,12 +2084,26 @@ public sealed class InvoiceWorkflowService
             ? lines
             : lines.Select(line => stripped.Contains(line) ? line with { PriceOverride = null } : line).ToArray();
 
-    private static decimal? OwnOrFirstListId(string? clientId, PreviewResult preview) =>
-        (IsBlank(clientId)
-            ? null
-            : preview.Lines.FirstOrDefault(line =>
-                line.ListId is not null && string.Equals(line.ClientId, clientId, StringComparison.Ordinal))?.ListId)
-        ?? preview.Lines.FirstOrDefault(line => line.ListId is not null)?.ListId;
+    private static decimal? OwnOrFirstListId(
+        string? clientId,
+        IReadOnlyDictionary<string, decimal> listsByClientId,
+        decimal? firstListId) =>
+        !IsBlank(clientId) && listsByClientId.TryGetValue(clientId!, out var listId) ? listId : firstListId;
+
+    /// <summary>Returns the first non-null list id of the preview lines for each client id.</summary>
+    private static Dictionary<string, decimal> ListsByClientId(IReadOnlyList<EditablePreviewLine> previewLines)
+    {
+        var lists = new Dictionary<string, decimal>(StringComparer.Ordinal);
+        foreach (var line in previewLines)
+        {
+            if (line.ClientId is { } clientId && line.ListId is { } listId)
+            {
+                lists.TryAdd(clientId, listId);
+            }
+        }
+
+        return lists;
+    }
 
     private static int? BundledOfferId(PreviewResult? preview) =>
         preview?.Lines.FirstOrDefault(line => line.OfferType == BundledOfferType && line.OfferId is not null)?.OfferId;
@@ -1853,7 +2127,7 @@ public sealed class InvoiceWorkflowService
         return rejected;
     }
 
-    /// <summary>Returns the indexes of the plain lines that are package services not yet expanded (known package ids, or IS_PACKAGE = 1 on the classification list) and the plain lines no list could classify.</summary>
+    /// <summary>Returns the indexes of the plain lines that are package services not yet expanded (known package ids, or IS_PACKAGE = 1 on the claim preload's list, else on the list of a preview of the role lines) and the plain lines left unclassified when neither list exists.</summary>
     private async Task<ParentScan> UnexpandedParents(
         IReadOnlyList<InvoiceLineDraft> lines,
         IReadOnlySet<int> rejected,
@@ -1863,6 +2137,7 @@ public sealed class InvoiceWorkflowService
         bool previewAllowed,
         List<PreviewResult> succeeded,
         OperatorContext operatorContext,
+        ProfileReads profileReads,
         CancellationToken cancellationToken)
     {
         var parents = new HashSet<int>();
@@ -1903,7 +2178,7 @@ public sealed class InvoiceWorkflowService
         if (classificationList is null && previewAllowed && hasRoleLine)
         {
             var discovery = await RulesPreview(
-                ContextHeader(header), lines, discoveryExcluded, operatorContext, cancellationToken);
+                ContextHeader(header), lines, discoveryExcluded, operatorContext, profileReads, cancellationToken);
             if (discovery is not null)
             {
                 succeeded.Add(discovery);
@@ -1917,7 +2192,7 @@ public sealed class InvoiceWorkflowService
             return new ParentScan(parents, unclassified);
         }
 
-        parents.UnionWith(await PackageLines(lines, unclassified, listId, cancellationToken));
+        parents.UnionWith(await PackageLines(lines, unclassified, listId, profileReads, cancellationToken));
         return new ParentScan(parents, Array.Empty<int>());
     }
 
@@ -1926,20 +2201,16 @@ public sealed class InvoiceWorkflowService
         IReadOnlyList<InvoiceLineDraft> lines,
         IReadOnlyList<int> candidates,
         decimal listId,
+        ProfileReads profileReads,
         CancellationToken cancellationToken)
     {
+        await profileReads.Load(
+            candidates.Select(index => ((decimal?)listId, Trimmed(lines[index].ServiceId))), cancellationToken);
+
         var packages = new HashSet<int>();
-        var isPackage = new Dictionary<string, bool>(StringComparer.Ordinal);
         foreach (var index in candidates)
         {
-            var serviceId = Trimmed(lines[index].ServiceId)!;
-            if (!isPackage.TryGetValue(serviceId, out var package))
-            {
-                package = (await _lookups.GetServiceProfile(serviceId, listId, cancellationToken))?.IsPackage == 1;
-                isPackage[serviceId] = package;
-            }
-
-            if (package)
+            if (profileReads.Get(listId, Trimmed(lines[index].ServiceId))?.IsPackage == 1)
             {
                 packages.Add(index);
             }
@@ -1948,7 +2219,7 @@ public sealed class InvoiceWorkflowService
         return packages;
     }
 
-    /// <summary>Returns the lines excluded from the context preview and that preview, adding every other preview that succeeds to <paramref name="succeeded"/>. When the preview fails while plain lines are unclassified, the list of the first of them that previews alone classifies them, and the preview is re-run without the package parents found; the failure stands when none is found.</summary>
+    /// <summary>Returns the lines excluded from the context preview and that preview, adding the role-line preview to <paramref name="succeeded"/> when it runs and succeeds. When the package refuses the preview as holding an unexpanded package parent while plain lines are unclassified, they are classified on the draft-level list (the price plan's, or OI-24) and the preview is re-run once without the parents found; every other failure propagates.</summary>
     private async Task<(HashSet<int> Excluded, PreviewResult? Preview)> ContextPreview(
         IReadOnlyList<InvoiceLineDraft> lines,
         IReadOnlySet<int> rejected,
@@ -1957,90 +2228,34 @@ public sealed class InvoiceWorkflowService
         InvoiceHeaderDraft header,
         List<PreviewResult> succeeded,
         OperatorContext operatorContext,
+        ProfileReads profileReads,
         CancellationToken cancellationToken)
     {
         var scan = await UnexpandedParents(
-            lines, rejected, knownPackageIds, preload, header, previewAllowed: true, succeeded, operatorContext, cancellationToken);
+            lines, rejected, knownPackageIds, preload, header, previewAllowed: true, succeeded, operatorContext, profileReads, cancellationToken);
         var excluded = new HashSet<int>(scan.Parents);
         excluded.UnionWith(rejected);
         var contextHeader = ContextHeader(header);
         try
         {
-            return (excluded, await RulesPreview(contextHeader, lines, excluded, operatorContext, cancellationToken));
+            return (excluded, await RulesPreview(contextHeader, lines, excluded, operatorContext, profileReads, cancellationToken));
         }
-        catch (Exception failure) when (failure is not OperationCanceledException && scan.Unclassified.Count > 0)
+        catch (Exception failure) when (scan.Unclassified.Count > 0 && IsUnexpandedParentRefusal(failure))
         {
-            var probed = await ProbeParents(
-                lines, scan.Unclassified, excluded, contextHeader, succeeded, operatorContext, cancellationToken);
-            if (probed.Count == 0)
+            var listId = await ResolveListId(null, preload, header, operatorContext, cancellationToken);
+            var parents = await PackageLines(lines, scan.Unclassified, listId, profileReads, cancellationToken);
+            if (parents.Count == 0)
             {
                 throw;
             }
 
-            excluded.UnionWith(probed);
+            excluded.UnionWith(parents);
         }
 
-        return (excluded, await RulesPreview(contextHeader, lines, excluded, operatorContext, cancellationToken));
+        return (excluded, await RulesPreview(contextHeader, lines, excluded, operatorContext, profileReads, cancellationToken));
     }
 
-    /// <summary>Returns the unclassified plain lines that are package services on the list of the first of them whose service previews alone, or none when no such service previews or the failed preview held a single line.</summary>
-    private async Task<HashSet<int>> ProbeParents(
-        IReadOnlyList<InvoiceLineDraft> lines,
-        IReadOnlyList<int> unclassified,
-        IReadOnlySet<int> failedExcluded,
-        InvoiceHeaderDraft contextHeader,
-        List<PreviewResult> succeeded,
-        OperatorContext operatorContext,
-        CancellationToken cancellationToken)
-    {
-        var failedLineCount = Enumerable.Range(0, lines.Count)
-            .Count(index => !failedExcluded.Contains(index) && !IsBlank(lines[index].ServiceId));
-        if (failedLineCount < 2)
-        {
-            return new HashSet<int>();
-        }
-
-        var probedServices = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var index in unclassified)
-        {
-            if (!probedServices.Add(Trimmed(lines[index].ServiceId)!))
-            {
-                continue;
-            }
-
-            var others = Enumerable.Range(0, lines.Count).Where(other => other != index).ToHashSet();
-            if (await PreviewOrNull(lines, others, contextHeader, operatorContext, cancellationToken) is { } alone)
-            {
-                succeeded.Add(alone);
-                if (FirstPreviewList(alone) is { } listId)
-                {
-                    return await PackageLines(lines, unclassified, listId, cancellationToken);
-                }
-            }
-        }
-
-        return new HashSet<int>();
-    }
-
-    /// <summary>Returns the preview of the lines outside the excluded indexes, or null when no line remains or the package refuses that preview.</summary>
-    private async Task<PreviewResult?> PreviewOrNull(
-        IReadOnlyList<InvoiceLineDraft> lines,
-        IReadOnlySet<int> excludedLines,
-        InvoiceHeaderDraft contextHeader,
-        OperatorContext operatorContext,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            return await RulesPreview(contextHeader, lines, excludedLines, operatorContext, cancellationToken);
-        }
-        catch (Exception failure) when (failure is not OperationCanceledException)
-        {
-            return null;
-        }
-    }
-
-    /// <summary>Returns the context preview of the lines that are neither rejected nor unexpanded parents, with every line's list and profile; the other previews that succeed are added to <paramref name="succeeded"/>.</summary>
+    /// <summary>Returns the context preview of the lines that are neither rejected nor unexpanded parents, with every line's list and profile; every preview that succeeds, the context preview included, is added to <paramref name="succeeded"/>.</summary>
     private async Task<LineContext> ReadLineContext(
         IReadOnlyList<InvoiceLineDraft> lines,
         InvoiceHeaderDraft header,
@@ -2049,12 +2264,17 @@ public sealed class InvoiceWorkflowService
         bool previewAllowed,
         List<PreviewResult> succeeded,
         OperatorContext operatorContext,
+        ProfileReads profileReads,
         CancellationToken cancellationToken)
     {
         var rejected = LocallyRejectedLines(lines);
         var (excluded, preview) = previewAllowed
-            ? await ContextPreview(lines, rejected, knownPackageIds, preload, header, succeeded, operatorContext, cancellationToken)
+            ? await ContextPreview(lines, rejected, knownPackageIds, preload, header, succeeded, operatorContext, profileReads, cancellationToken)
             : (rejected, (PreviewResult?)null);
+        if (preview is not null)
+        {
+            succeeded.Add(preview);
+        }
 
         IReadOnlyList<decimal?> lists = LineLists(lines, preview, preload);
         var resolved = true;
@@ -2070,29 +2290,23 @@ public sealed class InvoiceWorkflowService
             }
         }
 
-        var profiles = await BuildProfiles(lines, lists, cancellationToken);
+        var profiles = await BuildProfiles(lines, lists, profileReads, cancellationToken);
         return new LineContext(preview, profiles, preview is not null && excluded.Count == 0, resolved);
     }
 
-    /// <summary>Returns the line context and requested services read on the lists of the previews that succeeded, else the claim preload's list, for use when the context preview failed; an unavailable context when those reads fail.</summary>
-    private async Task<(LineContext Context, IReadOnlyDictionary<decimal, IReadOnlyList<string>> Requested)> FallbackLineContext(
+    /// <summary>Returns the line context and requested services read on the lists of the previews that succeeded, else the claim preload's list, for use when the package refused a preview or the price plan returned OI-24.</summary>
+    private async Task<(LineContext Context, IReadOnlyDictionary<decimal, IReadOnlySet<string>> Requested)> FallbackLineContext(
         IReadOnlyList<InvoiceLineDraft> lines,
         IReadOnlyList<PreviewResult> succeeded,
         ClaimPreloadData? preload,
         string? claimNo,
+        ProfileReads profileReads,
         CancellationToken cancellationToken)
     {
         var lists = LineLists(lines, succeeded.SelectMany(preview => preview.Lines).ToArray(), preload);
-        try
-        {
-            var profiles = await BuildProfiles(lines, lists, cancellationToken);
-            var requested = await ReadRequestedServices(claimNo, profiles.Lists, cancellationToken);
-            return (new LineContext(null, profiles, false, false), requested);
-        }
-        catch (Exception failure) when (failure is not OperationCanceledException)
-        {
-            return (LineContext.Unavailable(lines.Count), NoRequestedServices);
-        }
+        var profiles = await BuildProfiles(lines, lists, profileReads, cancellationToken);
+        var requested = await ReadRequestedServices(claimNo, profiles.Lists, cancellationToken);
+        return (new LineContext(null, profiles, false, false), requested);
     }
 
     /// <summary>Returns the draft-level price list: the first preview list, else the claim preload's list, else the price plan's list or OI-24.</summary>
@@ -2127,6 +2341,7 @@ public sealed class InvoiceWorkflowService
         ClaimPreloadData? preload)
     {
         var firstListId = previewLines.FirstOrDefault(line => line.ListId is not null)?.ListId;
+        var listsByClientId = ListsByClientId(previewLines);
         var lists = new decimal?[lines.Count];
         for (var index = 0; index < lines.Count; index++)
         {
@@ -2136,10 +2351,9 @@ public sealed class InvoiceWorkflowService
             }
 
             var clientId = lines[index].ClientId;
-            var ownListId = IsBlank(clientId)
+            decimal? ownListId = IsBlank(clientId)
                 ? null
-                : previewLines.FirstOrDefault(line =>
-                    line.ListId is not null && string.Equals(line.ClientId, clientId, StringComparison.Ordinal))?.ListId;
+                : listsByClientId.TryGetValue(clientId!, out var clientListId) ? clientListId : null;
             lists[index] = ownListId ?? firstListId ?? preload?.ListId;
         }
 
@@ -2171,10 +2385,12 @@ public sealed class InvoiceWorkflowService
     private async Task<ProfileSet> BuildProfiles(
         IReadOnlyList<InvoiceLineDraft> lines,
         IReadOnlyList<decimal?> lists,
+        ProfileReads profileReads,
         CancellationToken cancellationToken)
     {
         var listOrder = new List<decimal>();
         var serviceIdsByList = new Dictionary<decimal, List<string>>();
+        var listed = new HashSet<(decimal ListId, string ServiceId)>();
         for (var index = 0; index < lines.Count; index++)
         {
             if (lists[index] is not { } lineListId || Trimmed(lines[index].ServiceId) is not { } lineServiceId)
@@ -2189,7 +2405,7 @@ public sealed class InvoiceWorkflowService
                 listOrder.Add(lineListId);
             }
 
-            if (!listServiceIds.Contains(lineServiceId, StringComparer.Ordinal))
+            if (listed.Add((lineListId, lineServiceId)))
             {
                 listServiceIds.Add(lineServiceId);
             }
@@ -2200,15 +2416,11 @@ public sealed class InvoiceWorkflowService
             return ProfileSet.Empty(lines.Count) with { Lists = lists.ToArray() };
         }
 
-        var read = new Dictionary<(decimal ListId, string ServiceId), ServiceProfile?>();
         var queueFlags = new Dictionary<decimal, Dictionary<string, int>>();
         foreach (var listId in listOrder)
         {
             var serviceIds = serviceIdsByList[listId];
-            foreach (var serviceId in serviceIds)
-            {
-                read[(listId, serviceId)] = await _lookups.GetServiceProfile(serviceId, listId, cancellationToken);
-            }
+            await profileReads.Load(serviceIds.Select(serviceId => ((decimal?)listId, (string?)serviceId)), cancellationToken);
 
             var listFlags = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             foreach (var (serviceId, flag) in await _lookups.GetServiceQueueFlags(serviceIds, listId, cancellationToken))
@@ -2227,7 +2439,7 @@ public sealed class InvoiceWorkflowService
             }
 
             int? flag = queueFlags[listId].TryGetValue(id, out var queued) ? queued : null;
-            return read.GetValueOrDefault((listId, id)) switch
+            return profileReads.Get(listId, id) switch
             {
                 null when flag is null => null,
                 null => new ServiceProfile { ServiceId = id, AddToQue = flag },
@@ -2240,6 +2452,23 @@ public sealed class InvoiceWorkflowService
         var byLine = new ServiceProfile?[lines.Count];
         var nested = new bool[lines.Count];
 
+        var componentsByInstance = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+        for (var index = 0; index < lines.Count; index++)
+        {
+            if (!HasRole(lines[index], ComponentRole) || Trimmed(lines[index].PackageInstanceId) is not { } componentInstanceId)
+            {
+                continue;
+            }
+
+            if (!componentsByInstance.TryGetValue(componentInstanceId, out var instanceComponents))
+            {
+                instanceComponents = new List<int>();
+                componentsByInstance[componentInstanceId] = instanceComponents;
+            }
+
+            instanceComponents.Add(index);
+        }
+
         for (var parent = 0; parent < lines.Count; parent++)
         {
             if (!HasRole(lines[parent], ParentRole))
@@ -2247,22 +2476,17 @@ public sealed class InvoiceWorkflowService
                 continue;
             }
 
-            var instanceId = Trimmed(lines[parent].PackageInstanceId);
             var components = new List<ServiceProfile>();
-            for (var component = 0; component < lines.Count; component++)
+            if (Trimmed(lines[parent].PackageInstanceId) is { } instanceId
+                && componentsByInstance.TryGetValue(instanceId, out var componentIndexes))
             {
-                if (component == parent
-                    || instanceId is null
-                    || !HasRole(lines[component], ComponentRole)
-                    || !string.Equals(Trimmed(lines[component].PackageInstanceId), instanceId, StringComparison.Ordinal))
+                foreach (var component in componentIndexes)
                 {
-                    continue;
-                }
-
-                nested[component] = true;
-                if (own[component] is { } componentProfile)
-                {
-                    components.Add(componentProfile);
+                    nested[component] = true;
+                    if (own[component] is { } componentProfile)
+                    {
+                        components.Add(componentProfile);
+                    }
                 }
             }
 
@@ -2309,13 +2533,13 @@ public sealed class InvoiceWorkflowService
         return new ProfileSet(topLevel.ToArray(), byLine, lists.ToArray());
     }
 
-    /// <summary>Returns the claim's requested service ids read once per distinct line list; empty when the claim number is blank.</summary>
-    private async Task<IReadOnlyDictionary<decimal, IReadOnlyList<string>>> ReadRequestedServices(
+    /// <summary>Returns the claim's trimmed requested service ids, compared ignoring case, read once per distinct line list; empty when the claim number is blank.</summary>
+    private async Task<IReadOnlyDictionary<decimal, IReadOnlySet<string>>> ReadRequestedServices(
         string? claimNo,
         IReadOnlyList<decimal?> lists,
         CancellationToken cancellationToken)
     {
-        var requested = new Dictionary<decimal, IReadOnlyList<string>>();
+        var requested = new Dictionary<decimal, IReadOnlySet<string>>();
         if (IsBlank(claimNo))
         {
             return requested;
@@ -2325,7 +2549,8 @@ public sealed class InvoiceWorkflowService
         {
             if (list is { } listId && !requested.ContainsKey(listId))
             {
-                requested[listId] = await _lookups.GetRequestedServices(claimNo!, listId, cancellationToken);
+                var serviceIds = await _lookups.GetRequestedServices(claimNo!, listId, cancellationToken);
+                requested[listId] = new HashSet<string>(serviceIds.Select(Trimmed).OfType<string>(), StringComparer.OrdinalIgnoreCase);
             }
         }
 
@@ -2333,18 +2558,19 @@ public sealed class InvoiceWorkflowService
     }
 
     /// <summary>Returns the requested service ids of the line's own list; empty when the line has no list.</summary>
-    private static IReadOnlyList<string> RequestedFor(
-        IReadOnlyDictionary<decimal, IReadOnlyList<string>> requested,
+    private static IReadOnlySet<string> RequestedFor(
+        IReadOnlyDictionary<decimal, IReadOnlySet<string>> requested,
         IReadOnlyList<decimal?> lists,
         int index) =>
         lists[index] is { } listId && requested.TryGetValue(listId, out var services)
             ? services
-            : Array.Empty<string>();
+            : NoRequestedServiceIds;
 
-    private static bool IsRequested(string? serviceId, IReadOnlyList<string> requestedServices) =>
+    private static bool IsRequested(string? serviceId, IReadOnlySet<string> requestedServices) =>
         Trimmed(serviceId) is { } id
-        && requestedServices.Any(requested => string.Equals(Trimmed(requested), id, StringComparison.OrdinalIgnoreCase));
+        && requestedServices.Contains(id);
 
+    /// <summary>Returns the draft with the operator identity and the server-owned fields reset; refuses a null line, or a patient number wider than PATIENTNO, before any read.</summary>
     private static DraftDto Sanitize(DraftDto draft, OperatorContext operatorContext)
     {
         ArgumentNullException.ThrowIfNull(draft);
@@ -2354,6 +2580,13 @@ public sealed class InvoiceWorkflowService
         {
             var failure = new ArgumentException(NullLineText, nameof(draft));
             failure.Data[ProblemDetailsWriter.MessagesDataKey] = new[] { Blocking(LineField, NullLineText) };
+            throw failure;
+        }
+
+        if (draft.Header?.PatientNo is { } patientNo && !IsBlank(patientNo) && PatientNoTooLong(patientNo) is { } tooLong)
+        {
+            var failure = new ArgumentException(tooLong.Text, nameof(draft));
+            failure.Data[ProblemDetailsWriter.MessagesDataKey] = new[] { tooLong };
             throw failure;
         }
 
@@ -2566,6 +2799,28 @@ public sealed class InvoiceWorkflowService
         },
     };
 
+    /// <summary>Returns the list with no rows and the blocking message refusing one of its binds.</summary>
+    private static LovResponse BindRejected(string lov, MessageDto message) => new()
+    {
+        Name = lov,
+        Rows = Array.Empty<IReadOnlyDictionary<string, object?>>(),
+        Messages = new[] { message },
+    };
+
+    /// <summary>Returns the blocking PATIENTNO message when the patient number exceeds the item's width in characters or UTF-8 bytes, else null.</summary>
+    private static MessageDto? PatientNoTooLong(string patientNo)
+    {
+        if (patientNo.Length > PatientNoBytes)
+        {
+            return Blocking(PatientNoItem, $"{PatientNoItem} has {patientNo.Length} characters; at most {PatientNoBytes} can be bound.");
+        }
+
+        var bytes = System.Text.Encoding.UTF8.GetByteCount(patientNo);
+        return bytes > PatientNoBytes
+            ? Blocking(PatientNoItem, $"{PatientNoItem} has {bytes} bytes in UTF-8; at most {PatientNoBytes} can be bound.")
+            : null;
+    }
+
     private static MessageDto Blocking(string field, string text) => new()
     {
         Field = field,
@@ -2716,9 +2971,16 @@ public sealed class InvoiceWorkflowService
     private static bool HasWellFormedRequestId(DraftDto? draft) =>
         draft?.RequestId is { Length: RequestIdLength } requestId && requestId.All(char.IsAsciiHexDigitUpper);
 
-    private static CreateInvoiceResponse RequestIdRejected() => new()
+    /// <summary>Returns the outcome of a saved or replayed invoice, carrying its warnings and open items.</summary>
+    private static CreateInvoiceOutcome Saved(CreateInvoiceResponse invoice) => new()
     {
-        InvNo = null,
+        Invoice = invoice,
+        Messages = invoice.Messages,
+        OpenItems = invoice.OpenItems,
+    };
+
+    private static CreateInvoiceOutcome RequestIdRejected() => new()
+    {
         Messages = new[]
         {
             new MessageDto
@@ -2728,6 +2990,40 @@ public sealed class InvoiceWorkflowService
                 Severity = ValidationMessage.Blocking,
                 Rule = null,
             },
+        },
+        OpenItems = Array.Empty<string>(),
+    };
+
+    /// <summary>Returns true when the draft carries the seal the gateway issues for its request id and draft date.</summary>
+    private bool HasIssuedDraftDate(DraftDto draft) =>
+        draft.DraftSeal is { Length: DraftSealLength } seal
+        && _invoiceApi.SealDraftDate(draft.RequestId, draft.DraftDate) is { Length: DraftSealLength } issued
+        && CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(seal), Encoding.UTF8.GetBytes(issued));
+
+    private static CreateInvoiceOutcome DraftDateRejected() => new()
+    {
+        Messages = new[] { Blocking(InvDateItem, DraftSealText) },
+        OpenItems = Array.Empty<string>(),
+    };
+
+    /// <summary>Returns the draft's lines plus one rebuilt parent per distinct space-trimmed offer instance id of its bundled-offer lines; a null line counts as a line.</summary>
+    private static int EngineLineCount(IReadOnlyList<InvoiceLineDraft?> lines) =>
+        lines.Count
+        + lines
+            .Select(line => line is { OfferType: BundledOfferType } ? line.OfferInstanceId?.Trim(' ') : null)
+            .Where(instanceId => !string.IsNullOrEmpty(instanceId))
+            .Distinct(StringComparer.Ordinal)
+            .Count();
+
+    private static CreateInvoiceOutcome LinesRejected(int engineLines, int maxLines) => new()
+    {
+        Messages = new[]
+        {
+            Blocking(
+                LineField,
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"The draft expands to {engineLines} invoice lines; an invoice can be created with at most {maxLines} lines.")),
         },
         OpenItems = Array.Empty<string>(),
     };
@@ -2756,10 +3052,7 @@ public sealed class InvoiceWorkflowService
             new(Array.Empty<ServiceProfile>(), new ServiceProfile?[lineCount], new decimal?[lineCount]);
     }
 
-    private sealed record LineContext(PreviewResult? Preview, ProfileSet Profiles, bool CoversDraft, bool Resolved)
-    {
-        public static LineContext Unavailable(int lineCount) => new(null, ProfileSet.Empty(lineCount), false, false);
-    }
+    private sealed record LineContext(PreviewResult? Preview, ProfileSet Profiles, bool CoversDraft, bool Resolved);
 
     private sealed class Findings
     {
@@ -2809,5 +3102,57 @@ public sealed class InvoiceWorkflowService
             OpenItems = OpenItems,
             VisitLine = visitLine,
         };
+    }
+
+    /// <summary>Service profiles of one workflow call, read through one batched lookup per price list and kept by list and service id.</summary>
+    private sealed class ProfileReads
+    {
+        private readonly ILookupQueries _lookups;
+        private readonly Dictionary<(decimal ListId, string ServiceId), ServiceProfile?> _read = new();
+
+        /// <summary>Creates an empty set of reads over the lookups.</summary>
+        public ProfileReads(ILookupQueries lookups) => _lookups = lookups;
+
+        /// <summary>Reads the profiles of the keys with a list and a service that are not read yet, once per list; a service not on its list reads as null.</summary>
+        public async Task Load(IEnumerable<(decimal? ListId, string? ServiceId)> keys, CancellationToken cancellationToken)
+        {
+            var listOrder = new List<decimal>();
+            var unreadByList = new Dictionary<decimal, List<string>>();
+            var pending = new HashSet<(decimal ListId, string ServiceId)>();
+            foreach (var (listId, serviceId) in keys)
+            {
+                if (listId is not { } list
+                    || serviceId is not { } service
+                    || _read.ContainsKey((list, service))
+                    || !pending.Add((list, service)))
+                {
+                    continue;
+                }
+
+                if (!unreadByList.TryGetValue(list, out var unread))
+                {
+                    unread = new List<string>();
+                    unreadByList[list] = unread;
+                    listOrder.Add(list);
+                }
+
+                unread.Add(service);
+            }
+
+            foreach (var list in listOrder)
+            {
+                var serviceIds = unreadByList[list];
+                var profiles = await _lookups.GetServiceProfiles(serviceIds, list, cancellationToken);
+                foreach (var serviceId in serviceIds)
+                {
+                    _read[(list, serviceId)] = profiles.GetValueOrDefault(serviceId);
+                }
+            }
+        }
+
+        /// <summary>Returns the loaded profile of a service on a list; null when either is null or the service is not on the list.</summary>
+        /// <exception cref="KeyNotFoundException">The service was not loaded on the list.</exception>
+        public ServiceProfile? Get(decimal? listId, string? serviceId) =>
+            listId is { } list && serviceId is { } service ? _read[(list, service)] : null;
     }
 }

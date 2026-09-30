@@ -1,15 +1,21 @@
 using System.Globalization;
+using System.Reflection;
 using System.Text.RegularExpressions;
 using Billing.Invoicing.Data.Commands;
+using Billing.Invoicing.Data.Oracle;
+using Dapper;
 
 namespace Billing.Invoicing.Tests.Data;
 
-/// <summary>Statement shape of the DR-21 reception-transfer clear in <see cref="PatientTransferCommand"/> (D-44).</summary>
+/// <summary>Statement shape and command settings of the DR-21 reception-transfer clear in <see cref="PatientTransferCommand"/> (D-44).</summary>
 [Trait("Category", "DataUnit")]
 public sealed class PatientTransferCommandTests
 {
     private const string SetKeyword = " SET ";
     private const string WhereKeyword = " WHERE ";
+    private const string CommandTimeoutSecondsKey = "Invoicing:CommandTimeoutSeconds";
+    private const string PatientNo = "P0001";
+    private const int ConfiguredTimeoutSeconds = 17;
 
     private static readonly string[] ClearedColumns = ["NEW_INV_CATID", "NEW_INV_CLINICID", "NEW_INV_DOCID", "NEW_INV_SERVICEID"];
 
@@ -84,6 +90,45 @@ public sealed class PatientTransferCommandTests
             .ToArray();
 
         Assert.Equal(new[] { "patientNo" }, binds);
+    }
+
+    [Fact]
+    public void Constructor_NullOptions_Throws()
+    {
+        Assert.Throws<ArgumentNullException>("options", () => new PatientTransferCommand(null!));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-5)]
+    public void Constructor_CommandTimeoutBelowOne_ThrowsNamingTheKey(int commandTimeoutSeconds)
+    {
+        var options = new InvoicingDataOptions { CommandTimeoutSeconds = commandTimeoutSeconds };
+
+        var exception = Assert.Throws<ArgumentOutOfRangeException>("options", () => new PatientTransferCommand(options));
+
+        Assert.Equal(commandTimeoutSeconds, exception.ActualValue);
+        Assert.Contains(CommandTimeoutSecondsKey, exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Command_CarriesTheConfiguredTimeoutAndTheCallersTransactionAndToken()
+    {
+        var command = new PatientTransferCommand(new InvoicingDataOptions { CommandTimeoutSeconds = ConfiguredTimeoutSeconds });
+        using var cancellation = new CancellationTokenSource();
+
+        CommandDefinition definition = command.ClearReceptionTransferCommand(PatientNo, null, cancellation.Token);
+
+        Assert.Equal(ConfiguredTimeoutSeconds, definition.CommandTimeout);
+        Assert.Equal(PatientTransferCommand.ClearReceptionTransferSql, definition.CommandText);
+        Assert.Null(definition.Transaction);
+        Assert.Equal(cancellation.Token, definition.CancellationToken);
+
+        object? parameters = definition.Parameters;
+        Assert.NotNull(parameters);
+        PropertyInfo bind = Assert.Single(parameters.GetType().GetProperties());
+        Assert.Equal("patientNo", bind.Name);
+        Assert.Equal(PatientNo, bind.GetValue(parameters));
     }
 
     /// <summary>Collapses whitespace runs to one space, trims, and upper-cases invariantly.</summary>

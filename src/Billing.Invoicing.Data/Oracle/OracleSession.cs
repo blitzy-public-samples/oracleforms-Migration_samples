@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.ExceptionServices;
 using Billing.Invoicing.Data.Ports;
 using Oracle.ManagedDataAccess.Client;
@@ -10,21 +11,31 @@ public sealed class OracleSession : IOracleSession
     /// <summary>The <see cref="Exception.Data"/> key whose value is the <see cref="List{T}"/> of later failures attached to a first failure.</summary>
     internal const string SecondaryFailuresKey = "Billing.Invoicing.Data.SecondaryFailures";
 
+    /// <summary>The longest deadline a call can be given.</summary>
+    internal static readonly TimeSpan MaxDeadline = TimeSpan.FromMilliseconds(uint.MaxValue - 1d);
+
+    private readonly TimeSpan _callDeadline;
+
     private bool _completed;
     private bool _disposed;
     private bool _lastCallSucceeded;
     private Exception? _failure;
+    private Task? _abandonedCall;
 
     /// <summary>Wraps an open connection and the transaction begun on it; opens nothing itself.</summary>
     /// <param name="connection">The open connection the session owns.</param>
     /// <param name="transaction">The local transaction begun on <paramref name="connection"/>.</param>
-    internal OracleSession(OracleConnection connection, OracleTransaction transaction)
+    /// <param name="callDeadline">Deadline of each commit and rollback.</param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="callDeadline"/> is not above zero or exceeds <see cref="MaxDeadline"/>.</exception>
+    internal OracleSession(OracleConnection connection, OracleTransaction transaction, TimeSpan callDeadline)
     {
         ArgumentNullException.ThrowIfNull(connection);
         ArgumentNullException.ThrowIfNull(transaction);
+        EnsureDeadline(callDeadline, nameof(callDeadline));
 
         Connection = connection;
         Transaction = transaction;
+        _callDeadline = callDeadline;
     }
 
     /// <summary>The connection that commands of this session run on.</summary>
@@ -33,14 +44,19 @@ public sealed class OracleSession : IOracleSession
     /// <summary>The transaction that commands of this session enlist in.</summary>
     internal OracleTransaction Transaction { get; }
 
-    /// <summary>Commits the transaction; a failure propagates unchanged and leaves the session uncompleted.</summary>
+    /// <summary>Commits the transaction within the session's call deadline; a failure propagates unchanged, an expired deadline as a <see cref="TimeoutException"/>, and either leaves the session uncompleted.</summary>
     /// <param name="cancellationToken">Cancels the commit request.</param>
     public async Task Commit(CancellationToken cancellationToken = default)
     {
         EnsureActive();
         try
         {
-            await Transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            await RunWithinDeadline(
+                "commit",
+                _callDeadline,
+                token => Transaction.CommitAsync(token),
+                abandoned => _abandonedCall = abandoned,
+                cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
@@ -51,14 +67,19 @@ public sealed class OracleSession : IOracleSession
         _completed = true;
     }
 
-    /// <summary>Rolls back the whole transaction; a failure propagates unchanged.</summary>
+    /// <summary>Rolls back the whole transaction within the session's call deadline; a failure propagates unchanged and an expired deadline as a <see cref="TimeoutException"/>.</summary>
     /// <param name="cancellationToken">Cancels the rollback request.</param>
     public async Task Rollback(CancellationToken cancellationToken = default)
     {
         EnsureActive();
         try
         {
-            await Transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+            await RunWithinDeadline(
+                "rollback",
+                _callDeadline,
+                token => Transaction.RollbackAsync(token),
+                abandoned => _abandonedCall = abandoned,
+                cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
@@ -103,7 +124,7 @@ public sealed class OracleSession : IOracleSession
         }
     }
 
-    /// <summary>Rolls back an uncompleted transaction, then releases the transaction and the connection; cleanup failures attach to the first recorded failure, are thrown when none is recorded and an uncompleted session's last call succeeded, and are otherwise dropped; repeat calls do nothing.</summary>
+    /// <summary>Rolls back an uncompleted transaction and releases the transaction and the connection through <see cref="ReleaseWithinDeadline"/>; cleanup failures attach to the first recorded failure, are thrown when none is recorded and an uncompleted session's last call succeeded, and are otherwise dropped; repeat calls do nothing.</summary>
     public async ValueTask DisposeAsync()
     {
         if (_disposed)
@@ -112,37 +133,13 @@ public sealed class OracleSession : IOracleSession
         }
 
         _disposed = true;
-        List<Exception>? cleanupFailures = null;
 
-        if (!_completed)
-        {
-            try
-            {
-                await Transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
-            }
-            catch (Exception exception)
-            {
-                (cleanupFailures ??= []).Add(exception);
-            }
-        }
-
-        try
-        {
-            await Transaction.DisposeAsync().ConfigureAwait(false);
-        }
-        catch (Exception exception)
-        {
-            (cleanupFailures ??= []).Add(exception);
-        }
-
-        try
-        {
-            await Connection.DisposeAsync().ConfigureAwait(false);
-        }
-        catch (Exception exception)
-        {
-            (cleanupFailures ??= []).Add(exception);
-        }
+        List<Exception>? cleanupFailures = await ReleaseWithinDeadline(
+            _callDeadline,
+            _abandonedCall,
+            _completed ? null : token => Transaction.RollbackAsync(token),
+            Transaction,
+            Connection).ConfigureAwait(false);
 
         if (cleanupFailures is null)
         {
@@ -173,7 +170,7 @@ public sealed class OracleSession : IOracleSession
 
     /// <summary>Checks that the session is active and marks a gateway call on it as started.</summary>
     /// <exception cref="ObjectDisposedException">The session is disposed.</exception>
-    /// <exception cref="InvalidOperationException">The session is already committed or rolled back.</exception>
+    /// <exception cref="InvalidOperationException">The session is already committed or rolled back, or an earlier call on it did not complete within its deadline.</exception>
     internal void BeginCall()
     {
         EnsureActive();
@@ -223,14 +220,251 @@ public sealed class OracleSession : IOracleSession
         }
     }
 
-    /// <summary>Throws when the session is disposed, committed or rolled back.</summary>
+    /// <summary>Runs an Oracle call within a deadline; an expired deadline is a <see cref="TimeoutException"/>, a caller cancellation stays an <see cref="OperationCanceledException"/>, and a failure before either propagates unchanged.</summary>
+    /// <param name="operation">Name of the call, used in the timeout message.</param>
+    /// <param name="deadline">Time the call may take.</param>
+    /// <param name="call">Starts the call with a token that is cancelled when the deadline expires or the caller cancels.</param>
+    /// <param name="onAbandoned">Receives the call's task when it is still running after its token was cancelled.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <exception cref="ArgumentException"><paramref name="operation"/> is null, empty or white space.</exception>
+    /// <exception cref="ArgumentNullException"><paramref name="call"/> or <paramref name="onAbandoned"/> is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="deadline"/> is not above zero or exceeds <see cref="MaxDeadline"/>.</exception>
+    /// <exception cref="InvalidOperationException"><paramref name="call"/> returned no task.</exception>
+    /// <exception cref="TimeoutException">The call did not complete within <paramref name="deadline"/>.</exception>
+    internal static async Task RunWithinDeadline(
+        string operation,
+        TimeSpan deadline,
+        Func<CancellationToken, Task> call,
+        Action<Task> onAbandoned,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(operation);
+        EnsureDeadline(deadline, nameof(deadline));
+        ArgumentNullException.ThrowIfNull(call);
+        ArgumentNullException.ThrowIfNull(onAbandoned);
+
+        using var callCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Task pending = call(callCancellation.Token)
+            ?? throw new InvalidOperationException(string.Create(CultureInfo.InvariantCulture, $"The Oracle {operation} returned no task."));
+
+        try
+        {
+            await pending.WaitAsync(deadline, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception waitFailure)
+        {
+            AggregateException? cancelFailure = pending.IsCompleted ? null : CancelCall(callCancellation);
+            if (pending.IsCompletedSuccessfully)
+            {
+                return;
+            }
+
+            Exception outcome;
+            if (pending.IsCompleted)
+            {
+                Exception callFailure = FailureOf(pending);
+                outcome = callCancellation.IsCancellationRequested && !cancellationToken.IsCancellationRequested
+                    ? Expired(operation, deadline, callFailure)
+                    : callFailure;
+            }
+            else
+            {
+                onAbandoned(pending);
+                outcome = cancellationToken.IsCancellationRequested
+                    ? waitFailure as OperationCanceledException ?? new OperationCanceledException(cancellationToken)
+                    : Expired(operation, deadline, waitFailure);
+            }
+
+            if (cancelFailure is not null)
+            {
+                AttachSecondaryFailure(outcome, cancelFailure);
+            }
+
+            ExceptionDispatchInfo.Throw(outcome);
+        }
+    }
+
+    /// <summary>Rolls back when asked, then releases the transaction and the connection, each step within the deadline; after a call still running, or a rollback that failed or did not complete, both are released in the background once that call settles, and a release still running at its deadline hands the connection to the background the same way.</summary>
+    /// <param name="deadline">Time each step may take.</param>
+    /// <param name="stillRunning">A call on the connection that did not complete within its deadline, or null.</param>
+    /// <param name="rollback">Rolls the transaction back with the given token, or null when the transaction is completed.</param>
+    /// <param name="transaction">The transaction to release.</param>
+    /// <param name="connection">The connection to release after the transaction.</param>
+    /// <returns>The failures of the steps run before returning, in order, or null.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="transaction"/> or <paramref name="connection"/> is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="deadline"/> is not above zero or exceeds <see cref="MaxDeadline"/>.</exception>
+    internal static async Task<List<Exception>?> ReleaseWithinDeadline(
+        TimeSpan deadline,
+        Task? stillRunning,
+        Func<CancellationToken, Task>? rollback,
+        IAsyncDisposable transaction,
+        IAsyncDisposable connection)
+    {
+        EnsureDeadline(deadline, nameof(deadline));
+        ArgumentNullException.ThrowIfNull(transaction);
+        ArgumentNullException.ThrowIfNull(connection);
+
+        List<Exception>? failures = null;
+        Task? unsettled = stillRunning;
+
+        if (unsettled is null && rollback is not null)
+        {
+            try
+            {
+                await RunWithinDeadline("rollback", deadline, rollback, running => unsettled = running, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception failure)
+            {
+                (failures ??= []).Add(failure);
+                ReleaseWhenSettled(unsettled ?? Task.CompletedTask, transaction, connection);
+                return failures;
+            }
+        }
+
+        if (unsettled is not null)
+        {
+            ReleaseWhenSettled(unsettled, transaction, connection);
+            return failures;
+        }
+
+        try
+        {
+            await RunWithinDeadline("transaction release", deadline, _ => transaction.DisposeAsync().AsTask(), running => unsettled = running, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception failure)
+        {
+            (failures ??= []).Add(failure);
+        }
+
+        if (unsettled is not null)
+        {
+            ReleaseWhenSettled(unsettled, connection);
+            return failures;
+        }
+
+        try
+        {
+            await RunWithinDeadline("connection release", deadline, _ => connection.DisposeAsync().AsTask(), running => ReleaseWhenSettled(running), CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception failure)
+        {
+            (failures ??= []).Add(failure);
+        }
+
+        return failures;
+    }
+
+    /// <summary>Disposes each resource in order, in the background, once a call still running on them has settled; a disposal failure does not stop the next.</summary>
+    /// <param name="pending">The call still running on the resources.</param>
+    /// <param name="resources">The resources to dispose, in order.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="pending"/>, <paramref name="resources"/> or one of its elements is null.</exception>
+    internal static void ReleaseWhenSettled(Task pending, params IAsyncDisposable[] resources)
+    {
+        ArgumentNullException.ThrowIfNull(pending);
+        ArgumentNullException.ThrowIfNull(resources);
+        foreach (var resource in resources)
+        {
+            ArgumentNullException.ThrowIfNull(resource, nameof(resources));
+        }
+
+        IAsyncDisposable[] ordered = [.. resources];
+        _ = pending.ContinueWith(
+            static (settled, state) => DisposeInOrder(settled, (IAsyncDisposable[])state!),
+            ordered,
+            CancellationToken.None,
+            TaskContinuationOptions.None,
+            TaskScheduler.Default).Unwrap();
+    }
+
+    /// <summary>Throws when the session is disposed, has a call that did not complete within its deadline, or is committed or rolled back.</summary>
     private void EnsureActive()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
+        if (_abandonedCall is not null)
+        {
+            throw new InvalidOperationException("An earlier call on this Oracle session did not complete within its deadline.");
+        }
+
         if (_completed)
         {
             throw new InvalidOperationException("The Oracle session is already committed or rolled back.");
+        }
+    }
+
+    /// <summary>Throws when a deadline is not above zero or exceeds <see cref="MaxDeadline"/>.</summary>
+    /// <param name="deadline">The deadline to check.</param>
+    /// <param name="paramName">Name of the caller's deadline parameter, reported in the exception.</param>
+    private static void EnsureDeadline(TimeSpan deadline, string paramName)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(deadline, TimeSpan.Zero, paramName);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(deadline, MaxDeadline, paramName);
+    }
+
+    /// <summary>Cancels a call's token, running the callbacks registered on it.</summary>
+    /// <param name="callCancellation">The source of the call's token.</param>
+    /// <returns>The failure raised by those callbacks, or null.</returns>
+    private static AggregateException? CancelCall(CancellationTokenSource callCancellation)
+    {
+        try
+        {
+            callCancellation.Cancel();
+            return null;
+        }
+        catch (AggregateException failure)
+        {
+            return failure;
+        }
+    }
+
+    /// <summary>Returns the exception a faulted or cancelled task ends with.</summary>
+    /// <param name="settled">A completed task that did not succeed.</param>
+    /// <returns>The task's exception.</returns>
+    /// <exception cref="ArgumentException"><paramref name="settled"/> is not completed or did not fail.</exception>
+    private static Exception FailureOf(Task settled)
+    {
+        if (!settled.IsCompleted)
+        {
+            throw new ArgumentException("The task has not completed.", nameof(settled));
+        }
+
+        try
+        {
+            settled.GetAwaiter().GetResult();
+        }
+        catch (Exception failure)
+        {
+            return failure;
+        }
+
+        throw new ArgumentException("The task has not failed.", nameof(settled));
+    }
+
+    /// <summary>Builds the timeout of a call whose deadline expired.</summary>
+    /// <param name="operation">Name of the call.</param>
+    /// <param name="deadline">The expired deadline.</param>
+    /// <param name="inner">The failure observed when the deadline expired.</param>
+    /// <returns>The timeout naming the call and its deadline.</returns>
+    private static TimeoutException Expired(string operation, TimeSpan deadline, Exception inner) =>
+        new(string.Create(CultureInfo.InvariantCulture, $"The Oracle {operation} did not complete within {deadline.TotalSeconds} seconds."), inner);
+
+    /// <summary>Observes a settled call's failure, then disposes each resource in order.</summary>
+    /// <param name="settled">The settled call.</param>
+    /// <param name="resources">The resources to dispose, in order.</param>
+    private static async Task DisposeInOrder(Task settled, IAsyncDisposable[] resources)
+    {
+        _ = settled.Exception;
+
+        foreach (var resource in resources)
+        {
+            try
+            {
+                await resource.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                // A disposal failure is dropped.
+            }
         }
     }
 }

@@ -5,6 +5,7 @@ using Billing.Invoicing.Data.Errors;
 using Billing.Invoicing.Domain.Model;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 
 namespace Billing.Invoicing.Tests.Api;
 
@@ -164,6 +165,46 @@ public sealed class ProblemDetailsWriterTests
         Assert.Equal(message, written.Body.GetProperty("message").GetString());
         Assert.Empty(written.Body.GetProperty("messages").EnumerateArray());
         Assert.Equal(attached, Strings(written.Body.GetProperty("openItems")));
+    }
+
+    [Fact]
+    public async Task WriteNotFoundAsync_Writes404NotFoundWithTheMessage()
+    {
+        var context = new DefaultHttpContext();
+        context.Response.Body = new MemoryStream();
+
+        await new ProblemDetailsWriter(new OracleFailureTranslator()).WriteNotFoundAsync(context, "Invoice 5 was not found.");
+
+        context.Response.Body.Position = 0;
+        using var document = await JsonDocument.ParseAsync(context.Response.Body);
+        var body = document.RootElement;
+        Assert.Equal(StatusCodes.Status404NotFound, context.Response.StatusCode);
+        Assert.Equal(ProblemJson, context.Response.ContentType);
+        Assert.Equal(new[] { "type", "title", "status", "message" }, Members(body));
+        Assert.Equal("not-found", body.GetProperty("type").GetString());
+        Assert.Equal("Not found", body.GetProperty("title").GetString());
+        Assert.Equal(404, body.GetProperty("status").GetInt32());
+        Assert.Equal("Invoice 5 was not found.", body.GetProperty("message").GetString());
+    }
+
+    [Fact]
+    public async Task WriteNotFoundAsync_StartedResponse_WritesNothing()
+    {
+        var context = new DefaultHttpContext();
+        var body = new MemoryStream();
+        context.Response.Body = body;
+        context.Features.Set<IHttpResponseFeature>(new StartedResponse());
+
+        await new ProblemDetailsWriter(new OracleFailureTranslator()).WriteNotFoundAsync(context, "Invoice 5 was not found.");
+
+        Assert.Equal(0, body.Length);
+    }
+
+    /// <summary>Response feature whose response has already started.</summary>
+    private sealed class StartedResponse : HttpResponseFeature
+    {
+        /// <inheritdoc/>
+        public override bool HasStarted => true;
     }
 
     /// <summary>Exception-handler feature holding the handled exception.</summary>

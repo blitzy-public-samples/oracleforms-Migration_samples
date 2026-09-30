@@ -296,6 +296,36 @@
         "draftDate": "2026-09-28T23:59:59"
       },
       "expected": { "outcome": "Blocking", "messages": [{ "field": "PATIENTNO", "text": "Policy  Ended 27/09/2026 Patient well treated as cash patient ", "severity": "Blocking" }] }
+    },
+    {
+      "name": "no-coverage-row-blocks",
+      "status": "derivable",
+      "input": {
+        "coverage": null,
+        "parameters": { "invDateAdmin": 2, "cashOrCredit": 0 },
+        "draftDate": "2026-09-28T10:15:00"
+      },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "PATIENTNO", "text": "FRM-40735: WHEN-VALIDATE-ITEM trigger raised unhandled exception ORA-01403.", "severity": "Blocking" }] }
+    },
+    {
+      "name": "no-coverage-row-date-admin-blocks",
+      "status": "derivable",
+      "input": {
+        "coverage": null,
+        "parameters": { "invDateAdmin": 1, "cashOrCredit": 0 },
+        "draftDate": "2026-09-28T00:00:00"
+      },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "PATIENTNO", "text": "FRM-40735: WHEN-VALIDATE-ITEM trigger raised unhandled exception ORA-01403.", "severity": "Blocking" }] }
+    },
+    {
+      "name": "no-coverage-row-cash-or-credit-1-blocks",
+      "status": "derivable",
+      "input": {
+        "coverage": null,
+        "parameters": { "invDateAdmin": 2, "cashOrCredit": 1 },
+        "draftDate": "2026-09-28T00:00:00"
+      },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "PATIENTNO", "text": "FRM-40735: WHEN-VALIDATE-ITEM trigger raised unhandled exception ORA-01403.", "severity": "Blocking" }] }
     }
   ],
   "compare": { "moneyDecimals": 2, "exact": ["outcome", "messages"] }

@@ -10,6 +10,9 @@
   --color-heading: #0d4a86;
   --color-input-bg: #ffffff;
   --color-input-border: #6f8fae;
+  --color-input-hover-bg: #f3f8fd;
+  --color-input-hover-border: #4a7297;
+  --color-input-active-border: #0b3d73;
   --color-readonly-bg: #e4e9ee;
   --color-readonly-border: #c5ced7;
   --color-readonly-text: #2f3a45;
@@ -64,6 +67,18 @@
   --control-block-size: 1.375rem;
   --grid-row-size: 1.875rem;
   --grid-header-size: 4.5rem;
+  --lines-col-code-size: 5.5rem;
+  --lines-col-name-size: 7rem;
+  --lines-col-desc-size: 12rem;
+  --lines-col-qty-size: 4.5rem;
+  --lines-col-price-size: 6rem;
+  --lines-col-choice-size: 5.5rem;
+  --lines-col-disc-size: 5rem;
+  --lines-col-amount-size: 5.5rem;
+  --lines-col-rate-size: 7rem;
+  --lines-col-action-size: 5.5rem;
+  --method-code-size: 3.5rem;
+  --method-fill-size: 6rem;
   --column-min-size: 26rem;
   --modal-padding: var(--space-5);
   --transition-fast: 150ms ease-out;
@@ -141,6 +156,15 @@ body {
   :where(button:not(:disabled, [aria-disabled="true"])):hover {
     background-color: var(--color-button-hover-bg);
   }
+
+  :where(
+      input:not([type="checkbox"], [type="radio"], [readonly], :disabled),
+      select:not(:disabled),
+      textarea:not([readonly], :disabled)
+    ):hover {
+    border-color: var(--color-input-hover-border);
+    background-color: var(--color-input-hover-bg);
+  }
 }
 
 :where(button:not(:disabled, [aria-disabled="true"])):active,
@@ -149,8 +173,16 @@ body {
   background-color: var(--color-button-active-bg);
 }
 
+:where(
+    input:not([type="checkbox"], [type="radio"], [readonly], :disabled),
+    select:not(:disabled),
+    textarea:not([readonly], :disabled)
+  ):active {
+  border-color: var(--color-input-active-border);
+}
+
 @media (prefers-reduced-motion: no-preference) {
-  :where(button) {
+  :where(button, input:not([type="checkbox"], [type="radio"]), select, textarea) {
     transition:
       background-color var(--transition-fast),
       border-color var(--transition-fast);
@@ -272,6 +304,46 @@ body {
   border-spacing: 0;
 }
 
+.lines-grid col.lines-col-code {
+  inline-size: var(--lines-col-code-size);
+}
+
+.lines-grid col.lines-col-name {
+  inline-size: var(--lines-col-name-size);
+}
+
+.lines-grid col.lines-col-desc {
+  inline-size: var(--lines-col-desc-size);
+}
+
+.lines-grid col.lines-col-qty {
+  inline-size: var(--lines-col-qty-size);
+}
+
+.lines-grid col.lines-col-price {
+  inline-size: var(--lines-col-price-size);
+}
+
+.lines-grid col.lines-col-choice {
+  inline-size: var(--lines-col-choice-size);
+}
+
+.lines-grid col.lines-col-disc {
+  inline-size: var(--lines-col-disc-size);
+}
+
+.lines-grid col.lines-col-amount {
+  inline-size: var(--lines-col-amount-size);
+}
+
+.lines-grid col.lines-col-rate {
+  inline-size: var(--lines-col-rate-size);
+}
+
+.lines-grid col.lines-col-action {
+  inline-size: var(--lines-col-action-size);
+}
+
 .lines-grid th,
 .lines-grid td {
   block-size: var(--grid-row-size);
@@ -306,7 +378,7 @@ body {
 }
 
 .lines-grid th:has(.open-item-notice) {
-  inline-size: 14rem;
+  inline-size: calc(2 * var(--lines-col-rate-size));
 }
 
 .lines-grid th:has(.open-item-notice) .open-item-notice > li {
@@ -374,6 +446,14 @@ body {
   border: var(--border-width) solid var(--color-panel-border);
   border-radius: var(--radius);
   background-color: var(--color-subpanel-bg);
+}
+
+.payment-panel .field-row > .method-code {
+  flex: 0 0 var(--method-code-size);
+}
+
+.payment-panel .field-row > .method-fill {
+  flex: 1 1 var(--method-fill-size);
 }
 
 .panel-title {
@@ -637,8 +717,15 @@ body {
   inline-size: 100%;
 }
 
+.lov-scroll {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  overflow: auto;
+}
+
 .lov-table {
   inline-size: 100%;
+  table-layout: fixed;
   border-collapse: separate;
   border-spacing: 0;
 }
@@ -649,7 +736,10 @@ body {
   padding-inline: var(--space-4);
   border-block-end: var(--border-width) solid var(--color-grid-border);
   text-align: start;
-  vertical-align: top;
+  vertical-align: middle;
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .lov-table :where(th, td):first-child {
@@ -658,15 +748,57 @@ body {
 
 .lov-table thead th {
   position: sticky;
-  inset-block-start: calc(-1 * var(--modal-padding));
+  inset-block-start: 0;
   z-index: 1;
   background-color: var(--color-grid-header-bg);
   color: var(--color-grid-header-text);
   font-weight: 700;
 }
 
+.lov-table .lov-spacer > td {
+  padding: 0;
+  border: 0;
+}
+
 .lov-row {
   cursor: pointer;
+}
+
+.lov-row > td {
+  block-size: var(--grid-row-size);
+}
+
+.lov-pick {
+  display: block;
+  inline-size: 100%;
+  min-block-size: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background-color: transparent;
+  color: inherit;
+  font-weight: inherit;
+  text-align: start;
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: inherit;
+}
+
+.lov-pick:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
+}
+
+@media (hover: hover) {
+  .lov-pick:hover {
+    background-color: transparent;
+  }
+}
+
+.lov-pick:active {
+  border-color: transparent;
+  background-color: transparent;
 }
 
 .lov-row-selected {

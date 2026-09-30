@@ -24,6 +24,8 @@ export interface InvoiceDraftState {
   display: Record<string, string | null>;
   lineDisplay: Record<string, { XCAT_NAMEX?: string | null; SERVICEDESC?: string | null }>;
   coverage: CoverageResponse | null;
+  /** Trimmed patient number the stored coverage and the COVERAGE message source were read for. */
+  coveragePatientNo: string | null;
   preview: PreviewResponse | null;
   currentLineIndex: number;
   moreDetails: MoreDetailsResponse | null;
@@ -37,9 +39,26 @@ export interface InvoiceDraftState {
   discountPrompt: { target: 'FINALDISC_PERC' | 'FINALDISC'; text: string } | null;
   formError: { text: string; oracleErrorNumber: number | null; package: string | null; kind: string | null } | null;
   fieldErrors: Record<string, { text: string; oracleErrorNumber: number | null; kind: string | null }>;
+  entryErrors: Record<string, string>;
+  /** Server judgement of PRICE editability by line client id, with the service, patient and company it was judged on. */
+  priceEditable: Record<string, PriceJudgement>;
 }
 
-/** Actions the screens dispatch after their API calls and operator edits. */
+/** Server judgement of PRICE editability on one line, and the service, patient and company it was judged on. */
+export interface PriceJudgement {
+  serviceId: string | null;
+  patientNo: string | null;
+  compCode: string | null;
+  editable: boolean;
+}
+
+/** Draft, and for patient-bound requests the patient number, a request was sent for. */
+export interface RequestOrigin {
+  requestId: string;
+  patientNo?: string | null;
+}
+
+/** Actions the screens dispatch after their API calls and operator edits; `origin` names the request a response belongs to. */
 export type InvoiceDraftAction =
   | { type: 'draftLoaded'; response: NewDraftResponse }
   | { type: 'headerFieldChanged'; field: keyof InvoiceHeaderDraft; value: InvoiceHeaderDraft[keyof InvoiceHeaderDraft] }
@@ -48,21 +67,25 @@ export type InvoiceDraftAction =
   | { type: 'lineRemoved'; index: number }
   | { type: 'currentLineSelected'; index: number }
   | { type: 'displaySet'; values: Record<string, string | null>; lineClientId?: string }
-  | { type: 'linesImported'; source: string; response: ImportResponse }
-  | { type: 'linesReplaced'; lines: InvoiceLineDraft[] }
-  | { type: 'validationApplied'; target: string; lineIndex: number | null; response: ValidateDraftResponse }
-  | { type: 'validationFailed'; target: string; lineIndex: number | null; error: ApiError }
+  | { type: 'linesImported'; source: string; response: ImportResponse; origin?: RequestOrigin }
+  | { type: 'linesReplaced'; lines: InvoiceLineDraft[]; origin?: RequestOrigin }
+  | { type: 'validationApplied'; target: string; lineIndex: number | null; lineClientId?: string | null; response: ValidateDraftResponse; origin?: RequestOrigin }
+  | { type: 'validationFailed'; target: string; lineIndex: number | null; lineClientId?: string | null; error: ApiError; origin?: RequestOrigin }
   | { type: 'discountChoiceMade'; choice: DiscountLimitChoice }
-  | { type: 'coverageApplied'; response: CoverageResponse }
-  | { type: 'previewApplied'; response: PreviewResponse }
-  | { type: 'saved'; response: CreateInvoiceResponse }
-  | { type: 'invoiceLoaded'; invNo: number; response: InvoiceViewResponse }
+  | { type: 'coverageApplied'; response: CoverageResponse | null; origin: RequestOrigin }
+  | { type: 'patientContextCleared'; origin: RequestOrigin }
+  | { type: 'previewApplied'; response: PreviewResponse; sent?: readonly InvoiceLineDraft[] }
+  | { type: 'previewCleared' }
+  | { type: 'saved'; response: CreateInvoiceResponse; origin: RequestOrigin }
+  | { type: 'invoiceLoaded'; invNo: number; response: InvoiceViewResponse; origin?: RequestOrigin }
   | { type: 'moreDetailsLoaded'; response: MoreDetailsResponse }
-  | { type: 'errorReceived'; source: string; error: ApiError }
+  | { type: 'errorReceived'; source: string; lineClientId?: string | null; error: ApiError; origin?: RequestOrigin }
   | { type: 'connectivityLost' }
   | { type: 'connectivityRestored' }
   | { type: 'formErrorCleared' }
-  | { type: 'messageDismissed'; source: string; index: number };
+  | { type: 'messageDismissed'; source: string; index: number }
+  | { type: 'entryRejected'; field: string; lineIndex: number | null; text: string }
+  | { type: 'entryAccepted'; field: string; lineIndex: number | null };
 
 /** State before any draft has been loaded. */
 export const initialInvoiceDraftState: InvoiceDraftState = {
@@ -70,6 +93,7 @@ export const initialInvoiceDraftState: InvoiceDraftState = {
   display: {},
   lineDisplay: {},
   coverage: null,
+  coveragePatientNo: null,
   preview: null,
   currentLineIndex: 0,
   moreDetails: null,
@@ -83,7 +107,18 @@ export const initialInvoiceDraftState: InvoiceDraftState = {
   discountPrompt: null,
   formError: null,
   fieldErrors: {},
+  entryErrors: {},
+  priceEditable: {},
 };
+
+/** Operator decimal entry: empty, the trimmed text as entered, or the reason it is rejected. */
+export type DecimalEntry = { kind: 'empty' } | { kind: 'value'; text: string } | { kind: 'invalid'; message: string };
+
+/** Field error of an entry that is not a decimal number. */
+export const ENTRY_NOT_A_NUMBER = 'Enter a valid number.';
+
+/** Field error of a decimal entry the Api cannot hold exactly. */
+export const ENTRY_TOO_PRECISE = 'Enter a number of at most 28 significant digits and 28 decimal places.';
 
 type AdjustedTarget =
   | { scope: 'header'; field: keyof InvoiceHeaderDraft }
@@ -109,6 +144,30 @@ export const ADJUSTED_KEY_MAP: Readonly<Record<AdjustedKey, AdjustedTarget>> = {
 const DISCOUNT_LIMIT_TEXT = 'Maximum discount allawed is';
 const STALE_KINDS: ReadonlySet<string> = new Set(['RequestLinesStale', 'DefinitionStale']);
 const LINE_KEY = /^LINE:(\d+):(.*)$/;
+const CLIENT_KEY = /^CLIENT:(.+):([^:]+)$/;
+const DECIMAL_TEXT = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/;
+const MAX_DECIMAL_DIGITS = 28;
+
+/** D_INV item names whose errors belong to one line. */
+const LINE_ITEMS: ReadonlySet<string> = new Set([
+  'SERVICEID',
+  'QTY',
+  'PRICE',
+  'LDISCT',
+  'DISC',
+  'MY_DISC',
+  'CATID',
+  'TEETH_NO',
+  'TOOTH_SURFACE',
+  'TEETH_NO2',
+  'APPROV_DATE',
+  'APPROV_VALIDITY',
+  'APPROV_REF_NO',
+  'REQ_NEED_A',
+  'REQ_A_STATUS',
+  'FIXPAY',
+  'PAYRATE',
+]);
 
 type DiscountPromptTarget = 'FINALDISC_PERC' | 'FINALDISC';
 type Lists<T> = Record<string, T[]>;
@@ -306,13 +365,106 @@ function withoutLineKeys<T>(record: Record<string, T>): Record<string, T> {
   return next;
 }
 
+/** Error key of a field: the upper-case field on the header, `CLIENT:<clientId>:<FIELD>` on a line. */
+function errorKey(field: string, lineClientId?: string): string {
+  const upper = field.toUpperCase();
+  return lineClientId === undefined ? upper : `CLIENT:${lineClientId}:${upper}`;
+}
+
+/** Client id of the draft line at `index`, or null when there is no such line or it has no client id. */
+function lineClientIdAt(draft: DraftDto | null, index: number): string | null {
+  if (draft === null || !Number.isInteger(index) || index < 0 || index >= draft.lines.length) {
+    return null;
+  }
+  const clientId = draft.lines[index].clientId;
+  return clientId == null || clientId === '' ? null : clientId;
+}
+
+/** Error key of `field` on the header (`lineIndex` null) or on the draft line at `lineIndex`; null when that line has no client id. */
+function entryKey(draft: DraftDto | null, field: string, lineIndex: number | null): string | null {
+  if (lineIndex === null) {
+    return errorKey(field);
+  }
+  const clientId = lineClientIdAt(draft, lineIndex);
+  return clientId === null ? null : errorKey(field, clientId);
+}
+
+/** Where a line-scoped result belongs now: the current index of the line with `lineClientId`, or null when no client id came with it or that line has left the draft. */
+function lineIndexOf(draft: DraftDto | null, lineClientId: string | null | undefined): number | null {
+  if (draft === null || lineClientId == null || lineClientId === '') {
+    return null;
+  }
+  const index = draft.lines.findIndex((line) => line.clientId === lineClientId);
+  return index < 0 ? null : index;
+}
+
+/** Field errors without the error of the target a validation source names: `LINE:<i>:<TARGET>` on the line with `lineClientId`, else the source as a header item. */
+function withoutSourceFieldError(
+  state: InvoiceDraftState,
+  source: string,
+  lineClientId: string | null,
+): InvoiceDraftState['fieldErrors'] {
+  const line = LINE_KEY.exec(source);
+  let key: string | null = source.toUpperCase();
+  if (line !== null) {
+    key = lineClientId === null ? null : errorKey(line[2], lineClientId);
+  }
+  if (key === null || !Object.hasOwn(state.fieldErrors, key)) {
+    return state.fieldErrors;
+  }
+  const next = { ...state.fieldErrors };
+  delete next[key];
+  return next;
+}
+
+/** Keeps header keys and the `CLIENT:<clientId>:*` keys whose client id passes `keep`. */
+function keepClientKeys<T>(record: Record<string, T>, keep: (clientId: string) => boolean): Record<string, T> {
+  const next: Record<string, T> = {};
+  for (const [key, value] of Object.entries(record)) {
+    const match = CLIENT_KEY.exec(key);
+    if (match === null || keep(match[1])) {
+      next[key] = value;
+    }
+  }
+  return next;
+}
+
 /** Clamps a line index to `[0, max(0, count - 1)]`. */
 function clampIndex(index: number, count: number): number {
   return Math.min(Math.max(index, 0), Math.max(0, count - 1));
 }
 
-/** Applies an API failure for `source` to messages, open items, errors or the connectivity flag. */
-function applyError(state: InvoiceDraftState, source: string, error: ApiError): InvoiceDraftState {
+/** The state without its preview and `PREVIEW` messages and open items, or the same state when it holds none (D-64). */
+function withoutPreview(state: InvoiceDraftState): InvoiceDraftState {
+  if (state.preview === null && !Object.hasOwn(state.messages, 'PREVIEW') && !Object.hasOwn(state.openItems, 'PREVIEW')) {
+    return state;
+  }
+  return {
+    ...state,
+    preview: null,
+    messages: replaceSource(state.messages, 'PREVIEW', null),
+    openItems: replaceSource(state.openItems, 'PREVIEW', null),
+  };
+}
+
+/** Applies only the draft-wide effects of a failure whose line has left the draft: lost connectivity and missing operator context. */
+function applyDetachedError(state: InvoiceDraftState, source: string, error: ApiError): InvoiceDraftState {
+  const draftWide = error.status === 503 || error.type === 'oracle-unavailable' || error.type === 'operator-context-missing';
+  return draftWide ? applyError(state, source, error) : state;
+}
+
+/** Patient number without surrounding blanks; null and undefined are empty. */
+function trimmedPatientNo(patientNo: string | null | undefined): string {
+  return patientNo == null ? '' : String(patientNo).trim();
+}
+
+/** True for a 503 or `oracle-unavailable` failure. */
+function isUnavailable(error: ApiError): boolean {
+  return error.status === 503 || error.type === 'oracle-unavailable';
+}
+
+/** Applies an API failure for `source` to messages, open items, errors or the connectivity flag; `lineClientId` names the line of a `LINE:<i>:<TARGET>` source. */
+function applyError(state: InvoiceDraftState, source: string, error: ApiError, lineClientId: string | null = null): InvoiceDraftState {
   const message = error.message ?? '';
   const oracleErrorNumber = error.oracleErrorNumber ?? null;
   const pkg = error.package ?? null;
@@ -341,16 +493,21 @@ function applyError(state: InvoiceDraftState, source: string, error: ApiError): 
     if (kind === 'IdempotencyConflict') {
       return { ...state, idempotencyConflict: { text: message, oracleErrorNumber } };
     }
+    const fieldErrors = withoutSourceFieldError(state, source, lineClientId);
     if (error.field != null && error.field !== '') {
-      return {
-        ...state,
-        fieldErrors: {
-          ...state.fieldErrors,
-          [error.field.toUpperCase()]: { text: error.legacyText ?? message, oracleErrorNumber, kind },
-        },
-      };
+      const field = error.field.toUpperCase();
+      const entry = { text: error.legacyText ?? message, oracleErrorNumber, kind };
+      if (!LINE_ITEMS.has(field)) {
+        return { ...state, fieldErrors: { ...fieldErrors, [field]: entry } };
+      }
+      const line = LINE_KEY.exec(source);
+      const clientId = line !== null && line[2] === field ? lineClientId : null;
+      if (clientId === null) {
+        return { ...state, fieldErrors, formError: { text: entry.text, oracleErrorNumber, package: pkg, kind } };
+      }
+      return { ...state, fieldErrors: { ...fieldErrors, [errorKey(field, clientId)]: entry } };
     }
-    return { ...state, formError: { text: message, oracleErrorNumber, package: pkg, kind } };
+    return { ...state, fieldErrors, formError: { text: message, oracleErrorNumber, package: pkg, kind } };
   }
 
   if (error.type === 'operator-context-missing') {
@@ -394,6 +551,10 @@ function exhaustive(_action: never, state: InvoiceDraftState): InvoiceDraftState
 
 /** Reduces draft-screen actions into the shared invoice draft state. */
 export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDraftAction): InvoiceDraftState {
+  // A response for a superseded draft or patient changes nothing but the connectivity flag of a 503.
+  if ('origin' in action && isSuperseded(state, action.origin)) {
+    return 'error' in action && isUnavailable(action.error) && !state.connectivityDown ? { ...state, connectivityDown: true } : state;
+  }
   switch (action.type) {
     case 'draftLoaded': {
       const loaded = action.response.draft;
@@ -421,7 +582,24 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
         return state;
       }
       const lines = draft.lines.map((line, i) => (i === action.index ? withField(line, action.field, action.value) : line));
-      return { ...state, draft: { ...draft, lines } };
+      const previous = draft.lines[action.index];
+      const clientId = previous.clientId;
+      if (action.field !== 'serviceId' || Object.is(action.value, previous.serviceId)) {
+        return { ...state, draft: { ...draft, lines } };
+      }
+      // A changed service discards the stored preview and the line's previewed price and description (D-64).
+      let lineDisplay = state.lineDisplay;
+      const display = clientId == null || clientId === '' ? undefined : lineDisplay[clientId];
+      if (clientId != null && display !== undefined && 'SERVICEDESC' in display) {
+        const entry = { ...display };
+        delete entry.SERVICEDESC;
+        lineDisplay = { ...lineDisplay, [clientId]: entry };
+      }
+      return withoutPreview({
+        ...state,
+        draft: { ...draft, lines: lines.map((line, i) => (i === action.index ? { ...line, price: null } : line)) },
+        lineDisplay,
+      });
     }
 
     case 'lineAdded': {
@@ -444,15 +622,18 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
       if (removedClientId != null) {
         delete lineDisplay[removedClientId];
       }
+      const kept = (clientId: string) => clientId !== removedClientId;
       const shifted = state.currentLineIndex > action.index ? state.currentLineIndex - 1 : state.currentLineIndex;
-      return {
+      return withoutPreview({
         ...state,
         draft: { ...draft, lines },
         messages: shiftLineKeys(state.messages, action.index),
         openItems: shiftLineKeys(state.openItems, action.index),
         lineDisplay,
+        fieldErrors: keepClientKeys(state.fieldErrors, kept),
+        entryErrors: keepClientKeys(state.entryErrors, kept),
         currentLineIndex: clampIndex(shifted, lines.length),
-      };
+      });
     }
 
     case 'currentLineSelected': {
@@ -510,21 +691,33 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
           lineDisplay[clientId] = entry;
         }
       }
+      const present = (clientId: string) => kept.has(clientId);
       return {
         ...state,
         draft: { ...draft, lines },
         messages: withoutLineKeys(state.messages),
         openItems: withoutLineKeys(state.openItems),
         lineDisplay,
+        fieldErrors: keepClientKeys(state.fieldErrors, present),
+        entryErrors: keepClientKeys(state.entryErrors, present),
         currentLineIndex: clampIndex(state.currentLineIndex, lines.length),
       };
     }
 
     case 'validationApplied': {
-      const key = messageKey(action.target, action.lineIndex);
+      const lineClientId = action.lineIndex === null ? null : (action.lineClientId ?? null);
+      const lineIndex = lineClientId === null ? null : lineIndexOf(state.draft, lineClientId);
+      if (action.lineIndex !== null && lineIndex === null) {
+        return state.connectivityDown ? { ...state, connectivityDown: false } : state;
+      }
+      const key = messageKey(action.target, lineIndex);
       const response = action.response;
       const fieldErrors = { ...state.fieldErrors };
-      delete fieldErrors[action.target];
+      if (lineClientId === null) {
+        delete fieldErrors[action.target];
+      } else {
+        delete fieldErrors[errorKey(action.target, lineClientId)];
+      }
       let next: InvoiceDraftState = {
         ...state,
         connectivityDown: false,
@@ -533,29 +726,49 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
         fieldErrors,
       };
       if (state.draft !== null && !state.readOnly) {
-        const merged = applyAdjusted(state.draft, state.display, response.adjusted, action.lineIndex);
+        const merged = applyAdjusted(state.draft, state.display, response.adjusted, lineIndex);
         next = { ...next, draft: merged.draft, display: merged.display };
+        const judged = action.lineIndex !== null ? state.draft.lines[action.lineIndex] : undefined;
+        if (response.priceEditable != null && judged != null && judged.clientId != null && judged.clientId !== '') {
+          next = {
+            ...next,
+            priceEditable: {
+              ...state.priceEditable,
+              [judged.clientId]: {
+                serviceId: response.priceJudgedServiceId ?? null,
+                patientNo: response.priceJudgedPatientNo ?? null,
+                compCode: response.priceJudgedCompCode ?? null,
+                editable: response.priceEditable,
+              },
+            },
+          };
+        }
       }
       return next;
     }
 
     case 'validationFailed': {
-      const key = messageKey(action.target, action.lineIndex);
       const error = action.error;
+      const lineClientId = action.lineIndex === null ? null : (action.lineClientId ?? null);
+      const lineIndex = lineClientId === null ? null : lineIndexOf(state.draft, lineClientId);
+      if (action.lineIndex !== null && lineIndex === null) {
+        return error.type === 'field-validation' ? state : applyDetachedError(state, messageKey(action.target, action.lineIndex), error);
+      }
+      const key = messageKey(action.target, lineIndex);
       let next: InvoiceDraftState = {
         ...state,
         messages: setSource(state.messages, key, error.messages ?? []),
         openItems: error.openItems != null ? setSource(state.openItems, key, error.openItems) : state.openItems,
       };
       if (state.draft !== null && !state.readOnly) {
-        const merged = applyAdjusted(state.draft, state.display, error.adjusted, action.lineIndex);
+        const merged = applyAdjusted(state.draft, state.display, error.adjusted, lineIndex);
         next = { ...next, draft: merged.draft, display: merged.display };
       }
       const prompt = discountPromptFrom(error.messages, action.target, next.draft?.header);
       if (prompt !== null) {
         next = { ...next, discountPrompt: prompt };
       }
-      return error.type === 'field-validation' ? next : applyError(next, key, error);
+      return error.type === 'field-validation' ? next : applyError(next, key, error, lineClientId);
     }
 
     case 'discountChoiceMade': {
@@ -567,10 +780,21 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
 
     case 'coverageApplied': {
       const response = action.response;
+      const coveragePatientNo = trimmedPatientNo(action.origin.patientNo);
+      if (response === null) {
+        return {
+          ...state,
+          coverage: null,
+          coveragePatientNo,
+          messages: replaceSource(state.messages, 'COVERAGE', null),
+          openItems: replaceSource(state.openItems, 'COVERAGE', null),
+        };
+      }
       let next: InvoiceDraftState = {
         ...state,
         connectivityDown: false,
         coverage: response,
+        coveragePatientNo,
         messages: replaceSource(state.messages, 'COVERAGE', response.messages),
         openItems: replaceSource(state.openItems, 'COVERAGE', response.openItems),
       };
@@ -583,8 +807,54 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
       return next;
     }
 
+    case 'patientContextCleared': {
+      // Drops the previous patient's coverage, pay type and PATIENTNO / COVERAGE messages and open items.
+      if (state.draft === null || state.readOnly) {
+        return state;
+      }
+      return {
+        ...state,
+        draft: { ...state.draft, header: withField(state.draft.header, 'payType', null) },
+        coverage: null,
+        coveragePatientNo: null,
+        messages: replaceSource(replaceSource(state.messages, 'COVERAGE', null), 'PATIENTNO', null),
+        openItems: replaceSource(replaceSource(state.openItems, 'COVERAGE', null), 'PATIENTNO', null),
+      };
+    }
+
     case 'previewApplied': {
       const response = action.response;
+      const pickedCategories = new Set<string>();
+      if (state.draft !== null && !state.readOnly) {
+        const sentLines = new Map<string, InvoiceLineDraft>();
+        for (const sentLine of action.sent ?? []) {
+          if (sentLine.clientId != null && sentLine.clientId !== '') {
+            sentLines.set(sentLine.clientId, sentLine);
+          }
+        }
+        // A response for a draft without lines, naming a line the draft no longer holds, or sent before a line's
+        // service changed, is discarded (D-64).
+        const clientIds = new Set(state.draft.lines.map((line) => line.clientId));
+        const stale =
+          state.draft.lines.length === 0 ||
+          (response.lines ?? []).some(
+            (previewLine) => previewLine.clientId != null && previewLine.clientId !== '' && !clientIds.has(previewLine.clientId),
+          ) ||
+          state.draft.lines.some((line) => {
+            const sentLine = line.clientId == null ? undefined : sentLines.get(line.clientId);
+            return sentLine !== undefined && (sentLine.serviceId ?? null) !== (line.serviceId ?? null);
+          });
+        if (stale) {
+          return state.connectivityDown ? { ...state, connectivityDown: false } : state;
+        }
+        // Lines whose category was picked after the request was sent keep the picked category (D-64).
+        for (const line of state.draft.lines) {
+          const sentLine = line.clientId == null ? undefined : sentLines.get(line.clientId);
+          if (line.clientId != null && sentLine !== undefined && (sentLine.catId ?? null) !== (line.catId ?? null)) {
+            pickedCategories.add(line.clientId);
+          }
+        }
+      }
       const fieldErrors: InvoiceDraftState['fieldErrors'] = {};
       for (const [field, entry] of Object.entries(state.fieldErrors)) {
         if (entry.kind === null || !STALE_KINDS.has(entry.kind)) {
@@ -609,47 +879,106 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
           }
         }
         const lineDisplay = { ...state.lineDisplay };
+        const editableClientIds = new Set(response.priceEditableClientIds ?? []);
+        const priceEditable = { ...state.priceEditable };
         const lines = draft.lines.map((line) => {
           const match = line.clientId != null ? byClientId.get(line.clientId) : undefined;
           if (match === undefined || line.clientId == null) {
             return line;
           }
-          lineDisplay[line.clientId] = { ...(lineDisplay[line.clientId] ?? {}), SERVICEDESC: match.serviceDesc };
+          const entry = { ...(lineDisplay[line.clientId] ?? {}), SERVICEDESC: match.serviceDesc };
+          priceEditable[line.clientId] = {
+            serviceId: match.serviceId,
+            patientNo: response.priceJudgedPatientNo ?? null,
+            compCode: response.priceJudgedCompCode ?? null,
+            editable: editableClientIds.has(line.clientId),
+          };
+          if (pickedCategories.has(line.clientId)) {
+            lineDisplay[line.clientId] = entry;
+            return { ...line, price: match.price };
+          }
+          // A picked category name is dropped when the package returns another category (D-64).
+          if (match.catId !== line.catId) {
+            delete entry.XCAT_NAMEX;
+          }
+          lineDisplay[line.clientId] = entry;
           return { ...line, price: match.price, catId: match.catId };
         });
-        next = { ...next, draft: { ...draft, lines }, lineDisplay };
+        next = { ...next, draft: { ...draft, lines }, lineDisplay, priceEditable };
       }
       return next;
     }
+
+    case 'previewCleared':
+      return withoutPreview(state);
 
     case 'saved': {
       const response = action.response;
       return {
         ...state,
         connectivityDown: false,
-        saved: { invNo: response.invNo ?? 0, view: null, createResponse: response },
+        preview: null,
+        saved: { invNo: response.invNo, view: null, createResponse: response },
         readOnly: true,
+        entryErrors: {},
         messages: replaceSource(state.messages, 'CREATE', response.messages),
         openItems: replaceSource(replaceSource(state.openItems, 'CREATE', response.openItems), 'SAVED', ['OI-56']),
       };
     }
 
     case 'invoiceLoaded': {
-      const createResponse = state.saved?.invNo === action.invNo ? state.saved.createResponse : null;
-      return {
+      const sameInvoice = state.saved?.invNo === action.invNo;
+      const lineCount = (action.response.lines ?? []).length;
+      const savedOpenItems = uniq(['OI-56', ...(action.response.openItems ?? [])]);
+      const loaded: InvoiceDraftState = {
         ...state,
         connectivityDown: false,
-        saved: { invNo: action.invNo, view: action.response, createResponse },
+        preview: null,
         readOnly: true,
-        openItems: replaceSource(state.openItems, 'SAVED', uniq(['OI-56', ...(action.response.openItems ?? [])])),
+        entryErrors: {},
+      };
+      if (sameInvoice) {
+        // Reloading the invoice on screen keeps its messages and open items.
+        return {
+          ...loaded,
+          saved: { invNo: action.invNo, view: action.response, createResponse: state.saved?.createResponse ?? null },
+          openItems: replaceSource(state.openItems, 'SAVED', savedOpenItems),
+          currentLineIndex: clampIndex(state.currentLineIndex, lineCount),
+        };
+      }
+      // Another invoice starts on its first line with only its own open items.
+      return {
+        ...loaded,
+        saved: { invNo: action.invNo, view: action.response, createResponse: null },
+        messages: {},
+        openItems: replaceSource({}, 'SAVED', savedOpenItems),
+        fieldErrors: {},
+        formError: null,
+        currentLineIndex: 0,
       };
     }
 
-    case 'moreDetailsLoaded':
-      return { ...state, connectivityDown: false, moreDetails: action.response };
+    case 'moreDetailsLoaded': {
+      const response: unknown = action.response;
+      const invNo = state.saved?.invNo;
+      if (invNo == null || typeof response !== 'object' || response === null || action.response.invNo !== invNo) {
+        return state;
+      }
+      return { ...state, moreDetails: action.response };
+    }
 
-    case 'errorReceived':
-      return applyError(state, action.source, action.error);
+    case 'errorReceived': {
+      const line = LINE_KEY.exec(action.source);
+      if (line === null) {
+        return applyError(state, action.source, action.error);
+      }
+      const lineClientId = action.lineClientId ?? null;
+      const lineIndex = lineClientId === null ? null : lineIndexOf(state.draft, lineClientId);
+      if (lineIndex === null) {
+        return applyDetachedError(state, action.source, action.error);
+      }
+      return applyError(state, messageKey(line[2], lineIndex), action.error, lineClientId);
+    }
 
     case 'connectivityLost':
       return state.connectivityDown ? state : { ...state, connectivityDown: true };
@@ -669,16 +998,118 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
       return { ...state, messages: replaceSource(state.messages, action.source, remaining) };
     }
 
+    case 'entryRejected': {
+      if (state.draft === null || state.readOnly) {
+        return state;
+      }
+      const key = entryKey(state.draft, action.field, action.lineIndex);
+      if (key === null || (Object.hasOwn(state.entryErrors, key) && state.entryErrors[key] === action.text)) {
+        return state;
+      }
+      return { ...state, entryErrors: { ...state.entryErrors, [key]: action.text } };
+    }
+
+    case 'entryAccepted': {
+      const key = entryKey(state.draft, action.field, action.lineIndex);
+      if (key === null || !Object.hasOwn(state.entryErrors, key)) {
+        return state;
+      }
+      const entryErrors = { ...state.entryErrors };
+      delete entryErrors[key];
+      return { ...state, entryErrors };
+    }
+
     default:
       return exhaustive(action, state);
   }
 }
 
-/** True when the draft can be submitted: loaded, unsaved, editable, conflict-free and without Blocking messages. */
+/** True when the draft can be submitted: loaded, unsaved, editable, conflict-free, without rejected entries and without Blocking messages. */
 export function canSave(state: InvoiceDraftState): boolean {
   if (state.draft === null || state.saved !== null || state.readOnly || state.idempotencyConflict !== null) {
     return false;
   }
+  if (Object.keys(state.entryErrors).length > 0) {
+    return false;
+  }
   return !Object.values(state.messages).some((list) => list.some((m) => m.severity === 'Blocking'));
+}
+
+/** Parses operator text into a decimal entry, keeping the text as entered and rejecting what the Api would read differently. */
+export function parseDecimalEntry(raw: string): DecimalEntry {
+  const text = raw.trim();
+  if (text === '') {
+    return { kind: 'empty' };
+  }
+  if (!DECIMAL_TEXT.test(text)) {
+    return { kind: 'invalid', message: ENTRY_NOT_A_NUMBER };
+  }
+  const [mantissa, expText = ''] = text.replace(/^[+-]/, '').split(/[eE]/);
+  const [whole, fraction = ''] = mantissa.split('.');
+  const digits = (whole + fraction).replace(/^0+/, '');
+  const significant = digits.replace(/0+$/, '');
+  if (significant === '') {
+    return { kind: 'value', text };
+  }
+  const exponent = expText === '' ? 0 : Number(expText);
+  const lastDigitPower = exponent - fraction.length + (digits.length - significant.length);
+  const fits =
+    significant.length + Math.max(lastDigitPower, 0) <= MAX_DECIMAL_DIGITS && Math.max(-lastDigitPower, 0) <= MAX_DECIMAL_DIGITS;
+  return fits ? { kind: 'value', text } : { kind: 'invalid', message: ENTRY_TOO_PRECISE };
+}
+
+/** Error key of `field` on the header (`lineClientId` undefined) or on the line with that client id; null for a line without one. */
+function scopedErrorKey(field: string, lineClientId: string | null | undefined): string | null {
+  if (lineClientId === undefined) {
+    return errorKey(field);
+  }
+  return lineClientId === null || lineClientId === '' ? null : errorKey(field, lineClientId);
+}
+
+/** Rejected-entry text of a header field, or of a line field when `lineClientId` is given; null when there is none. */
+export function entryErrorFor(state: InvoiceDraftState, field: string, lineClientId?: string | null): string | null {
+  const key = scopedErrorKey(field, lineClientId);
+  return key !== null && Object.hasOwn(state.entryErrors, key) ? state.entryErrors[key] : null;
+}
+
+/** Error shown on a header field, or on a line field when `lineClientId` is given: the rejected entry first, else the mapped Oracle error. */
+export function fieldErrorFor(
+  state: InvoiceDraftState,
+  field: string,
+  lineClientId?: string | null,
+): InvoiceDraftState['fieldErrors'][string] | null {
+  const key = scopedErrorKey(field, lineClientId);
+  if (key === null) {
+    return null;
+  }
+  if (Object.hasOwn(state.entryErrors, key)) {
+    return { text: state.entryErrors[key], oracleErrorNumber: null, kind: null };
+  }
+  return Object.hasOwn(state.fieldErrors, key) ? state.fieldErrors[key] : null;
+}
+
+/** Origin of a request sent for `draft`; `withPatient` also binds it to the draft's patient number. */
+export function requestOrigin(draft: DraftDto, withPatient = false): RequestOrigin {
+  return withPatient ? { requestId: draft.requestId, patientNo: draft.header.patientNo } : { requestId: draft.requestId };
+}
+
+/** True when a response for `origin` no longer belongs to the state's draft or, for a patient-bound origin, its patient. */
+export function isSuperseded(state: InvoiceDraftState, origin: RequestOrigin | undefined): boolean {
+  if (origin === undefined) {
+    return false;
+  }
+  const draft = state.draft;
+  if (draft === null || draft.requestId !== origin.requestId) {
+    return true;
+  }
+  return origin.patientNo !== undefined && trimmedPatientNo(origin.patientNo) !== trimmedPatientNo(draft.header.patientNo);
+}
+
+/** Stored coverage when it was read for the current draft's patient number; null otherwise. */
+export function currentCoverage(state: InvoiceDraftState): CoverageResponse | null {
+  if (state.draft === null || state.coverage === null) {
+    return null;
+  }
+  return state.coveragePatientNo === trimmedPatientNo(state.draft.header.patientNo) ? state.coverage : null;
 }
 

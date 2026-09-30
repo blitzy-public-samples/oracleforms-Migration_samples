@@ -132,7 +132,7 @@ public sealed class PatientEligibilityRulesTests
     }
 
     /// <summary>DR-03 case input.</summary>
-    /// <param name="Coverage">V_PAT_DATA coverage snapshot; null when the patient has none.</param>
+    /// <param name="Coverage">V_PAT_DATA coverage snapshot; null when V_PAT_DATA has no row.</param>
     /// <param name="Parameters">Entry parameters supplying INV_DATE_ADMIN and CASH_OR_CREDIT; the Form defaults when absent.</param>
     /// <param name="DraftDate">Draft invoice date (INVDATE), ISO 8601.</param>
     private sealed record CaseInput(PatientCoverageSnapshot? Coverage, InvoiceEntryParameters? Parameters, DateTime? DraftDate);

@@ -303,7 +303,7 @@ None of these units is re-implemented in C#. Each is reached only through the re
 |---|---|---|---|---|---|---|
 | DR-01 | T014 [05_Complex/Inv_Small_Cash.xml:366] | Patient required; credit (`PAYTYPE=2`) with company '0' refused; doctor required (the block WHERE makes `PHARMACY_INV_NO` null, so it always applies) | `'Select Patient No is required '`; `'this patient not belong to any company !!'`; `'Doctor No is required '` | Blocking | `HeaderRecordRules.ValidateRecord` | `HeaderRecordRulesTests` · `DR-01.json` |
 | DR-02 | T009 [05_Complex/Inv_Small_Cash.xml:1102] | No lines refused | `'Invoice without Details'` | Blocking | `InvoiceDetailRules.RequireDetails` | `InvoiceDetailRulesTests` · `DR-02.json` |
-| DR-03 | T023 [05_Complex/Inv_Small_Cash.xml:18] | Coverage validity from the `V_PAT_DATA` snapshot; blocking vs warning follows the `INV_DATE_ADMIN` and company-type branches | `'Contract  Ended '\|\| to_char(r1.cCONTEND,'dd/mm/yyyy')` (\|\| `' , But due to that user have date admin privileges system will open claim'`); `'Company Is Holed'`; `'Card Expired '\|\| to_char(r1.CARD_END,'dd/mm/yyyy')` (\|\| `' , But due to that user have date admin privileges system will open claim'` / `' , Today last Date'`); `'Policy  Ended '` \|\| date \|\| `' ,But due to that user have date admin privileges system will open claim'`; `'Policy  Ended '` \|\| date \|\| `' Patient well treated as cash patient '`; `'Policy Is Holed'`; `'Refral Required For This Class'`; `'Class Is Holed'` | Blocking or warning per branch | `PatientEligibilityRules.Evaluate` | `PatientEligibilityRulesTests` · `DR-03.json` |
+| DR-03 | T023 [05_Complex/Inv_Small_Cash.xml:18] | Coverage validity from the `V_PAT_DATA` snapshot; blocking vs warning follows the `INV_DATE_ADMIN` and company-type branches | `'Contract  Ended '\|\| to_char(r1.cCONTEND,'dd/mm/yyyy')` (\|\| `' , But due to that user have date admin privileges system will open claim'`); `'Company Is Holed'`; `'Card Expired '\|\| to_char(r1.CARD_END,'dd/mm/yyyy')` (\|\| `' , But due to that user have date admin privileges system will open claim'` / `' , Today last Date'`); `'Policy  Ended '` \|\| date \|\| `' ,But due to that user have date admin privileges system will open claim'`; `'Policy  Ended '` \|\| date \|\| `' Patient well treated as cash patient '`; `'Policy Is Holed'`; `'Refral Required For This Class'`; `'Class Is Holed'`; unhandled ORA-01403 on a missing `V_PAT_DATA` row → `'FRM-40735: WHEN-VALIDATE-ITEM trigger raised unhandled exception ORA-01403.'` (D-72) | Blocking or warning per branch | `PatientEligibilityRules.Evaluate` | `PatientEligibilityRulesTests` · `DR-03.json` |
 | DR-04 | T031 [05_Complex/Inv_Small_Cash.xml:47] | Clinic sex vs patient sex; age check needs `DAY_TO_DAYES` (OI-22) | `'Patient sex not suitable for this clinic'`; `'Patient age  not suitable for this clinic'` | Warning | `ClinicSuitabilityRules.CheckSex`, `ClinicSuitabilityRules.CheckAge` | `ClinicSuitabilityRulesTests` · `DR-04.json` |
 | DR-05 | T032 [05_Complex/Inv_Small_Cash.xml:50], T033 [05_Complex/Inv_Small_Cash.xml:53] | `NVL(DEPT_WISE,0)=1` at a clinic whose `SYS_CAT_TYPE` is not 'ER'; `CALL=1` alone never rejects | `'This open for GP at ER Clinic Only'` | Blocking | `ErClinicRule.Validate` | `ErClinicRuleTests` · `DR-05.json` |
 | DR-06 | T039 [05_Complex/Inv_Small_Cash.xml:74], T041 [05_Complex/Inv_Small_Cash.xml:78] | With no header offer, the final-discount percent (entered, or `round(finaldisc/pat_pay*100,2)` in value mode) above `USERS_TABLE.MAX_DISC` opens `DISC_ALERT`; "Maximum Discount" caps, "Cancel" zeroes and blocks; the amount is the package's (D-07, D-41) | `'Maximum discount allawed is' \|\| V_MAX_DISC` | Blocking unless "Maximum Discount" | `FinalDiscountLimitRule.Evaluate`, `FinalDiscountLimitRule.ApplyChoice` | `FinalDiscountLimitRuleTests` · `DR-06.json` |
@@ -324,7 +324,7 @@ None of these units is re-implemented in C#. Each is reached only through the re
 | DR-21 | T011 [05_Complex/Inv_Small_Cash.xml:363] | After a new create with `NEW_INV_DOCID` set, clear the four `NEW_INV_*` columns; skipped on a replay; failure swallowed (D-44) | — | Value rule | `ReceptionTransferRule.ShouldClear` (+ `PatientTransferCommand.ClearReceptionTransfer`) | `ReceptionTransferRuleTests` · `DR-21.json` |
 | DR-22 | T014 [05_Complex/Inv_Small_Cash.xml:366], T038 [05_Complex/Inv_Small_Cash.xml:73], T040 [05_Complex/Inv_Small_Cash.xml:77] | Collected > 0 with both payment methods empty → `SUB_PAYTYPE := 1` | `'Payment type is empty'` | Warning | `HeaderRecordRules.ApplyPaymentTypeDefault` | `HeaderRecordRulesTests` · `DR-22.json` |
 | DR-23 | T029 [05_Complex/Inv_Small_Cash.xml:43], T066 [05_Complex/Inv_Small_Cash.xml:389] | `ADD_TO_LIST := 1` for a server-read `ADD_TO_QUE=1` service, or a `SERV_LOC_ID=14` package with such a component (D-37) | — | Value rule | `AddToListRule.Derive` | `AddToListRuleTests` · `DR-23.json` |
-| DR-24 | T015 [05_Complex/Inv_Small_Cash.xml:367], T023 [05_Complex/Inv_Small_Cash.xml:18], T026 [05_Complex/Inv_Small_Cash.xml:27] | Pay-type entry decision bound as `T_HEADER_INPUT.paytype` (D-47) | — | Value rule | `PayTypeSelectionRule.Decide` | `PayTypeSelectionRuleTests` · `DR-24.json` |
+| DR-24 | T015 [05_Complex/Inv_Small_Cash.xml:367], T023 [05_Complex/Inv_Small_Cash.xml:18], T026 [05_Complex/Inv_Small_Cash.xml:27] | Pay-type entry decision bound as `T_HEADER_INPUT.paytype` (D-47); a claim preload's null pay type is inherited and refused wherever it must be bound (D-88) | — | Value rule | `PayTypeSelectionRule.Decide` | `PayTypeSelectionRuleTests` · `DR-24.json` |
 | DR-25 | T029 [05_Complex/Inv_Small_Cash.xml:43] | Automatic visit line: review, consultation, service '2000' for company '1059' at clinic 14, or none (D-47) | — | Value rule | `VisitLineRule.Choose` | `VisitLineRuleTests` · `DR-25.json` |
 
 ## §6 Package-resident rules — UNVERIFIED
@@ -470,7 +470,7 @@ The APEX Page 48 export and its JavaScript are references only. Where they disag
 | BIL_INVOICE_ENGINE | 2474 | -20948 | 'Invoice create failed: package parent role was changed.' | Invoice create failed: package parent role was changed. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 2478 | -20949 | 'Invoice create failed: package parent service metadata was changed.' | Invoice create failed: package parent service metadata was changed. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 2482 | -20962 | 'Invoice create failed: package pricing method metadata was changed.' | Invoice create failed: package pricing method metadata was changed. | No | Generic 422 |
-| BIL_INVOICE_ENGINE | 2496 | -20949 | 'Invoice create failed: package instance identity is required.' | Invoice create failed: package instance identity is required. | No | Generic 422 |
+| BIL_INVOICE_ENGINE | 2496 | -20949 | 'Invoice create failed: package instance identity is required.' | Invoice create failed: package instance identity is required. | Yes | UnexpandedPackageParent |
 | BIL_INVOICE_ENGINE | 2505 | -20950 | 'Invoice create failed: fixed-price package ' \|\| p_lines(l_idx).serviceid \|\| ' has no valid package plan price.' | Invoice create failed: fixed-price package | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 2549 | -20951 | 'Invoice create failed: package component line is missing.' | Invoice create failed: package component line is missing. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 2552 | -20952 | 'Invoice create failed: package component service was changed or reordered.' | Invoice create failed: package component service was changed or reordered. | No | Generic 422 |
@@ -706,9 +706,9 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Item\|T_INV\|PLAN_CODE\|-\|152 | — | OI-24, PR-24 | Not derived: `GET_PRICE_PLAN` is missing; `InvoiceViewResponse.Display["PLAN_CODE"]` |
 | Item\|T_INV\|PLAN_NAME\|-\|153 | — | OI-15.25 | `InvoiceViewResponse.Display["PLAN_NAME"]` |
 | Item\|T_INV\|LIST_NAME\|-\|154 | — | OI-15.26 | `InvoiceViewResponse.Display["LIST_NAME"]` |
-| Item\|T_INV\|INS_NUMBER\|-\|155 | — | PR-24, OI-15.05 | `MoreDetailsResponse.InsNumber`; `PatientCoverageSnapshot.InsNumber` on a draft |
-| Item\|T_INV\|CARD_END\|-\|156 | — | PR-24, DR-03, OI-15.05 | `MoreDetailsResponse.CardEnd`; `PatientCoverageSnapshot.CardEnd` on a draft |
-| Item\|T_INV\|PAT_POLICY_NO\|-\|157 | — | PR-24, OI-15.05 | `MoreDetailsResponse.PatPolicyNo`; `PatientCoverageSnapshot.PatPolicyNo` on a draft |
+| Item\|T_INV\|INS_NUMBER\|-\|155 | — | DR-20, PR-24, OI-15.05 | `MoreDetailsResponse.InsNumber`; on a draft `InvoiceHeaderDraft.InsNumber` from the claim preload until the patient is validated, then `PatientCoverageSnapshot.InsNumber` (D-87) |
+| Item\|T_INV\|CARD_END\|-\|156 | — | DR-20, PR-24, DR-03, OI-15.05 | `MoreDetailsResponse.CardEnd`; on a draft `InvoiceHeaderDraft.CardEnd` from the claim preload until the patient is validated, then `PatientCoverageSnapshot.CardEnd` (D-87) |
+| Item\|T_INV\|PAT_POLICY_NO\|-\|157 | — | DR-20, PR-24, OI-15.05 | `MoreDetailsResponse.PatPolicyNo`; on a draft `InvoiceHeaderDraft.PatPolicyNo` from the claim preload until the patient is validated, then `PatientCoverageSnapshot.PatPolicyNo` (D-87) |
 | Item\|T_INV\|NOT_SEEN\|-\|158 | — | OI-33 | Not carried by the package inputs and not written by .NET; on no canvas |
 | Item\|T_INV\|RESERV_THE_TIME\|-\|159 | — | OI-33 | `InvoiceViewResponse.Display["RESERV_THE_TIME"]`; the `RESERV_NO` list is view-only |
 | Item\|T_INV\|RESERV_THE_TIMEX\|-\|160 | — | OI-42 | Not built: reservation-time display field omitted (`GET_HTFN2` missing) |
@@ -1022,6 +1022,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Billing.Invoicing.Api.Contracts.ImportRequestsRequest | T085 (DR-18, PR-19) |
 | Billing.Invoicing.Api.Contracts.ImportResponse | T085, T089, T093, T029 / T030 and `t_import_result` (PR-17, PR-18, PR-19, PR-21, DR-18, DR-19) |
 | Billing.Invoicing.Api.Contracts.InvoiceViewResponse | T010, T012 (DR-17) |
+| Billing.Invoicing.Api.Contracts.LastInvoiceNoResponse | T082 `MAX(INV_NO)` of the operator's information centre (OI-15.01) |
 | Billing.Invoicing.Api.Contracts.LookupItem | T004 list items from `INVOICES_TYPE`, `CURRENCIES` (OI-15.20, OI-15.21) |
 | Billing.Invoicing.Api.Contracts.LovResponse | The 11 used LOV record groups (9 served; `SERVICES` OI-24, `DOC1` OI-33; D-49) |
 | Billing.Invoicing.Api.Contracts.MessageDto | PU08 `MESSAG` texts and severities, alert `ERR_ALERT` (DR-01 … DR-25) |
@@ -1030,7 +1031,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Billing.Invoicing.Api.Contracts.PackageImportRequest | T089 (PR-18, D-38) |
 | Billing.Invoicing.Api.Contracts.PreviewResponse | PU10 `SMALL_CALC` and `t_preview_totals` (PR-01 … PR-08; DR-08, DR-09) |
 | Billing.Invoicing.Api.Contracts.ValidateDraftRequest | WHEN-VALIDATE-ITEM / RECORD triggers T014, T023, T026, T029, T031 … T033, T039, T041, T042, T052, T066, T068, T074, T077, T078 |
-| Billing.Invoicing.Api.Contracts.ValidateDraftResponse | Validation triggers T014, T023, T029, T031, T066 (DR-01 … DR-25 messages; DR-25 visit line; advisory OI-22, OI-33) |
+| Billing.Invoicing.Api.Contracts.ValidateDraftResponse | Validation triggers T014, T023, T029, T031, T066 (DR-01 … DR-25 messages; DR-25 visit line; T023 / T026 coverage for PATIENTNO, D-85; advisory OI-21, OI-22, OI-23, OI-24, OI-33) |
 | Billing.Invoicing.Api.Contracts.VisitLineRequest | T029, T030 (DR-25, PR-21) |
 | Billing.Invoicing.Api.Controllers.DraftsController | T015, T022, T003; the validation triggers (DR-01 … DR-25) |
 | Billing.Invoicing.Api.Controllers.DraftsController.New | T015, T022, T003 (DR-20, DR-24; OI-31) |
@@ -1056,8 +1057,12 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Billing.Invoicing.Api.Controllers.LookupsController.Lov | The 11 used LOVs: 9 served, `SERVICES` → 501 OI-24, `DOC1` → 501 OI-33 (D-49) |
 | Billing.Invoicing.Api.Controllers.PatientsController | T023, T026 (DR-03, DR-24) |
 | Billing.Invoicing.Api.Controllers.PatientsController.Coverage | T023, T026 (DR-03, DR-24) |
+| Billing.Invoicing.Api.Errors.ModelStateFieldMap | PU08 `MESSAG` / `FORM_TRIGGER_FAILURE`: field of a malformed request value in the error contract |
+| Billing.Invoicing.Api.Errors.ModelStateFieldMap.FieldOf | PU08 `MESSAG`: model-state key → the `T_INV` / `D_INV` item or module parameter named by a 422 `field-validation` message |
 | Billing.Invoicing.Api.Errors.ProblemDetailsWriter | PU08 `MESSAG` / `FORM_TRIGGER_FAILURE`, alert `ERR_ALERT` (error contract) |
 | Billing.Invoicing.Api.Errors.ProblemDetailsWriter.WriteAsync | PU08 `MESSAG` / `FORM_TRIGGER_FAILURE`: `DataFailure`, `NotImplementedException` and blocking results → HTTP |
+| Billing.Invoicing.Api.Errors.ProblemDetailsWriter.WriteNotFoundAsync | PU08 `MESSAG` (error contract): an unknown invoice (T010), last invoice (T082) or LOV → 404 `not-found` |
+| Billing.Invoicing.Api.Services.CreateInvoiceOutcome | T079 Save: the saved or replayed invoice (PR-22), or the blocking pre-flight messages of T014, T009 (DR-01 … DR-24) with the gate ids (OI-23, OI-31, OI-32, OI-33) |
 | Billing.Invoicing.Api.Services.InvoiceWorkflowService | Trigger order T014 → T009 → T011 → T016 → T061 → T005; T079 |
 | Billing.Invoicing.Api.Services.InvoiceWorkflowService.BuildDocument | T079 print, T080, T094, T095, PU25 (OI-11, OI-45 … OI-49) |
 | Billing.Invoicing.Api.Services.InvoiceWorkflowService.Create | T079, T014, T009, T011, T016, T061, T005 in commit order (DR-01 … DR-24, PR-09 … PR-25, OI-20) |
@@ -1118,6 +1123,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Billing.Invoicing.Data.Plsql.BilInvoiceApiGateway.CreateFullInvoice | T009, T011, T016, T061, T079 (PR-09 … PR-14, PR-20, PR-22 … PR-25) |
 | Billing.Invoicing.Data.Plsql.BilInvoiceApiGateway.GetBundledOfferLines | T093 (PR-17) |
 | Billing.Invoicing.Data.Plsql.BilInvoiceApiGateway.GetPackageLines | T089 (PR-18, D-38) |
+| Billing.Invoicing.Data.Plsql.BilInvoiceApiGateway.SealDraftDate | T015 (`INVDATE := sysdate` at record creation): seal of the draft date issued with the draft, under `Invoicing:DraftSealKey` (D-39) |
 | Billing.Invoicing.Data.Plsql.ClientIdBinder | Infrastructure: `t_client_id_tab` binding (D-09) |
 | Billing.Invoicing.Data.Plsql.ClientIdBinder.Bind | Infrastructure: `t_client_id_tab` binding (D-09) |
 | Billing.Invoicing.Data.Plsql.EditablePreviewLine | Infrastructure: DTO of package record `t_editable_preview_line` |
@@ -1167,6 +1173,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Billing.Invoicing.Data.Queries.LookupQueries.GetPreferences | T003 `PREF` (DR-14) |
 | Billing.Invoicing.Data.Queries.LookupQueries.GetRequestedServices | T052 `PAT_SERV_REQ` (DR-16) |
 | Billing.Invoicing.Data.Queries.LookupQueries.GetServiceProfile | T052, T066, T068 `SERVICES` (DR-12, DR-16, OI-32) |
+| Billing.Invoicing.Data.Queries.LookupQueries.GetServiceProfiles | T052, T066, T068 `SERVICES` (DR-12, DR-16, DR-23, OI-32, D-80) |
 | Billing.Invoicing.Data.Queries.LookupQueries.GetServiceQueueFlags | T029, T066 `SERVICES.ADD_TO_QUE` (DR-23) |
 | Billing.Invoicing.Data.Queries.LookupQueries.GetUserMaxDiscount | T039, T041 `USERS_TABLE.MAX_DISC` (DR-06) |
 | Billing.Invoicing.Data.Queries.LookupQueries.GetVisitDoctor | T015, T023 `PAT_VISIT_M` (DR-10, DR-11, DR-20) |

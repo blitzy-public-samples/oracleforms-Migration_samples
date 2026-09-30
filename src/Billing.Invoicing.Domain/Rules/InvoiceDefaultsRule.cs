@@ -67,7 +67,7 @@ public static class InvoiceDefaultsRule
         InvoiceEntryParameters parameters,
         InvoiceHeaderDraft claimPreload)
     {
-        // Any CASH_OR_CREDIT other than 1, null included, copies the preload's company, sub-company and class.
+        // Any CASH_OR_CREDIT other than 1, null included, copies the preload's company, sub-company, class and card fields.
         var cashRequested = parameters.CashOrCredit == CashOrCreditCash;
         var compCode = cashRequested ? CashCompanyFor(claimPreload) : claimPreload.CompCode;
 
@@ -80,6 +80,9 @@ public static class InvoiceDefaultsRule
             SubCompCode = cashRequested ? null : claimPreload.SubCompCode,
             ClassCode = cashRequested ? null : claimPreload.ClassCode,
             PayType = PayTypeSelectionRule.Decide(compCode, null, parameters, claimPreload),
+            InsNumber = cashRequested ? null : claimPreload.InsNumber,
+            CardEnd = cashRequested ? null : claimPreload.CardEnd,
+            PatPolicyNo = cashRequested ? null : claimPreload.PatPolicyNo,
         };
     }
 

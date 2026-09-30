@@ -82,6 +82,30 @@
       "status": "derivable",
       "input": { "method": "CheckAge", "clinic": { "clinicId": 7, "six": null, "ageMin": null, "ageMax": 12, "sysCatType": "OPD", "patientSex": 1 }, "ageYears": 5 },
       "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "check-age-only-maximum-boundary-passes",
+      "status": "derivable",
+      "input": { "method": "CheckAge", "clinic": { "clinicId": 7, "six": null, "ageMin": null, "ageMax": 12, "sysCatType": "OPD", "patientSex": 1 }, "ageYears": 12 },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "check-age-only-minimum-violated-warns",
+      "status": "derivable",
+      "input": { "method": "CheckAge", "clinic": { "clinicId": 9, "six": null, "ageMin": 18, "ageMax": null, "sysCatType": "OPD", "patientSex": 1 }, "ageYears": 10 },
+      "expected": { "outcome": "Warning", "messages": [{ "field": "CLINICID", "text": "Patient age  not suitable for this clinic", "severity": "Warning" }] }
+    },
+    {
+      "name": "check-age-only-minimum-within-passes",
+      "status": "derivable",
+      "input": { "method": "CheckAge", "clinic": { "clinicId": 9, "six": null, "ageMin": 18, "ageMax": null, "sysCatType": "OPD", "patientSex": 1 }, "ageYears": 30 },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "check-age-only-minimum-boundary-passes",
+      "status": "derivable",
+      "input": { "method": "CheckAge", "clinic": { "clinicId": 9, "six": null, "ageMin": 18, "ageMax": null, "sysCatType": "OPD", "patientSex": 1 }, "ageYears": 18 },
+      "expected": { "outcome": "Pass", "messages": [] }
     }
   ],
   "compare": { "moneyDecimals": 2, "exact": ["outcome", "messages"] }

@@ -343,6 +343,145 @@ public sealed class InvoiceWorkflowRequestValidationTests
         Assert.Empty(ports.Calls);
     }
 
+    [Theory]
+    [InlineData("P123456789012", "PATIENTNO has 13 characters; at most 12 can be bound.")]
+    [InlineData("\u00E9\u00E9\u00E9\u00E9\u00E9\u00E9\u00E9", "PATIENTNO has 14 bytes in UTF-8; at most 12 can be bound.")]
+    public async Task GetCoverage_PatientNoOverTwelveBytes_ReturnsBlockingPatientNoWithoutLookups(string patientNo, string text)
+    {
+        var ports = new FakePorts();
+
+        var response = await Service(ports).GetCoverage(patientNo, null, new InvoiceEntryParameters(), Operator);
+
+        AssertBlocking(response.Messages, "PATIENTNO", text);
+        Assert.Null(response.Coverage);
+        Assert.Empty(response.OpenItems);
+        Assert.Empty(ports.Calls);
+    }
+
+    [Theory]
+    [InlineData("P12345678901")]
+    [InlineData("\u00E9\u00E9\u00E9\u00E9\u00E9\u00E9")]
+    public async Task GetCoverage_PatientNoOfTwelveBytes_ReadsTheCoverage(string patientNo)
+    {
+        var ports = new FakePorts();
+
+        var response = await Service(ports).GetCoverage(patientNo, null, new InvoiceEntryParameters(), Operator);
+
+        Assert.Equal("GetPatientCoverage", ports.Calls[0]);
+        Assert.DoesNotContain(response.Messages, message => message.Text.EndsWith("can be bound.", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("P123456789012", "PATIENTNO has 13 characters; at most 12 can be bound.")]
+    [InlineData("\u00E9\u00E9\u00E9\u00E9\u00E9\u00E9\u00E9", "PATIENTNO has 14 bytes in UTF-8; at most 12 can be bound.")]
+    public async Task GetLov_ReservNoPatientNoOverTwelveBytes_ReturnsBlockingPatientNoWithoutReads(string patientNo, string text)
+    {
+        var ports = new FakePorts();
+        var binds = new Dictionary<string, string?> { ["DOCIDX"] = "12", ["PATIENTNO"] = patientNo };
+
+        var response = await Service(ports).GetLov("RESERV_NO", binds, new DateTime(2026, 3, 31), Operator);
+
+        Assert.NotNull(response);
+        Assert.Equal("RESERV_NO", response.Name);
+        Assert.Empty(response.Rows);
+        AssertBlocking(response.Messages, "PATIENTNO", text);
+        Assert.Empty(ports.Calls);
+    }
+
+    [Theory]
+    [InlineData("P12345678901")]
+    [InlineData(" P12345678901 ")]
+    [InlineData("\u00E9\u00E9\u00E9\u00E9\u00E9\u00E9")]
+    public async Task GetLov_ReservNoPatientNoOfTwelveBytes_QueriesTheList(string patientNo)
+    {
+        var ports = new FakePorts();
+        var binds = new Dictionary<string, string?> { ["DOCIDX"] = "12", ["PATIENTNO"] = patientNo };
+
+        var response = await Service(ports).GetLov("RESERV_NO", binds, new DateTime(2026, 3, 31), Operator);
+
+        Assert.NotNull(response);
+        Assert.DoesNotContain(response.Messages, message => message.Field == "PATIENTNO");
+        Assert.Equal(new[] { "ReservNo" }, ports.Calls);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-77")]
+    [InlineData("PATIENTNO", "P123456789012", "PATIENTNO has 13 characters; at most 12 can be bound.")]
+    [InlineData("PATIENTNO", "\u00E9\u00E9\u00E9\u00E9\u00E9\u00E9\u00E9", "PATIENTNO has 14 bytes in UTF-8; at most 12 can be bound.")]
+    [InlineData("COMP_CODE", "P123456789012", "PATIENTNO has 13 characters; at most 12 can be bound.")]
+    public async Task Validate_PatientNoOverTwelveBytes_WritesFieldValidation422WithoutReads(string target, string patientNo, string text)
+    {
+        var ports = new FakePorts();
+        var request = new ValidateDraftRequest
+        {
+            Target = target,
+            Draft = new DraftDto { Header = new InvoiceHeaderDraft { PatientNo = patientNo, CompCode = "0" } },
+        };
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() => Service(ports).Validate(request, Operator));
+        var written = await ProblemDetailsWriterTests.WriteHandled(error);
+
+        AssertPatientNoRefused(written, text);
+        Assert.Empty(ports.Calls);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-77")]
+    [InlineData("P12345678901")]
+    [InlineData("\u00E9\u00E9\u00E9\u00E9\u00E9\u00E9")]
+    public async Task Validate_PatientNoOfTwelveBytes_ReadsTheCoverage(string patientNo)
+    {
+        var ports = new FakePorts();
+        var request = new ValidateDraftRequest
+        {
+            Target = "PATIENTNO",
+            Draft = new DraftDto { Header = new InvoiceHeaderDraft { PatientNo = patientNo } },
+        };
+
+        var response = await Service(ports).Validate(request, Operator);
+
+        Assert.Contains("GetPatientCoverage", ports.Calls);
+        Assert.DoesNotContain(response.Messages, message => message.Text.EndsWith("can be bound.", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-77")]
+    public async Task Preview_PatientNoOverTwelveBytes_WritesFieldValidation422WithoutReads()
+    {
+        var ports = new FakePorts();
+        var draft = new DraftDto { Header = new InvoiceHeaderDraft { PatientNo = "P123456789012" } };
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() => Service(ports).Preview(draft, Operator));
+        var written = await ProblemDetailsWriterTests.WriteHandled(error);
+
+        AssertPatientNoRefused(written, "PATIENTNO has 13 characters; at most 12 can be bound.");
+        Assert.Empty(ports.Calls);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-77")]
+    public async Task ImportRequests_PatientNoOverTwelveBytes_WritesFieldValidation422WithoutReads()
+    {
+        var ports = new FakePorts();
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(
+            () => Service(ports).ImportRequests(RequestImport("P123456789012", "V1", 12), Operator));
+        var written = await ProblemDetailsWriterTests.WriteHandled(error);
+
+        AssertPatientNoRefused(written, "PATIENTNO has 13 characters; at most 12 can be bound.");
+        Assert.Empty(ports.Calls);
+    }
+
+    private static void AssertPatientNoRefused((int Status, string? ContentType, System.Text.Json.JsonElement Body) written, string text)
+    {
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, written.Status);
+        Assert.Equal("field-validation", written.Body.GetProperty("type").GetString());
+        var message = Assert.Single(written.Body.GetProperty("messages").EnumerateArray());
+        Assert.Equal("PATIENTNO", message.GetProperty("field").GetString());
+        Assert.Equal(text, message.GetProperty("text").GetString());
+        Assert.Equal(ValidationMessage.Blocking, message.GetProperty("severity").GetString());
+    }
+
     private static ImportRequestsRequest RequestImport(string? patientNo, string? visitUnique, int? docId) => new()
     {
         Draft = new DraftDto

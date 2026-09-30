@@ -13,11 +13,13 @@ namespace Billing.Invoicing.Api.Controllers;
 [Route("api")]
 public sealed class LookupsController : ControllerBase
 {
+    private const string ProblemJson = "application/problem+json";
     private const string CompCodeItem = "COMP_CODE";
     private const string SubCompCodeItem = "SUB_COMP_CODE";
     private const string DocIdxItem = "DOCIDX";
     private const string PatientNoItem = "PATIENTNO";
     private const string PayTypeItem = "PAYTYPE";
+    private const string LovNotFoundText = "List of values not found.";
 
     /// <summary>Operator-context headers named when the request carries no operator context.</summary>
     private static readonly string[] OperatorHeaders =
@@ -52,9 +54,15 @@ public sealed class LookupsController : ControllerBase
     /// <param name="patientNo">Draft patient number, bound as <c>PATIENTNO</c>.</param>
     /// <param name="payType">Draft pay type, bound as <c>PAYTYPE</c>.</param>
     /// <param name="draftDate">Draft date, bound as <c>INVDATE</c>.</param>
-    /// <returns>200 with the rows, 404 for an unknown LOV, or 422 naming a missing item or operator header.</returns>
+    /// <returns>200 with the rows, 404 <c>not-found</c> for an unknown LOV, or 422 naming a missing or overlong item or a missing operator header.</returns>
     [HttpGet("lov/{name}")]
-    public async Task<IActionResult> Lov(
+    [ProducesResponseType<LovResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status501NotImplemented, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status500InternalServerError, ProblemJson)]
+    public async Task<ActionResult<LovResponse>> Lov(
         string name,
         [FromQuery] string? compCode,
         [FromQuery] string? subCompCode,
@@ -80,7 +88,8 @@ public sealed class LookupsController : ControllerBase
         LovResponse? response = await _workflow.GetLov(name, binds, draftDate, operatorContext, HttpContext.RequestAborted);
         if (response is null)
         {
-            return NotFound();
+            await _problems.WriteNotFoundAsync(HttpContext, LovNotFoundText);
+            return new EmptyResult();
         }
 
         if (HasBlocking(response.Messages))
@@ -94,13 +103,21 @@ public sealed class LookupsController : ControllerBase
     /// <summary>Returns the invoice-type list items.</summary>
     /// <returns>200 with the invoice types.</returns>
     [HttpGet("lookups/invoice-types")]
-    public async Task<IActionResult> InvoiceTypes() =>
+    [ProducesResponseType<IReadOnlyList<LookupItem>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status500InternalServerError, ProblemJson)]
+    public async Task<ActionResult<IReadOnlyList<LookupItem>>> InvoiceTypes() =>
         Ok(await _workflow.GetInvoiceTypes(HttpContext.RequestAborted));
 
     /// <summary>Returns the currency list items.</summary>
     /// <returns>200 with the currencies.</returns>
     [HttpGet("lookups/currencies")]
-    public async Task<IActionResult> Currencies() =>
+    [ProducesResponseType<IReadOnlyList<LookupItem>>(StatusCodes.Status200OK)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable, ProblemJson)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status500InternalServerError, ProblemJson)]
+    public async Task<ActionResult<IReadOnlyList<LookupItem>>> Currencies() =>
         Ok(await _workflow.GetCurrencies(HttpContext.RequestAborted));
 
     /// <summary>Returns the operator context the middleware stored for this request.</summary>
@@ -110,7 +127,7 @@ public sealed class LookupsController : ControllerBase
 
     /// <summary>Writes the 422 <c>operator-context-missing</c> body naming every operator-context header.</summary>
     /// <returns>An empty result, the body having been written.</returns>
-    private async Task<IActionResult> OperatorMissing()
+    private async Task<ActionResult> OperatorMissing()
     {
         await _problems.WriteAsync(HttpContext, OperatorHeaders);
         return new EmptyResult();
@@ -128,7 +145,7 @@ public sealed class LookupsController : ControllerBase
     /// <param name="openItems">Open-item ids; null writes none.</param>
     /// <param name="adjusted">Adjusted values keyed by legacy item name; null omits them.</param>
     /// <returns>An empty result, the body having been written.</returns>
-    private async Task<IActionResult> Rejected(
+    private async Task<ActionResult> Rejected(
         IReadOnlyList<MessageDto> messages,
         IReadOnlyList<string>? openItems,
         IReadOnlyDictionary<string, object?>? adjusted)

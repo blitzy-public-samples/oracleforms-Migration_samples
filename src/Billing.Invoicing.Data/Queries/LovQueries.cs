@@ -83,9 +83,11 @@ public sealed class LovQueries : ILovQueries
     /// <summary>Stores the data-layer settings; opens nothing.</summary>
     /// <param name="options">Connection string and command timeout.</param>
     /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><see cref="InvoicingDataOptions.CommandTimeoutSeconds"/> is below 1.</exception>
     public LovQueries(InvoicingDataOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
+        options.EnsureCommandTimeout(nameof(options));
 
         _options = options;
     }

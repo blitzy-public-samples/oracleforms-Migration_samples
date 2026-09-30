@@ -26,6 +26,9 @@ public static class OracleErrorCatalog
     /// <summary>Kind for a missing application id, session or user in a BIL_IMPORT request call.</summary>
     public const string OperatorContextMissingKind = "OperatorContextMissing";
 
+    /// <summary>Kind for a package service line that reached the engine without its package instance, an unexpanded package parent.</summary>
+    public const string UnexpandedPackageParentKind = "UnexpandedPackageParent";
+
     /// <summary>Catalogue rows in register order; each (Number, MessagePrefix) pair is unique.</summary>
     public static IReadOnlyList<(string Package, int Number, string MessagePrefix, string? Kind, string? Field, string? LegacyText)> Rows { get; } =
         Array.AsReadOnly(new CatalogRow[]
@@ -38,6 +41,8 @@ public static class OracleErrorCatalog
             (EnginePackage, -20969, "The package definition changed after the invoice was calculated. ", DefinitionStaleKind, null, null),
             // BIL_INVOICE_ENGINE.sql:1317
             (EnginePackage, -20970, "The offer changed after the invoice was calculated. ", DefinitionStaleKind, null, null),
+            // BIL_INVOICE_ENGINE.sql:2496
+            (EnginePackage, -20949, "Invoice create failed: package instance identity is required.", UnexpandedPackageParentKind, null, null),
             // BIL_INVOICE_ENGINE.sql:500
             (EnginePackage, -20900, "Invoice create failed: patient number is required.", null, "PATIENTNO", null),
             // BIL_INVOICE_ENGINE.sql:520

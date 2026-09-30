@@ -31,6 +31,9 @@ public sealed record DraftDto : IValidatableObject
     /// <summary>Database time read when the draft was created.</summary>
     public DateTime DraftDate { get; init; }
 
+    /// <summary>Seal of the request id and draft date issued with the draft.</summary>
+    public string? DraftSeal { get; init; }
+
     /// <summary>The <c>T_INV</c> header; its JSON omits the pre-authorisation, <c>OFERID</c>, <c>DOCID1</c> and <c>SEQ_NO</c>.</summary>
     [JsonConverter(typeof(RequestHeaderContract))]
     public InvoiceHeaderDraft Header { get; init; } = new();
