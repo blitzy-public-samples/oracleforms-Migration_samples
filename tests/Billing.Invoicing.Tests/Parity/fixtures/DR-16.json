@@ -1,0 +1,70 @@
+{
+  "id": "DR-16",
+  "class": "domain",
+  "source": [
+    { "construct": "T052 D_INV WHEN-VALIDATE-RECORD", "locator": "05_Complex/Inv_Small_Cash.xml:559" }
+  ],
+  "cases": [
+    {
+      "name": "insured-unrequested-service-warns",
+      "status": "derivable",
+      "input": {
+        "header": { "subCompCode": "305", "invNo": null },
+        "service": { "serviceId": "1001", "beginOfClaim": 0 },
+        "requested": false
+      },
+      "expected": { "outcome": "Warning", "messages": [{ "field": "SERVICEID", "text": "This service not requested by doctor at this claim", "severity": "Warning" }] }
+    },
+    {
+      "name": "insured-unrequested-begin-of-claim-null-warns",
+      "status": "derivable",
+      "input": {
+        "header": { "subCompCode": "305", "invNo": null },
+        "service": { "serviceId": "1001", "beginOfClaim": null },
+        "requested": false
+      },
+      "expected": { "outcome": "Warning", "messages": [{ "field": "SERVICEID", "text": "This service not requested by doctor at this claim", "severity": "Warning" }] }
+    },
+    {
+      "name": "insured-requested-service-passes",
+      "status": "derivable",
+      "input": {
+        "header": { "subCompCode": "305", "invNo": null },
+        "service": { "serviceId": "1001", "beginOfClaim": 0 },
+        "requested": true
+      },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "begin-of-claim-service-passes",
+      "status": "derivable",
+      "input": {
+        "header": { "subCompCode": "305", "invNo": null },
+        "service": { "serviceId": "1001", "beginOfClaim": 1 },
+        "requested": false
+      },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "saved-invoice-passes",
+      "status": "derivable",
+      "input": {
+        "header": { "subCompCode": "305", "invNo": 5001 },
+        "service": { "serviceId": "1001", "beginOfClaim": 0 },
+        "requested": false
+      },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "no-sub-company-passes",
+      "status": "derivable",
+      "input": {
+        "header": { "subCompCode": null, "invNo": null },
+        "service": { "serviceId": "1001", "beginOfClaim": 0 },
+        "requested": false
+      },
+      "expected": { "outcome": "Pass", "messages": [] }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "messages"] }
+}

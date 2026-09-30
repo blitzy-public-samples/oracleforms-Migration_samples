@@ -1,0 +1,80 @@
+{
+  "id": "DR-18",
+  "class": "domain",
+  "source": [
+    { "construct": "T085 DO_IMP2 WHEN-BUTTON-PRESSED", "locator": "05_Complex/Inv_Small_Cash.xml:755" }
+  ],
+  "cases": [
+    {
+      "name": "require-doctor-missing-blocks",
+      "status": "derivable",
+      "input": { "method": "RequireDoctor", "docId": null },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "DOCIDX", "text": "Select doctor First", "severity": "Blocking" }] }
+    },
+    {
+      "name": "require-doctor-present-passes",
+      "status": "derivable",
+      "input": { "method": "RequireDoctor", "docId": 10 },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "notices-rejected-row",
+      "status": "derivable",
+      "input": { "method": "Notices", "rows": [{ "serviceId": "1001", "reqAStatus": 3, "reqNeedA": 0, "approvRefNo": null }], "x422ApprovCheck": 1, "payType": 2 },
+      "expected": { "outcome": "Warning", "messages": [{ "field": "SERVICEID", "text": "1001 Rejected ", "severity": "Warning" }] }
+    },
+    {
+      "name": "notices-rejected-row-with-approval-bypass",
+      "status": "derivable",
+      "input": { "method": "Notices", "rows": [{ "serviceId": "1001", "reqAStatus": 3, "reqNeedA": 0, "approvRefNo": null }], "x422ApprovCheck": 2, "payType": 2 },
+      "expected": { "outcome": "Warning", "messages": [{ "field": "SERVICEID", "text": "1001 Rejected ", "severity": "Warning" }] }
+    },
+    {
+      "name": "notices-credit-row-needs-approval",
+      "status": "derivable",
+      "input": { "method": "Notices", "rows": [{ "serviceId": "1002", "reqAStatus": 0, "reqNeedA": 1, "approvRefNo": null }], "x422ApprovCheck": 1, "payType": 2 },
+      "expected": { "outcome": "Warning", "messages": [{ "field": "SERVICEID", "text": "1002 Need Approval", "severity": "Warning" }] }
+    },
+    {
+      "name": "notices-need-approval-bypassed-by-setting-2",
+      "status": "derivable",
+      "input": { "method": "Notices", "rows": [{ "serviceId": "1002", "reqAStatus": 0, "reqNeedA": 1, "approvRefNo": null }], "x422ApprovCheck": 2, "payType": 2 },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "notices-need-approval-with-reference",
+      "status": "derivable",
+      "input": { "method": "Notices", "rows": [{ "serviceId": "1002", "reqAStatus": 0, "reqNeedA": 1, "approvRefNo": "AP-55" }], "x422ApprovCheck": 1, "payType": 2 },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "notices-cash-row-needing-approval-no-notice",
+      "status": "derivable",
+      "input": { "method": "Notices", "rows": [{ "serviceId": "1002", "reqAStatus": 0, "reqNeedA": 1, "approvRefNo": null }], "x422ApprovCheck": 1, "payType": 1 },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "notices-mixed-rows-in-order",
+      "status": "derivable",
+      "input": {
+        "method": "Notices",
+        "rows": [
+          { "serviceId": "1001", "reqAStatus": 3, "reqNeedA": 0, "approvRefNo": null },
+          { "serviceId": "1003", "reqAStatus": 0, "reqNeedA": 0, "approvRefNo": null },
+          { "serviceId": "1002", "reqAStatus": 0, "reqNeedA": 1, "approvRefNo": null }
+        ],
+        "x422ApprovCheck": 1,
+        "payType": 2
+      },
+      "expected": {
+        "outcome": "Warning",
+        "messages": [
+          { "field": "SERVICEID", "text": "1001 Rejected ", "severity": "Warning" },
+          { "field": "SERVICEID", "text": "1002 Need Approval", "severity": "Warning" }
+        ]
+      },
+      "decision": "D-26"
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "messages"] }
+}

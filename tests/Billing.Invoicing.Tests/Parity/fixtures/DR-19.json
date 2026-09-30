@@ -1,0 +1,28 @@
+{
+  "id": "DR-19",
+  "class": "domain",
+  "source": [
+    { "construct": "T089 IMP_PKG WHEN-BUTTON-PRESSED", "locator": "05_Complex/Inv_Small_Cash.xml:771" }
+  ],
+  "cases": [
+    {
+      "name": "no-lines-added-warns",
+      "status": "derivable",
+      "input": { "lineCount": 0 },
+      "expected": { "outcome": "Warning", "messages": [{ "field": null, "text": "No Serves Added", "severity": "Warning" }] }
+    },
+    {
+      "name": "lines-added-passes",
+      "status": "derivable",
+      "input": { "lineCount": 3 },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "single-line-added-passes",
+      "status": "derivable",
+      "input": { "lineCount": 1 },
+      "expected": { "outcome": "Pass", "messages": [] }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "messages"] }
+}

@@ -20,6 +20,10 @@ public sealed class OracleFailureTranslatorTests
 
     private const string PatientRequiredText = "Invoice create failed: patient number is required.";
     private const string BundledOfferText = "Bundled Offers are available only for Cash invoices.";
+    private const string RequestImportQuantityText = "Request import failed: selected request line 55 has invalid quantity.";
+
+    private const string PackageExpansionQuantityText =
+        "Request package expansion failed: multiplied quantity exceeds the supported two-decimal quantity precision for component 9.";
     private const string ListenerHostText = "Cannot connect. No listener at host 10.1.2.3 port 1521. (CONNECTION_ID=AbCdEf123==)";
 
     private static readonly string EngineFrame = Frame("HIS.BIL_INVOICE_ENGINE", 619);
@@ -79,17 +83,50 @@ public sealed class OracleFailureTranslatorTests
         Assert.Equal(-20900, failure.Number);
     }
 
+    [Fact]
+    public void Translate_UncataloguedApplicationErrorWhileOpening_Is422()
+    {
+        DataFailure failure = translator.Translate(Err(20001, "logon trigger refused", duringOpen: true));
+
+        Assert.Equal(422, failure.Status);
+        Assert.Equal(DataFailure.OracleBusinessErrorType, failure.Type);
+        Assert.Equal(-20001, failure.Number);
+        Assert.Equal(UnknownPackage, failure.Package);
+        Assert.Equal("logon trigger refused", failure.Message);
+    }
+
     [Theory]
     [InlineData(20000, -20000)]
+    [InlineData(20500, -20500)]
     [InlineData(20999, -20999)]
     public void Translate_ApplicationRangeBoundaries_Are422(int number, int expected)
     {
         DataFailure failure = translator.Translate(Err(number, "x"));
 
         Assert.Equal(422, failure.Status);
+        Assert.Equal(DataFailure.OracleBusinessErrorType, failure.Type);
         Assert.Equal(expected, failure.Number);
         Assert.Equal(UnknownPackage, failure.Package);
         Assert.Null(failure.Kind);
+        Assert.Null(failure.Field);
+        Assert.Null(failure.LegacyText);
+        Assert.Equal("x", failure.Message);
+    }
+
+    [Theory]
+    [InlineData(20000, -20000)]
+    [InlineData(20500, -20500)]
+    [InlineData(20999, -20999)]
+    public void Translate_UncataloguedApplicationErrorWithFrame_AttributesTheFramePackage(int number, int expected)
+    {
+        DataFailure failure = translator.Translate(Err(number, "x", "CreateFullInvoice", false, EngineFrame));
+
+        Assert.Equal(422, failure.Status);
+        Assert.Equal(DataFailure.OracleBusinessErrorType, failure.Type);
+        Assert.Equal(expected, failure.Number);
+        Assert.Equal(OracleErrorCatalog.EnginePackage, failure.Package);
+        Assert.Null(failure.Kind);
+        Assert.Null(failure.Field);
         Assert.Equal("x", failure.Message);
     }
 
@@ -150,7 +187,68 @@ public sealed class OracleFailureTranslatorTests
     }
 
     [Theory]
+    [InlineData(20900, "Invoice create failed: patient number is required.", "CreateFullInvoice", OracleErrorCatalog.EnginePackage, "PATIENTNO", null)]
+    [InlineData(20923, "Invoice create failed: clinic is required when doctor is supplied.", "CreateFullInvoice", OracleErrorCatalog.EnginePackage, "CLINICID", null)]
+    [InlineData(20924, "Invoice create failed: selected doctor does not belong to the selected clinic.", "CalculatePreview", OracleErrorCatalog.EnginePackage, "DOCIDX", null)]
+    [InlineData(20903, "Invoice create failed: at least one service line is required.", "CreateFullInvoice", OracleErrorCatalog.EnginePackage, null, "Invoice without Details")]
+    [InlineData(20905, "Invoice create failed: quantity must be a positive whole number on line 2.", "CalculatePreview", OracleErrorCatalog.EnginePackage, "QTY", null)]
+    [InlineData(20914, "Invoice create failed: final discount cannot exceed patient share.", "CreateFullInvoice", OracleErrorCatalog.EnginePackage, "FINALDISC", "discount is greater than cash payed amount")]
+    [InlineData(20780, "Invoice line 1 uses price override but PRICE_OVERRIDE is null.", "CalculatePreview", OracleErrorCatalog.EnginePackage, "PRICE", null)]
+    [InlineData(20781, "Invoice line 1 price override cannot be negative.", "CreateFullInvoice", OracleErrorCatalog.EnginePackage, "PRICE", null)]
+    [InlineData(20871, "Bundled Offers are available only for Cash invoices.", "GetBundledOfferLines", OracleErrorCatalog.ApiPackage, "OFERID", null)]
+    public void Translate_PackageErrorText_MapsToItsField(int number, string text, string operation, string package, string? field, string? legacyText)
+    {
+        DataFailure failure = translator.Translate(Err(number, text, operation));
+
+        Assert.Equal(422, failure.Status);
+        Assert.Equal(DataFailure.OracleBusinessErrorType, failure.Type);
+        Assert.Equal(-number, failure.Number);
+        Assert.Equal(package, failure.Package);
+        Assert.Equal(field, failure.Field);
+        Assert.Equal(legacyText, failure.LegacyText);
+        Assert.Null(failure.Kind);
+        Assert.Equal(text, failure.Message);
+    }
+
+    [Theory]
+    [InlineData(20931, "One or more requested services were already invoiced or are no longer available.", "CreateFullInvoice", OracleErrorCatalog.EnginePackage, OracleErrorCatalog.RequestLinesStaleKind)]
+    [InlineData(20930, "Invoice create failed: request line 77 was already invoiced by another session.", "CreateFullInvoice", OracleErrorCatalog.EnginePackage, OracleErrorCatalog.RequestLinesStaleKind)]
+    [InlineData(20969, "The package definition changed after the invoice was calculated. Refresh the invoice and review the package lines.", "CreateFullInvoice", OracleErrorCatalog.EnginePackage, OracleErrorCatalog.DefinitionStaleKind)]
+    [InlineData(20970, "The offer changed after the invoice was calculated. Refresh the invoice and review the updated pricing.", "CalculatePreview", OracleErrorCatalog.EnginePackage, OracleErrorCatalog.DefinitionStaleKind)]
+    [InlineData(20848, "Invoice request 0A1B2C3D4E5F60718293A4B5C6D7E8F9 refers to unavailable invoice 105.", "CreateFullInvoice", OracleErrorCatalog.ApiPackage, OracleErrorCatalog.IdempotencyConflictKind)]
+    [InlineData(20848, "Invoice request 0A1B2C3D4E5F60718293A4B5C6D7E8F9 exists but has no completed invoice.", "CreateFullInvoice", OracleErrorCatalog.ApiPackage, OracleErrorCatalog.IdempotencyConflictKind)]
+    [InlineData(20848, "Invoice request 0A1B2C3D4E5F60718293A4B5C6D7E8F9 could not be completed for invoice 105.", "CreateFullInvoice", OracleErrorCatalog.ApiPackage, OracleErrorCatalog.IdempotencyConflictKind)]
+    [InlineData(20849, "Invoice request 0A1B2C3D4E5F60718293A4B5C6D7E8F9 already belongs to invoice 105 for another patient.", "CreateFullInvoice", OracleErrorCatalog.ApiPackage, OracleErrorCatalog.IdempotencyConflictKind)]
+    public void Translate_PackageErrorText_CarriesItsKind(int number, string text, string operation, string package, string kind)
+    {
+        DataFailure failure = translator.Translate(Err(number, text, operation));
+
+        Assert.Equal(422, failure.Status);
+        Assert.Equal(DataFailure.OracleBusinessErrorType, failure.Type);
+        Assert.Equal(-number, failure.Number);
+        Assert.Equal(package, failure.Package);
+        Assert.Equal(kind, failure.Kind);
+        Assert.Null(failure.Field);
+        Assert.Null(failure.LegacyText);
+        Assert.Equal(text, failure.Message);
+    }
+
+    [Fact]
+    public void Translate_IdempotencyConflict_KeepsTheNamedInvoiceNumber()
+    {
+        const string text = "Invoice request 0A1B2C3D4E5F60718293A4B5C6D7E8F9 already belongs to invoice 105 for another patient.";
+
+        DataFailure failure = translator.Translate(Err(20849, text, "CreateFullInvoice", false, ApiFrame));
+
+        Assert.Equal(OracleErrorCatalog.IdempotencyConflictKind, failure.Kind);
+        Assert.Contains("invoice 105", failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("ORA-", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
     [InlineData(20778, "Request import failed: application ID is required.")]
+    [InlineData(20779, "Request import failed: application session is required.")]
+    [InlineData(20782, "Request import failed: application user is required.")]
     [InlineData(20779, "Request selection failed: application session is required.")]
     [InlineData(20782, "Request selection clear failed: application user is required.")]
     public void Translate_ImportOperatorContextError_IsOperatorContextMissingWithOracleDetails(int number, string text)
@@ -166,8 +264,8 @@ public sealed class OracleFailureTranslatorTests
     }
 
     [Theory]
-    [InlineData("Request import failed: selected request line 42 is no longer available.")]
-    [InlineData("Request package expansion failed: multiplied quantity exceeds the supported two-decimal quantity precision for component 7.")]
+    [InlineData(RequestImportQuantityText)]
+    [InlineData(PackageExpansionQuantityText)]
     public void Translate_Import20771_MatchesEachPrefix(string text)
     {
         DataFailure failure = translator.Translate(Err(20771, text, "ImportRequestLines"));
@@ -178,6 +276,34 @@ public sealed class OracleFailureTranslatorTests
         Assert.Equal(OracleErrorCatalog.ImportPackage, failure.Package);
         Assert.Null(failure.Kind);
         Assert.Equal(text, failure.Message);
+    }
+
+    [Fact]
+    public void Find_Import20771_ReturnsADistinctRowPerMessagePrefix()
+    {
+        string[] candidates = { OracleErrorCatalog.ImportPackage };
+
+        var requestImport = OracleErrorCatalog.Find(candidates, -20771, RequestImportQuantityText);
+        var packageExpansion = OracleErrorCatalog.Find(candidates, -20771, PackageExpansionQuantityText);
+
+        Assert.NotNull(requestImport);
+        Assert.NotNull(packageExpansion);
+        Assert.Equal(OracleErrorCatalog.ImportPackage, requestImport.Value.Package);
+        Assert.Equal(OracleErrorCatalog.ImportPackage, packageExpansion.Value.Package);
+        Assert.StartsWith(requestImport.Value.MessagePrefix, RequestImportQuantityText, StringComparison.Ordinal);
+        Assert.StartsWith(packageExpansion.Value.MessagePrefix, PackageExpansionQuantityText, StringComparison.Ordinal);
+        Assert.NotEqual(requestImport.Value.MessagePrefix, packageExpansion.Value.MessagePrefix);
+    }
+
+    [Theory]
+    [InlineData(OracleErrorCatalog.EnginePackage, -20914)]
+    [InlineData(OracleErrorCatalog.EnginePackage, -20931)]
+    [InlineData(OracleErrorCatalog.ApiPackage, -20871)]
+    [InlineData(OracleErrorCatalog.ImportPackage, -20771)]
+    [InlineData(OracleErrorCatalog.ImportPackage, -20778)]
+    public void Find_CataloguedNumberWithUnrelatedText_ReturnsNoRow(string package, int number)
+    {
+        Assert.Null(OracleErrorCatalog.Find(new[] { package }, number, "Some other failure."));
     }
 
     [Fact]
@@ -196,8 +322,32 @@ public sealed class OracleFailureTranslatorTests
         DataFailure failure = translator.Translate(Err(20871, BundledOfferText, "ImportRequestLines"));
 
         Assert.Equal(422, failure.Status);
+        Assert.Equal(DataFailure.OracleBusinessErrorType, failure.Type);
         Assert.Equal(UnknownPackage, failure.Package);
         Assert.Null(failure.Field);
+        Assert.Null(failure.Kind);
+        Assert.Null(failure.LegacyText);
+    }
+
+    [Fact]
+    public void Translate_RowOutsideOperationCandidatesWithFrame_AttributesTheFrameWithoutField()
+    {
+        DataFailure failure = translator.Translate(Err(20871, BundledOfferText, "ImportRequestLines", false, ApiFrame));
+
+        Assert.Equal(422, failure.Status);
+        Assert.Equal(OracleErrorCatalog.ApiPackage, failure.Package);
+        Assert.Null(failure.Field);
+        Assert.Null(failure.Kind);
+        Assert.Null(failure.LegacyText);
+    }
+
+    [Fact]
+    public void Find_RowOutsideCandidates_ReturnsNoRow()
+    {
+        string[] importCandidates = { OracleErrorCatalog.ImportPackage, OracleErrorCatalog.EnginePackage };
+
+        Assert.Null(OracleErrorCatalog.Find(importCandidates, -20871, BundledOfferText));
+        Assert.NotNull(OracleErrorCatalog.Find(new[] { OracleErrorCatalog.ApiPackage }, -20871, BundledOfferText));
     }
 
     [Theory]
@@ -238,6 +388,7 @@ public sealed class OracleFailureTranslatorTests
     public void Translate_UnrelatedException_ReturnsNull()
     {
         Assert.Null(translator.Translate(new InvalidOperationException("unrelated")));
+        Assert.Null(translator.Translate(new ArgumentException("x")));
     }
 
     [Fact]
@@ -356,6 +507,7 @@ public sealed class OracleFailureTranslatorTests
 
             Assert.NotNull(failure);
             Assert.Equal(503, failure.Status);
+            Assert.Equal(DataFailure.OracleUnavailableType, failure.Type);
             Assert.Null(failure.Number);
             Assert.Equal(UnavailableMessage, failure.Message);
         }

@@ -1,0 +1,51 @@
+{
+  "id": "DR-17",
+  "class": "domain",
+  "source": [
+    { "construct": "T010 T_INV POST-QUERY", "locator": "05_Complex/Inv_Small_Cash.xml:362" },
+    { "construct": "T020 T_INV ON-CHECK-DELETE-MASTER", "locator": "05_Complex/Inv_Small_Cash.xml:372" },
+    { "construct": "T021 T_INV ON-DELETE", "locator": "05_Complex/Inv_Small_Cash.xml:373" },
+    { "construct": "T062 D_INV KEY-CREREC", "locator": "05_Complex/Inv_Small_Cash.xml:569" },
+    { "construct": "T079 DO_PRINT WHEN-BUTTON-PRESSED", "locator": "05_Complex/Inv_Small_Cash.xml:737" }
+  ],
+  "cases": [
+    {
+      "name": "can-edit-new-draft",
+      "status": "derivable",
+      "input": { "method": "CanEdit", "invNo": null },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "CAN_EDIT": true } }
+    },
+    {
+      "name": "can-edit-queried-invoice-refused",
+      "status": "derivable",
+      "input": { "method": "CanEdit", "invNo": 5001 },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "CAN_EDIT": false } }
+    },
+    {
+      "name": "can-edit-just-saved-invoice-refused",
+      "status": "derivable",
+      "input": { "method": "CanEdit", "invNo": 5002 },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "CAN_EDIT": false } },
+      "decision": "D-36"
+    },
+    {
+      "name": "can-delete-saved-invoice-refused",
+      "status": "derivable",
+      "input": { "method": "CanDelete", "invNo": 5001 },
+      "expected": {
+        "outcome": "Blocking",
+        "messages": [{ "field": null, "text": "You Cant Delete Invoice From Here", "severity": "Blocking" }]
+      }
+    },
+    {
+      "name": "can-delete-new-draft-refused",
+      "status": "derivable",
+      "input": { "method": "CanDelete", "invNo": null },
+      "expected": {
+        "outcome": "Blocking",
+        "messages": [{ "field": null, "text": "You Cant Delete Invoice From Here", "severity": "Blocking" }]
+      }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "messages", "CAN_EDIT"] }
+}

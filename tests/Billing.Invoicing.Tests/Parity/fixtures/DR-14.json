@@ -1,0 +1,58 @@
+{
+  "id": "DR-14",
+  "class": "domain",
+  "source": [
+    { "construct": "T074 APPROV_REF_NO WHEN-VALIDATE-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:439" }
+  ],
+  "cases": [
+    {
+      "name": "credit-needs-approval-without-reference-blocks",
+      "status": "derivable",
+      "input": { "serviceId": "1001", "payType": 2, "x422ApprovCheck": 1, "reqNeedA": 1, "approvRefNo": null },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "APPROV_REF_NO", "text": "1001Need Approval", "severity": "Blocking" }] }
+    },
+    {
+      "name": "approval-check-bypass-passes",
+      "status": "derivable",
+      "input": { "serviceId": "1001", "payType": 2, "x422ApprovCheck": 2, "reqNeedA": 1, "approvRefNo": null },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "approval-check-other-setting-passes",
+      "status": "derivable",
+      "input": { "serviceId": "1001", "payType": 2, "x422ApprovCheck": 0, "reqNeedA": 1, "approvRefNo": null },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "request-without-approval-need-passes",
+      "status": "derivable",
+      "input": { "serviceId": "1001", "payType": 2, "x422ApprovCheck": 1, "reqNeedA": 0, "approvRefNo": null },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "approval-need-null-passes",
+      "status": "derivable",
+      "input": { "serviceId": "1001", "payType": 2, "x422ApprovCheck": 1, "reqNeedA": null, "approvRefNo": null },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "approval-reference-present-passes",
+      "status": "derivable",
+      "input": { "serviceId": "1001", "payType": 2, "x422ApprovCheck": 1, "reqNeedA": 1, "approvRefNo": "AP-55" },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "cash-invoice-passes",
+      "status": "derivable",
+      "input": { "serviceId": "1001", "payType": 1, "x422ApprovCheck": 1, "reqNeedA": 1, "approvRefNo": null },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "service-missing-passes",
+      "status": "derivable",
+      "input": { "serviceId": null, "payType": 2, "x422ApprovCheck": 1, "reqNeedA": 1, "approvRefNo": null },
+      "expected": { "outcome": "Pass", "messages": [] }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "messages"] }
+}

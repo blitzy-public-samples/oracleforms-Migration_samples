@@ -1,0 +1,22 @@
+{
+  "id": "DR-15",
+  "class": "domain",
+  "source": [
+    { "construct": "T066 SERVICEID WHEN-VALIDATE-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:389" }
+  ],
+  "cases": [
+    {
+      "name": "service-missing-blocks",
+      "status": "derivable",
+      "input": { "serviceId": null },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "SERVICEID", "text": "You Must Select Value", "severity": "Blocking" }] }
+    },
+    {
+      "name": "service-present-passes",
+      "status": "derivable",
+      "input": { "serviceId": "1001" },
+      "expected": { "outcome": "Pass", "messages": [] }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "messages"] }
+}

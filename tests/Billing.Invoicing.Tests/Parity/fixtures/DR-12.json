@@ -1,0 +1,65 @@
+{
+  "id": "DR-12",
+  "class": "domain",
+  "source": [
+    { "construct": "T068 QTY WHEN-VALIDATE-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:396" }
+  ],
+  "cases": [
+    {
+      "name": "show-qty-service-over-one-blocks",
+      "status": "derivable",
+      "input": { "service": { "serviceId": "1001", "showQty": 1 }, "qty": 2 },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "QTY", "text": "Due to Quality system not allow more than 1 at qty for this service", "severity": "Blocking" }] }
+    },
+    {
+      "name": "show-qty-service-fraction-over-one-blocks",
+      "status": "derivable",
+      "input": { "service": { "serviceId": "1001", "showQty": 1 }, "qty": 1.5 },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "QTY", "text": "Due to Quality system not allow more than 1 at qty for this service", "severity": "Blocking" }] }
+    },
+    {
+      "name": "show-qty-service-one-passes",
+      "status": "derivable",
+      "input": { "service": { "serviceId": "1001", "showQty": 1 }, "qty": 1 },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "show-qty-service-zero-blocks-second-check",
+      "status": "derivable",
+      "input": { "service": { "serviceId": "1001", "showQty": 1 }, "qty": 0 },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "QTY", "text": "Qty should be >=1", "severity": "Blocking" }] }
+    },
+    {
+      "name": "zero-qty-blocks",
+      "status": "derivable",
+      "input": { "service": { "serviceId": "1002", "showQty": 0 }, "qty": 0 },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "QTY", "text": "Qty should be >=1", "severity": "Blocking" }] }
+    },
+    {
+      "name": "negative-qty-blocks",
+      "status": "derivable",
+      "input": { "service": { "serviceId": "1002", "showQty": 0 }, "qty": -1 },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "QTY", "text": "Qty should be >=1", "severity": "Blocking" }] }
+    },
+    {
+      "name": "null-qty-blocks",
+      "status": "derivable",
+      "input": { "service": { "serviceId": "1002", "showQty": 0 }, "qty": null },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "QTY", "text": "Qty should be >=1", "severity": "Blocking" }] }
+    },
+    {
+      "name": "normal-qty-passes",
+      "status": "derivable",
+      "input": { "service": { "serviceId": "1002", "showQty": 0 }, "qty": 5 },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "fraction-qty-passes-domain-check",
+      "status": "derivable",
+      "input": { "service": { "serviceId": "1002", "showQty": 0 }, "qty": 1.5 },
+      "expected": { "outcome": "Pass", "messages": [] },
+      "decision": "D-04"
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "messages"] }
+}

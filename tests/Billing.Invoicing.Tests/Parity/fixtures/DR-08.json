@@ -1,0 +1,53 @@
+{
+  "id": "DR-08",
+  "class": "domain",
+  "source": [
+    { "construct": "PU30 REMAIN", "locator": "05_Complex/Inv_Small_Cash.xml:989" },
+    { "construct": "T043 AMOUNT_2 WHEN-VALIDATE-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:84" }
+  ],
+  "cases": [
+    {
+      "name": "both-methods-cash",
+      "status": "derivable",
+      "input": { "allocation": { "amount1": 60, "subPayType": 1, "amount2": 40, "subPayType2": 1, "cashPayed": 150 } },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "REUND": 50 } }
+    },
+    {
+      "name": "second-method-not-cash",
+      "status": "derivable",
+      "input": { "allocation": { "amount1": 60, "subPayType": 1, "amount2": 40, "subPayType2": 2, "cashPayed": 150 } },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "REUND": 90 } }
+    },
+    {
+      "name": "underpaid-negative-refund",
+      "status": "derivable",
+      "input": { "allocation": { "amount1": 100, "subPayType": 1, "amount2": null, "subPayType2": null, "cashPayed": 50 } },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "REUND": -50 } }
+    },
+    {
+      "name": "zero-first-amount-ignored",
+      "status": "derivable",
+      "input": { "allocation": { "amount1": 0, "subPayType": 1, "amount2": 30, "subPayType2": 1, "cashPayed": 50 } },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "REUND": 20 } }
+    },
+    {
+      "name": "no-cash-paid-zero",
+      "status": "derivable",
+      "input": { "allocation": { "amount1": 60, "subPayType": 1, "amount2": null, "subPayType2": null, "cashPayed": 0 } },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "REUND": 0 } }
+    },
+    {
+      "name": "cash-paid-null-zero",
+      "status": "derivable",
+      "input": { "allocation": { "amount1": 60, "subPayType": 1, "amount2": 40, "subPayType2": 1, "cashPayed": null } },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "REUND": 0 } }
+    },
+    {
+      "name": "no-cash-method-zero",
+      "status": "derivable",
+      "input": { "allocation": { "amount1": 60, "subPayType": 2, "amount2": 40, "subPayType2": 2, "cashPayed": 150 } },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "REUND": 0 } }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "messages"] }
+}
