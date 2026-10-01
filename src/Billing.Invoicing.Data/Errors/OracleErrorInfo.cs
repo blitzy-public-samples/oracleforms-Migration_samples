@@ -9,7 +9,7 @@ public sealed record OracleErrorInfo
     /// <summary>Full original error message, unmodified, including every ORA-06512 line.</summary>
     public required string Message { get; init; }
 
-    /// <summary>Text after the first "ORA-nnnnn: " prefix up to the end of its line, trailing whitespace trimmed; the whole message when no prefix exists.</summary>
+    /// <summary>Text after the first ORA code and its ": " up to the end of that line, trailing whitespace trimmed; a fixed unreadable-text message when that code is missing or not followed by ": ".</summary>
     public required string Text { get; init; }
 
     /// <summary>ORA-06512 frames naming a quoted object on one line, each name part at most 128 characters, innermost first; Schema is empty when the name has no schema part.</summary>

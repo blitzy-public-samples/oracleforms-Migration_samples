@@ -51,7 +51,7 @@ public sealed class InvoiceDefaultsRuleTests
         ParityFixture.AssertValues(expectedValues, Project(draft), fixture.Compare);
     }
 
-    /// <summary>Checks that the DR-20 fixture is a domain fixture traced to T015, the INVTYPEID item, T022 and T003 whose cases reach each default and preload branch, including a credit preload copying the card fields, a cash preload nulling them, and claim '1' and '2' preloads being ignored.</summary>
+    /// <summary>Checks that the DR-20 fixture is a traced domain fixture covering each default and preload branch.</summary>
     [Fact]
     [Trait("Rule", "DR-20")]
     public void Fixture_DR_20_is_a_domain_fixture_covering_each_default_branch()

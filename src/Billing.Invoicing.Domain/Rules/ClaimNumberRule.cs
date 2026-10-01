@@ -10,7 +10,7 @@ public static class ClaimNumberRule
     /// <param name="header">Draft header supplying the patient number, clinic id and draft date.</param>
     /// <param name="parameters">Entry parameters supplying CLAIM_FLAG and CLAIM_NO.</param>
     /// <returns>CLAIM_NO when CLAIM_FLAG is 'R', or when CLAIM_NO is set and is neither '1' nor '2'; otherwise
-    /// 'O-' + patient number + '-' + clinic id + '-' + the draft date as ddmmyy. An empty CLAIM_NO counts as null.</returns>
+    /// 'O-' + patient number + '-' + clinic id + '-' + the draft date as ddmmyy. An empty CLAIM_NO counts as null (D-110).</returns>
     public static string? Build(InvoiceHeaderDraft header, InvoiceEntryParameters parameters)
     {
         ArgumentNullException.ThrowIfNull(header);

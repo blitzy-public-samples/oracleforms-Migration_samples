@@ -220,7 +220,7 @@ export default function MoreDetailsScreen({
   const loadStatus: LoadStatus =
     details !== null ? 'loaded' : isSaved && failedInvNoShown === invNo ? 'failed' : 'pending';
 
-  /** Requests the persisted MORE fields of `forInvNo`; a success clears the form error its failed attempt left, and a deliberate one the banner unless an outage was reported after it started. */
+  /** Loads persisted MORE fields and clears recovered errors; explicit entry may clear a prior outage. */
   function load(forInvNo: number, deliberate: boolean) {
     const outagesAtStart = outageCount();
     requestedInvNo.current = forInvNo;
@@ -422,7 +422,7 @@ export default function MoreDetailsScreen({
     );
   }
 
-  // A draft shows the coverage snapshot once the patient has been validated, else the card fields its claim preload carried.
+  // A draft shows its header's claim-preload fields while no coverage is stored, else only coverage read for its current patient.
   const insurance = isSaved || state.coverage !== null ? header : (state.draft?.header ?? null);
 
   return (

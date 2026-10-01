@@ -33,7 +33,7 @@ const DISC_T_VALUE = 0;
 
 const DISCOUNT_LIMIT_TITLE = 'Maximum Discount';
 
-// Method-row size classes: a narrow three-character code, then name and amount sharing the rest and wrapping when narrow.
+// Method-row size classes: a narrow three-character code, then name and amount sharing the rest and wrapping when narrow (D-124).
 const METHOD_CODE_CLASS = 'method-code';
 const METHOD_FILL_CLASS = 'method-fill';
 
@@ -62,7 +62,7 @@ function classes(...names: (string | false)[]): string | undefined {
   return list.length > 0 ? list.join(' ') : undefined;
 }
 
-// Messages from every header-level source addressed to `target`, with their origin, and the field's rejected entry or Oracle error.
+// Messages from every header-level source addressed to `target`, with their origin, and the field's rejected entry or Oracle error (D-123).
 function feedbackFor(state: InvoiceDraftState, target: string): FieldFeedback {
   const messages: MessageDto[] = [];
   const sources: FieldFeedback['sources'] = [];

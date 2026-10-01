@@ -224,6 +224,7 @@ body {
 }
 
 /* Invoice layout */
+/* Columns with a minimum of --column-min-size capped at 100% of the width, stacking when narrow (D-124). */
 .header-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--column-min-size)), 1fr));
@@ -429,6 +430,7 @@ body {
   justify-content: space-between;
 }
 
+/* Panels with a minimum of 18rem capped at 100% of the width, wrapping when narrow (D-124). */
 .lower-band {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
@@ -482,6 +484,7 @@ body {
 }
 
 /* More details layout */
+/* Columns with a minimum of --column-min-size capped at 100% of the width, stacking when narrow (D-124). */
 .more-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--column-min-size)), 1fr));

@@ -25,7 +25,7 @@ type HeaderLov = Extract<LovName, 'COMPANY1_2' | 'SUB_COMPANY' | 'THE_CLASS' | '
 
 type LovRow = Record<string, unknown>;
 
-/** A queued validation target; `seq` increases with every queued target and each is fired once. */
+/** A queued validation target; `seq` increases with every queued target and each is fired once (D-121). */
 type PendingValidation = { seq: number; target: HeaderTarget };
 
 type MessageRef = { source: string; index: number };
@@ -173,7 +173,7 @@ function classNames(entries: Record<string, boolean>): string | undefined {
   return names.length === 0 ? undefined : names.join(' ');
 }
 
-/** Messages whose field is the target, from every header-level source, each distinct text once, plus its Oracle field error. */
+/** Field messages from header sources, deduplicated by severity and text, with the mapped Oracle error. */
 function targetMessages(state: InvoiceDraftState, target: HeaderTarget): TargetMessages {
   const messages: MessageDto[] = [];
   const refs: MessageRef[][] = [];
@@ -209,7 +209,7 @@ function targetMessages(state: InvoiceDraftState, target: HeaderTarget): TargetM
   };
 }
 
-/** Dismiss references ordered so that each index stays valid while earlier ones are removed. */
+/** Orders dismissals by source and descending index within each source. */
 function dismissOrder(refs: readonly MessageRef[]): MessageRef[] {
   return [...refs].sort((a, b) => (a.source === b.source ? b.index - a.index : a.source < b.source ? -1 : 1));
 }
@@ -407,7 +407,7 @@ export default function InvoiceHeaderForm({
 
   const inputClass = (invalid = false): string | undefined => classNames({ 'read-only': locked, invalid });
   const fixedClass = (invalid = false): string | undefined => classNames({ 'read-only': true, invalid });
-  // Not-saved items are disabled on a draft and read-only on a saved invoice.
+  // OI-33 fields stay disabled until a saved view is loaded; loaded values remain read-only.
   const notSavedDisabled = savedView === null;
 
   const renderPickerButton = (name: HeaderLov, label: string) => (

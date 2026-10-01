@@ -69,7 +69,8 @@
       },
       "expected": {
         "error": { "package": "BIL_INVOICE_ENGINE", "number": -20970, "messagePrefix": "The offer changed after the invoice was calculated. " }
-      }
+      },
+      "decision": "D-128"
     },
     {
       "name": "line-without-offer-metadata-passes",

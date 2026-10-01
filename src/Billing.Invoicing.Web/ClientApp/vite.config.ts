@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
+/** Builds the React client into the Web host and proxies development API calls. */
 export default defineConfig({
   plugins: [react()],
   build: { outDir: '../wwwroot', emptyOutDir: true },

@@ -566,7 +566,7 @@ public static class OutputArrayReader
         return (long)whole;
     }
 
-    /// <summary>Converts to a whole number; a fractional value throws <see cref="InvalidCastException"/> instead of being truncated.</summary>
+    /// <summary>Converts to a whole number; a fractional value throws <see cref="InvalidCastException"/> instead of being truncated (D-115).</summary>
     private static decimal? ToWholeNumber(object? value, string name)
     {
         decimal? number = ToDecimal(value, name);
@@ -662,14 +662,19 @@ public static class OutputArrayReader
         /// <summary>Number of rows to read.</summary>
         public int RowCount { get; }
 
+        /// <summary>Reads element <paramref name="row"/> of OUT array <paramref name="name"/> as a nullable decimal.</summary>
         public decimal? Decimal(string name, int row) => ToDecimal(Element(name, row), name);
 
+        /// <summary>Reads element <paramref name="row"/> of OUT array <paramref name="name"/> as a nullable int.</summary>
         public int? Int32(string name, int row) => ToInt32(Element(name, row), name);
 
+        /// <summary>Reads element <paramref name="row"/> of OUT array <paramref name="name"/> as a nullable long.</summary>
         public long? Int64(string name, int row) => ToInt64(Element(name, row), name);
 
+        /// <summary>Reads element <paramref name="row"/> of OUT array <paramref name="name"/> as nullable text.</summary>
         public string? Text(string name, int row) => ToText(Element(name, row), name);
 
+        /// <summary>Reads element <paramref name="row"/> of OUT array <paramref name="name"/> as a nullable date.</summary>
         public DateTime? Date(string name, int row) => ToDate(Element(name, row), name);
 
         private object? Element(string name, int row)

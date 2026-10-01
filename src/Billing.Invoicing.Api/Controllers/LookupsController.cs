@@ -56,7 +56,7 @@ public sealed class LookupsController : ControllerBase
     /// <param name="patientNo">Draft patient number, bound as <c>PATIENTNO</c>.</param>
     /// <param name="payType">Draft pay type, bound as <c>PAYTYPE</c>.</param>
     /// <param name="draftDate">Draft date, bound as <c>INVDATE</c>.</param>
-    /// <returns>200 with the rows, each <c>OFFERS</c> row's <c>OFERID</c> as decimal text; 404 <c>not-found</c> for an unknown LOV; or 422 naming a missing or overlong item or a missing operator header.</returns>
+    /// <returns>200 with the rows, each <c>OFFERS</c> row's <c>OFERID</c> as decimal text; 404 <c>not-found</c> for an unknown LOV; or 422 naming a missing, overlong or refused item or a missing operator header.</returns>
     [HttpGet("lov/{name}")]
     [ProducesResponseType<LovResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound, ProblemJson)]
@@ -70,7 +70,7 @@ public sealed class LookupsController : ControllerBase
         [FromQuery] string? subCompCode,
         [FromQuery] string? docIdx,
         [FromQuery] string? patientNo,
-        [FromQuery] int? payType,
+        [FromQuery] string? payType,
         [FromQuery] DateTime? draftDate)
     {
         if (CurrentOperator() is not { } operatorContext)
@@ -84,7 +84,7 @@ public sealed class LookupsController : ControllerBase
             [SubCompCodeItem] = subCompCode,
             [DocIdxItem] = docIdx,
             [PatientNoItem] = patientNo,
-            [PayTypeItem] = payType?.ToString(CultureInfo.InvariantCulture),
+            [PayTypeItem] = payType,
         };
 
         LovResponse? response = await _workflow.GetLov(name, binds, draftDate, operatorContext, HttpContext.RequestAborted);

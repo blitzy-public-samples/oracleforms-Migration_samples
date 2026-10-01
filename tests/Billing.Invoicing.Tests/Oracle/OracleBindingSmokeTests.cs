@@ -10,7 +10,7 @@ using Xunit.Sdk;
 
 namespace Billing.Invoicing.Tests.Oracle;
 
-/// <summary>One bind round-trip per <see cref="PlsqlBlocks"/> anonymous block through the Data gateways, each in a session that is always rolled back; the create round-trip first requires the synthetic patient to have no PATIENT.PHONE_H. UNVERIFIED against Oracle.</summary>
+/// <summary>One bind round-trip per <see cref="PlsqlBlocks"/> anonymous block through the Data gateways, in rollback-only sessions. UNVERIFIED against Oracle.</summary>
 [Trait("Category", "OracleIntegration")]
 [Trait("Verification", "UNVERIFIED")]
 public sealed class OracleBindingSmokeTests
@@ -181,12 +181,14 @@ public sealed class OracleBindingSmokeTests
             var gateway = new BilInvoiceApiGateway(options);
             AssertEmptyLinePlaceholder();
 
+            await OracleFactAttribute.AssertCreateTargetCleared(session, options, "CreateFullInvoice (no lines)");
             await Raises(
                 "CreateFullInvoice (no lines)",
                 () => gateway.CreateFullInvoice(session, Header(), Array.Empty<InvoiceLineDraft>(), operatorContext, NewHexId()),
                 NoServiceLine,
                 EntryPackages);
 
+            await OracleFactAttribute.AssertCreateTargetCleared(session, options, "CreateFullInvoice (one line)");
             await Returns(
                 "CreateFullInvoice (one line)",
                 () => gateway.CreateFullInvoice(session, Header(), [Line()], operatorContext, NewHexId()),
@@ -194,7 +196,7 @@ public sealed class OracleBindingSmokeTests
         });
     }
 
-    /// <summary>Opens a session on the Oracle test connection with a synthetic operator, runs the gateway calls in it, and always rolls it back; a rollback failure after a failed call is reported together with that failure.</summary>
+    /// <summary>Opens a session on the Oracle test connection with a synthetic operator, runs the gateway calls in it, and always rolls it back; a rollback failure after a failed call is reported together with that failure, and every failure other than an assertion is reported by <see cref="FailureCategory"/> only.</summary>
     /// <param name="calls">Gateway calls given the data-layer settings, the operator and the open session.</param>
     private static async Task RoundTrip(Func<InvoicingDataOptions, OperatorContext, IOracleSession, Task> calls)
     {
@@ -208,27 +210,57 @@ public sealed class OracleBindingSmokeTests
             SessionId = NewHexId(),
         };
 
-        await using var session = await new OracleSessionFactory(options).Open();
+        IOracleSession session;
         try
         {
-            await calls(options, operatorContext, session);
+            session = await new OracleSessionFactory(options).Open();
         }
-        catch (Exception callFailure)
+        catch (Exception openFailure)
         {
-            try
+            throw FailException.ForFailure($"Opening the Oracle test session failed with {FailureCategory(openFailure)}.");
+        }
+
+        try
+        {
+            await using (session)
             {
+                try
+                {
+                    await calls(options, operatorContext, session);
+                }
+                catch (Exception callFailure)
+                {
+                    try
+                    {
+                        await session.Rollback();
+                    }
+                    catch (Exception rollbackFailure)
+                    {
+                        var callOutcome = callFailure is XunitException assertion ? assertion.Message : FailureCategory(callFailure);
+                        throw FailException.ForFailure($"{callOutcome}; the rollback that followed failed with {FailureCategory(rollbackFailure)}.");
+                    }
+
+                    throw;
+                }
+
                 await session.Rollback();
             }
-            catch (Exception rollbackFailure)
-            {
-                throw new AggregateException(callFailure, rollbackFailure);
-            }
-
-            throw;
         }
-
-        await session.Rollback();
+        catch (Exception failure) when (failure is not XunitException)
+        {
+            throw FailException.ForFailure($"The bind round-trip failed with {FailureCategory(failure)}.");
+        }
     }
+
+    /// <summary>Names a failure by its exception type, the ORA number of an Oracle error and the categories of its inner exceptions, never its message or stack.</summary>
+    private static string FailureCategory(Exception failure) => failure switch
+    {
+        OracleException oracle => "OracleException ORA-" + oracle.Number.ToString("D5", CultureInfo.InvariantCulture),
+        AggregateException aggregate =>
+            $"{aggregate.GetType().Name} [{string.Join(", ", aggregate.InnerExceptions.Select(FailureCategory))}]",
+        { InnerException: { } inner } => $"{failure.GetType().Name} (inner {FailureCategory(inner)})",
+        _ => failure.GetType().Name,
+    };
 
     /// <summary>Fails as a precondition unless PATIENT holds the synthetic patient and none of its rows has a PHONE_H value; reads only the two counts, inside the session's transaction.</summary>
     /// <param name="session">Open session whose connection and transaction the read runs in.</param>
@@ -283,14 +315,14 @@ public sealed class OracleBindingSmokeTests
             var error = OracleErrorParser.FromException(exception);
             throw FailException.ForFailure(string.Create(
                 CultureInfo.InvariantCulture,
-                $"{call}: Oracle error {error.Number} raised in {Origin(error)}; a bind round-trip needs a successful return with its OUT values. {error.Text}"));
+                $"{call}: Oracle error {error.Number} raised in {Origin(error)}; a bind round-trip needs a successful return with its OUT values."));
         }
 
         verifyReturn(value);
         _output.WriteLine($"{call}: returned.");
     }
 
-    /// <summary>Runs one gateway call that must raise the expected application error inside the target packages, and writes the accepted error to the test output.</summary>
+    /// <summary>Runs one gateway call that must raise the expected application error inside the target packages, and writes the accepted error's number and package to the test output.</summary>
     /// <param name="call">Name of the call used in output and assertion text.</param>
     /// <param name="invoke">The gateway call.</param>
     /// <param name="expected">Package, number and message prefix the call must raise.</param>
@@ -307,7 +339,7 @@ public sealed class OracleBindingSmokeTests
             AssertAttributed(call, error, expected, targetPackages);
             _output.WriteLine(string.Create(
                 CultureInfo.InvariantCulture,
-                $"{call}: application error {error.Number} raised in {Origin(error)}: {error.Text}"));
+                $"{call}: application error {error.Number} raised in {Origin(error)}."));
             return;
         }
 
@@ -316,7 +348,7 @@ public sealed class OracleBindingSmokeTests
             $"{call}: expected {expected.Package} {expected.Number} '{expected.MessagePrefix}', but the call returned."));
     }
 
-    /// <summary>Fails unless the error is the expected number and message prefix, raised after the connection opened, with at least one ORA-06512 frame, every frame in the target packages, and no trigger in its stack.</summary>
+    /// <summary>Fails unless the error's number, text and package frames show it was raised by the expected package.</summary>
     /// <param name="call">Name of the call used in assertion text.</param>
     /// <param name="error">The parsed error the call raised.</param>
     /// <param name="expected">Package, number and message prefix the call must raise.</param>
@@ -327,45 +359,43 @@ public sealed class OracleBindingSmokeTests
             error.DuringOpen,
             string.Create(
                 CultureInfo.InvariantCulture,
-                $"{call}: Oracle error {error.Number} was raised while opening the connection, not by {expected.Package}. {error.Message}"));
+                $"{call}: Oracle error {error.Number} was raised while opening the connection, not by {expected.Package}."));
 
         Assert.True(
             error.Number == expected.Number,
             string.Create(
                 CultureInfo.InvariantCulture,
-                $"{call}: expected {expected.Package} {expected.Number}, got Oracle error {error.Number} raised in {Origin(error)}. {error.Message}"));
+                $"{call}: expected {expected.Package} {expected.Number}, got Oracle error {error.Number} raised in {Origin(error)}."));
 
         Assert.True(
             error.Text.StartsWith(expected.MessagePrefix, StringComparison.Ordinal),
             string.Create(
                 CultureInfo.InvariantCulture,
-                $"{call}: expected {expected.Package} {expected.Number} '{expected.MessagePrefix}', got Oracle error {error.Number} raised in {Origin(error)}. {error.Message}"));
+                $"{call}: expected {expected.Package} {expected.Number} '{expected.MessagePrefix}', got Oracle error {error.Number} raised in {Origin(error)} with other text (text withheld)."));
 
         Assert.True(
             error.Frames.Count > 0,
             string.Create(
                 CultureInfo.InvariantCulture,
-                $"{call}: Oracle error {error.Number} names no package frame, so it was not shown to be raised inside {string.Join(" or ", targetPackages)}. {error.Message}"));
+                $"{call}: Oracle error {error.Number} names no package frame, so it was not shown to be raised inside {string.Join(" or ", targetPackages)}."));
 
         var foreignPackages = error.Frames
             .Where(frame => !targetPackages.Contains(frame.Package, StringComparer.OrdinalIgnoreCase))
-            .Select(frame => frame.Schema.Length == 0 ? frame.Package : $"{frame.Schema}.{frame.Package}")
+            .Select(frame => frame.Package)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         Assert.True(
             foreignPackages.Count == 0,
             string.Create(
                 CultureInfo.InvariantCulture,
-                $"{call}: Oracle error {error.Number} raised in {Origin(error)} passed through {string.Join(", ", foreignPackages)}, outside {string.Join(" and ", targetPackages)}. {error.Message}"));
+                $"{call}: Oracle error {error.Number} raised in {Origin(error)} passed through {string.Join(", ", foreignPackages)}, outside {string.Join(" and ", targetPackages)}."));
 
-        var triggers = OracleErrorParser.ParseTriggers(error.Message)
-            .Select(trigger => trigger.Schema.Length == 0 ? trigger.Name : $"{trigger.Schema}.{trigger.Name}")
-            .ToList();
+        var triggerCount = OracleErrorParser.ParseTriggers(error.Message).Count;
         Assert.True(
-            triggers.Count == 0,
+            triggerCount == 0,
             string.Create(
                 CultureInfo.InvariantCulture,
-                $"{call}: Oracle error {error.Number} raised in {Origin(error)} was raised during trigger {string.Join(", ", triggers)}. {error.Message}"));
+                $"{call}: Oracle error {error.Number} raised in {Origin(error)} was raised during {triggerCount} trigger execution(s) (trigger names withheld)."));
     }
 
     /// <summary>Asserts that zero draft lines bind as one-element PL/SQL associative arrays with a scalar line count of 0.</summary>
@@ -471,18 +501,9 @@ public sealed class OracleBindingSmokeTests
         }
     }
 
-    /// <summary>Innermost package frame of the error as SCHEMA.PACKAGE:LINE, or "the anonymous block" when no frame names a package.</summary>
-    private static string Origin(OracleErrorInfo error)
-    {
-        if (error.Frames.Count == 0)
-        {
-            return "the anonymous block";
-        }
-
-        var (schema, package, line) = error.Frames[0];
-        var name = schema.Length == 0 ? package : $"{schema}.{package}";
-        return string.Create(CultureInfo.InvariantCulture, $"{name}:{line}");
-    }
+    /// <summary>Package named by the innermost frame of the error, without schema or line, or "the anonymous block" when no frame names a package.</summary>
+    private static string Origin(OracleErrorInfo error) =>
+        error.Frames.Count == 0 ? "the anonymous block" : error.Frames[0].Package;
 
     /// <summary>Synthetic cash header for patient 990000001 dated today, with no doctor or clinic.</summary>
     private static InvoiceHeaderDraft Header() => new()

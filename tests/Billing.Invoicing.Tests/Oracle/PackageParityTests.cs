@@ -303,7 +303,7 @@ public sealed class PackageParityTests
             var label = new CaseLabel(id, fixtureCase.Name);
             var outcome = await RunInRolledBackSessionAsync(
                 () => new OracleSessionFactory(options).Open(),
-                session => RunCaseAsync(label, doc.Compare, fixtureCase, defaultOperation, session, apiGateway, importGateway),
+                session => RunCaseAsync(label, doc.Compare, fixtureCase, defaultOperation, session, options, apiGateway, importGateway),
                 session => ReleaseRolledBackSessionAsync(session, TimeSpan.FromSeconds(options.CommandTimeoutSeconds)));
 
             if (RecordOutcome(label, outcome, preconditionFailures, parityFailures, unexpectedErrors, rollbackFailures))
@@ -318,7 +318,7 @@ public sealed class PackageParityTests
         }
     }
 
-    /// <summary>Logs one case outcome and adds its case failure and its rollback failure each to its own section.</summary>
+    /// <summary>Logs one case outcome and adds its case failure and its rollback failure each to its own section, an unexpected or rollback failure by <see cref="FailureCategory"/> only.</summary>
     /// <returns>True when the case failed or its rollback was not confirmed.</returns>
     private bool RecordOutcome(
         CaseLabel label,
@@ -344,19 +344,31 @@ public sealed class PackageParityTests
                 output.WriteLine($"{label}: parity failure: {failure.Message}");
                 break;
             case { CaseFailure: { } failure }:
-                unexpectedErrors.Add($"{label}: {failure}");
-                output.WriteLine($"{label}: unexpected {failure.GetType().Name}: {failure.Message}");
+                var category = FailureCategory(failure);
+                unexpectedErrors.Add($"{label}: {category}");
+                output.WriteLine($"{label}: unexpected {category}.");
                 break;
         }
 
         if (outcome.RollbackFailure is { } rollbackFailure)
         {
-            rollbackFailures.Add($"{label}: {rollbackFailure}");
-            output.WriteLine($"{label}: rollback failure {rollbackFailure.GetType().Name}: {rollbackFailure.Message}");
+            var category = FailureCategory(rollbackFailure);
+            rollbackFailures.Add($"{label}: {category}");
+            output.WriteLine($"{label}: rollback failure {category}.");
         }
 
         return outcome.CaseFailure is not null || outcome.RollbackFailure is not null;
     }
+
+    /// <summary>Names a failure by its exception type, the ORA number of an Oracle error and the categories of its inner exceptions, never its message or stack.</summary>
+    private static string FailureCategory(Exception failure) => failure switch
+    {
+        OracleException oracle => "OracleException ORA-" + oracle.Number.ToString("D5", CultureInfo.InvariantCulture),
+        AggregateException aggregate =>
+            $"{aggregate.GetType().Name} [{string.Join(", ", aggregate.InnerExceptions.Select(FailureCategory))}]",
+        { InnerException: { } inner } => $"{failure.GetType().Name} (inner {FailureCategory(inner)})",
+        _ => failure.GetType().Name,
+    };
 
     /// <summary>Opens a session, runs one case in it, then always awaits an explicit rollback, the release of a rolled-back session and the disposal of the session.</summary>
     /// <param name="open">Opens the case's session.</param>
@@ -464,6 +476,7 @@ public sealed class PackageParityTests
         FixtureCase fixtureCase,
         Operation defaultOperation,
         IOracleSession session,
+        InvoicingDataOptions options,
         BilInvoiceApiGateway apiGateway,
         BilImportGateway importGateway)
     {
@@ -499,7 +512,7 @@ public sealed class PackageParityTests
         OracleErrorInfo? error = null;
         try
         {
-            actual = await ExecuteAsync(label, plan, session, apiGateway, importGateway);
+            actual = await ExecuteAsync(label, plan, session, options, apiGateway, importGateway);
         }
         catch (OracleException ex) when (expected.Error is not null)
         {
@@ -555,11 +568,12 @@ public sealed class PackageParityTests
         CaseLabel label,
         CasePlan plan,
         IOracleSession session,
+        InvoicingDataOptions options,
         BilInvoiceApiGateway apiGateway,
         BilImportGateway importGateway) => plan.Operation switch
         {
             Operation.Preview => await PreviewAsync(label, plan, session, apiGateway),
-            Operation.Create => await CreateAsync(label, plan, session, apiGateway),
+            Operation.Create => await CreateAsync(label, plan, session, options, apiGateway),
             Operation.BundledOffer => await BundledOfferAsync(label, plan, session, apiGateway),
             Operation.PackageLines => await PackageLinesAsync(label, plan, session, apiGateway),
             Operation.RequestImport => await RequestImportAsync(label, plan, session, importGateway),
@@ -582,8 +596,11 @@ public sealed class PackageParityTests
         CaseLabel label,
         CasePlan plan,
         IOracleSession session,
+        InvoicingDataOptions options,
         BilInvoiceApiGateway apiGateway)
     {
+        await OracleFactAttribute.AssertCreateTargetCleared(session, options, label.ToString());
+
         // Every create case, a replay included, calls CreateFullInvoice once; a replay case's requires.rows declare the completed request row it returns.
         var result = await apiGateway.CreateFullInvoice(
             session, Required(label, plan.Header, HeaderKey), plan.Lines, plan.Operator, plan.RequestId);
@@ -649,7 +666,7 @@ public sealed class PackageParityTests
         return values;
     }
 
-    /// <summary>Previews a create-path draft in the same session so that its context can be compared; an Oracle error leaves the preview-derived context unobserved.</summary>
+    /// <summary>Previews the create-path draft in the same session; when the preview raises an Oracle error, logs its number and returns null.</summary>
     /// <returns>The projected preview, or null when the preview raised an Oracle error.</returns>
     private async Task<Dictionary<string, object?>?> ObservePreviewAsync(
         CaseLabel label,
@@ -667,7 +684,7 @@ public sealed class PackageParityTests
         {
             var info = OracleErrorParser.FromException(ex);
             output.WriteLine(
-                $"{label}: context preview raised {info.Number} '{info.Text}'; preview-derived context is not observable (UNVERIFIED).");
+                $"{label}: context preview raised {info.Number}; preview-derived context is not observable (UNVERIFIED).");
             return null;
         }
     }
@@ -693,7 +710,12 @@ public sealed class PackageParityTests
     }
 
     /// <summary>Formats the failures of one fixture, preconditions, parity failures, unexpected errors and rollback failures each in its own section.</summary>
+    /// <param name="id">Package rule id, such as PR-01.</param>
     /// <param name="failedCases">Number of distinct cases that failed; one case may appear in two sections.</param>
+    /// <param name="preconditionFailures">Precondition failure entries.</param>
+    /// <param name="parityFailures">Parity failure entries.</param>
+    /// <param name="unexpectedErrors">Unexpected error entries.</param>
+    /// <param name="rollbackFailures">Rollback failure entries.</param>
     private static string FailureReport(
         string id,
         int failedCases,

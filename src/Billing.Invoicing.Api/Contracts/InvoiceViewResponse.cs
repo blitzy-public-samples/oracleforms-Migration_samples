@@ -11,7 +11,7 @@ public sealed record InvoiceViewResponse
     /// <summary>Saved invoice lines.</summary>
     public IReadOnlyList<InvoiceLineDraft> Lines { get; init; } = [];
 
-    /// <summary>Display-only lookup names and persisted totals keyed by upper-case column or item name, with the saved-line totals TOTAL_GROSS, TOTAL_DISCOUNT and TOTAL_NET, CASH_COLLECTED as the amount due and TOTAL_COLLECTED as amount 1 plus amount 2.</summary>
+    /// <summary>Lookup names and saved values by upper-case key, with line totals summed at read time; CASH_COLLECTED is the amount due, TOTAL_COLLECTED amount 1 plus amount 2.</summary>
     public IReadOnlyDictionary<string, object?> Display { get; init; } = new Dictionary<string, object?>();
 
     /// <summary>Whether the invoice is read-only.</summary>

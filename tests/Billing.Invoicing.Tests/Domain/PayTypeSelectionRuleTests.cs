@@ -56,7 +56,7 @@ public sealed class PayTypeSelectionRuleTests
             fixture.Compare);
     }
 
-    /// <summary>Checks that the DR-24 fixture is a domain fixture traced to T015, T023, T026 and the PAYTYPE item whose cases expect both cash and credit, and null only for an inherited null claim-preload pay type.</summary>
+    /// <summary>Checks that the DR-24 fixture is a traced domain fixture covering each pay-type outcome.</summary>
     [Fact]
     [Trait("Rule", RuleId)]
     public void Fixture_DR_24_expects_cash_and_credit()

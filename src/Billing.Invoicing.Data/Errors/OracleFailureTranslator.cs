@@ -75,7 +75,6 @@ public sealed partial class OracleFailureTranslator
             return TranslateApplicationError(error);
         }
 
-        // Listed connectivity and availability codes are 503.
         if (ConnectivityNumbers.Contains(error.Number))
         {
             return Unavailable(error.Number);
@@ -107,7 +106,6 @@ public sealed partial class OracleFailureTranslator
             return failure.Status == InternalServerErrorStatus && transport ? Unavailable(failure.Number) : failure;
         }
 
-        // A blank or malformed connection string is a 500 without a number or package.
         if (HasConfigurationFault(exception))
         {
             return new DataFailure
@@ -124,7 +122,6 @@ public sealed partial class OracleFailureTranslator
             return blocked;
         }
 
-        // A socket failure or timeout without an Oracle error is 503 with no number.
         if (transport)
         {
             return Unavailable(null);
@@ -160,7 +157,6 @@ public sealed partial class OracleFailureTranslator
         string package = row?.Package ?? InnermostFramePackage(error) ?? UnknownPackage;
         string? kind = row?.Kind;
 
-        // Missing application id, session or user in a BIL_IMPORT call.
         if (string.Equals(kind, OracleErrorCatalog.OperatorContextMissingKind, StringComparison.Ordinal))
         {
             return new DataFailure

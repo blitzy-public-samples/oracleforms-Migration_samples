@@ -24,6 +24,8 @@ public sealed class OracleErrorParserTests
 
     private const string FrameMatchTimeoutFieldName = "FrameMatchTimeoutMilliseconds";
 
+    private const string UnreadableText = "The Oracle error text could not be read.";
+
     private static readonly (string Schema, string Package, int Line) EngineFrame = ("HIS", "BIL_INVOICE_ENGINE", 619);
     private static readonly (string Schema, string Package, int Line) ApiFrame = ("HIS", "BIL_INVOICE_API", 1476);
 
@@ -66,6 +68,44 @@ public sealed class OracleErrorParserTests
         Assert.Throws<ArgumentException>(() => OracleErrorParser.FromParts(20930, RequestUnavailableMessage));
     }
 
+    [Fact]
+    public void FromParts_IntMinValueNumber_ThrowsArgumentOutOfRange()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => OracleErrorParser.FromParts(int.MinValue, "raw driver message"));
+    }
+
+    [Fact]
+    public void FromParts_FrameLineAboveIntRange_IsSkippedAndLaterFrameReturned()
+    {
+        const string message = "ORA-20931: x\nORA-06512: at \"HIS.BIL_INVOICE_API\", line 2147483648\n" + EngineFrameLine;
+
+        OracleErrorInfo info = OracleErrorParser.FromParts(20931, message);
+
+        Assert.Equal(EngineFrame, Assert.Single(info.Frames));
+    }
+
+    [Fact]
+    public void FromParts_NonAsciiCodeDigits_AreNotReadAsTheOraCode()
+    {
+        const string message = "ORA-\u0662\u0660\u0669\u0663\u0661: x";
+
+        OracleErrorInfo info = OracleErrorParser.FromParts(20931, message);
+
+        Assert.Equal(-20931, info.Number);
+        Assert.Equal(UnreadableText, info.Text);
+    }
+
+    [Fact]
+    public void FromParts_NonAsciiFrameLineDigits_YieldNoFrame()
+    {
+        const string message = "ORA-20931: x\nORA-06512: at \"HIS.BIL_INVOICE_ENGINE\", line \u0666\u0661\u0669";
+
+        OracleErrorInfo info = OracleErrorParser.FromParts(20931, message);
+
+        Assert.Equal("x", info.Text);
+        Assert.Empty(info.Frames);
+    }
+
     [Theory]
     [InlineData(12541, "ORA-12541: TNS:no listener", "TNS:no listener")]
     [InlineData(1017, "ORA-01017: invalid username/password; logon denied", "invalid username/password; logon denied")]
@@ -91,16 +131,64 @@ public sealed class OracleErrorParserTests
     }
 
     [Fact]
-    public void FromParts_MessageWithoutOraPrefix_KeepsWholeMessageAsText()
+    public void FromParts_MessageWithoutOraPrefix_UsesTheUnreadableText()
     {
         const string message = "raw driver message";
 
         OracleErrorInfo info = OracleErrorParser.FromParts(20931, message);
 
         Assert.Equal(-20931, info.Number);
-        Assert.Equal(message, info.Text);
+        Assert.Equal(UnreadableText, info.Text);
         Assert.Equal(message, info.Message);
         Assert.Empty(info.Frames);
+    }
+
+    [Fact]
+    public void FromParts_PrefixlessMultilineMessage_UsesTheUnreadableText()
+    {
+        const string message = "User-Defined Exception\nat \"HIS.BIL_INVOICE_ENGINE\", line 619\nat \"HIS.BIL_INVOICE_API\", line 1476";
+
+        OracleErrorInfo info = OracleErrorParser.FromParts(20931, message);
+
+        Assert.Equal(-20931, info.Number);
+        Assert.Equal(UnreadableText, info.Text);
+        Assert.Equal(message, info.Message);
+        Assert.Empty(info.Frames);
+        Assert.DoesNotContain("HIS.", info.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("\n", info.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FromParts_PrefixlessMessageWithFrames_Throws()
+    {
+        const string message = "User-Defined Exception\n" + EngineFrameLine;
+
+        Assert.Throws<ArgumentException>(() => OracleErrorParser.FromParts(20931, message));
+    }
+
+    [Theory]
+    [InlineData("ORA-20931 x\n" + EngineFrameLine)]
+    [InlineData("ORA-20931:x\n" + EngineFrameLine)]
+    [InlineData("ORA-20931\r\n" + EngineFrameLine)]
+    public void FromParts_OwnCodeWithoutColonAndSpace_UsesTheUnreadableTextNotTheFrameText(string message)
+    {
+        OracleErrorInfo info = OracleErrorParser.FromParts(20931, message);
+
+        Assert.Equal(-20931, info.Number);
+        Assert.Equal(UnreadableText, info.Text);
+        Assert.Equal(message, info.Message);
+        Assert.Equal(EngineFrame, Assert.Single(info.Frames));
+        Assert.DoesNotContain("HIS.", info.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FromParts_OwnPrefixAfterLeadingText_ReadsTheOwnPrefixLine()
+    {
+        const string message = "User-Defined Exception ORA-20931: " + RequestUnavailableText + "\n" + EngineFrameLine;
+
+        OracleErrorInfo info = OracleErrorParser.FromParts(20931, message);
+
+        Assert.Equal(RequestUnavailableText, info.Text);
     }
 
     [Fact]

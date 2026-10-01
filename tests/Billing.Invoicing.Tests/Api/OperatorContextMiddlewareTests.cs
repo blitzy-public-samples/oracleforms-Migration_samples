@@ -8,7 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Billing.Invoicing.Tests.Api;
 
-/// <summary><c>X-His-Info-Center-Id</c> checks of <see cref="OperatorContextMiddleware"/> on an <c>/api</c> request.</summary>
+/// <summary><c>X-His-User-No</c> and <c>X-His-Info-Center-Id</c> checks of <see cref="OperatorContextMiddleware"/> on an <c>/api</c> request.</summary>
 [Trait("Category", "Orchestration")]
 public sealed class OperatorContextMiddlewareTests
 {
@@ -20,6 +20,66 @@ public sealed class OperatorContextMiddlewareTests
 
     private const string ProblemJsonContentType = "application/problem+json";
     private const string OperatorContextMissingType = "operator-context-missing";
+
+    [Theory]
+    [InlineData("1", 1)]
+    [InlineData("42", 42)]
+    [InlineData("2147483647", int.MaxValue)]
+    [InlineData("  7  ", 7)]
+    public async Task UserNo_CanonicalPositiveInteger_IsStoredAndContinues(string header, int expected)
+    {
+        Dictionary<string, string> headers = ValidHeaders();
+        headers[UserNoHeader] = header;
+
+        (DefaultHttpContext context, int nextCalls) = await InvokeAsync(headers);
+
+        Assert.Equal(1, nextCalls);
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal(0, context.Response.Body.Length);
+        OperatorContext operatorContext = Assert.IsType<OperatorContext>(context.Items[OperatorContextMiddleware.ItemKey]);
+        Assert.Equal(expected, operatorContext.UserNo);
+    }
+
+    [Theory]
+    [InlineData("-1")]
+    [InlineData("+1")]
+    [InlineData("0")]
+    [InlineData("00")]
+    [InlineData("01")]
+    [InlineData("007")]
+    [InlineData("1.0")]
+    [InlineData("1,000")]
+    [InlineData("1e3")]
+    [InlineData("0x1F")]
+    [InlineData("1 2")]
+    [InlineData("2147483648")]
+    [InlineData("99999999999")]
+    [InlineData("\u0661")]
+    [InlineData("\uFF11")]
+    public async Task UserNo_NotCanonicalPositiveInteger_Answers422NamingTheHeader(string header)
+    {
+        Dictionary<string, string> headers = ValidHeaders();
+        headers[UserNoHeader] = header;
+
+        (DefaultHttpContext context, int nextCalls) = await InvokeAsync(headers);
+
+        Assert.Equal(0, nextCalls);
+        Assert.False(context.Items.ContainsKey(OperatorContextMiddleware.ItemKey));
+        AssertOperatorContextMissing(context, UserNoHeader);
+    }
+
+    [Fact]
+    public async Task UserNo_InvalidWithBlankUserName_NamesBothHeadersInReadOrder()
+    {
+        Dictionary<string, string> headers = ValidHeaders();
+        headers[UserNoHeader] = "-1";
+        headers[UserNameHeader] = "   ";
+
+        (DefaultHttpContext context, int nextCalls) = await InvokeAsync(headers);
+
+        Assert.Equal(0, nextCalls);
+        AssertOperatorContextMissing(context, UserNoHeader, UserNameHeader);
+    }
 
     [Theory]
     [InlineData("AB12345678", "AB12345678")]

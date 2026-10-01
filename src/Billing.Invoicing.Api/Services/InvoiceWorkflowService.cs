@@ -18,6 +18,8 @@ public sealed class InvoiceWorkflowService
     private const int CashPayType = 1;
     private const int CreditPayType = 2;
     private const int ApprovalPreference = 422;
+    private const int ApprovalCheckEnforced = 1;
+    private const int NormalDateUser = 2;
     private const int DirectCompany = 1;
     private const int BundledOfferType = 0;
     private const string PriceNotFixed = "N";
@@ -47,6 +49,11 @@ public sealed class InvoiceWorkflowService
     private const string SubCompCodeItem = "SUB_COMP_CODE";
     private const string PatientNoItem = "PATIENTNO";
     private const int PatientNoBytes = 12;
+    private const int ClaimNoBytes = 40;
+    private const int VisitUniqueBytes = 39;
+    private const int CompCodeBytes = 10;
+    private const int SubCompCodeBytes = 10;
+    private const int ServiceIdBytes = 20;
     private const string InvDateItem = "INVDATE";
     private const string ServiceIdItem = "SERVICEID";
     private const string VisitUniqueItem = "VISIT_UNIQUE";
@@ -59,7 +66,7 @@ public sealed class InvoiceWorkflowService
     private const string PackageServiceRequiredText = "Package service id is required.";
     private const string DocumentKindText = "Document kind must be invoice, patient-card, barcode-sms or iqama-check.";
     private const string VisitUniqueRequiredText = "Request import failed: visit unique is required.";
-    private const string RequestImportFailedPrefix = "Request import failed: ";
+    private const string SelectedRequestRowUnreadableText = "Request import failed: a selected request line could not be read.";
 
     private const string RequestSourceType = "REQUEST";
     private const string NoFlag = "N";
@@ -149,6 +156,11 @@ public sealed class InvoiceWorkflowService
         ArgumentNullException.ThrowIfNull(parameters);
         ArgumentNullException.ThrowIfNull(operatorContext);
 
+        if (ParameterWidthMessages(parameters) is { Count: > 0 } tooWide)
+        {
+            throw WidthRejected(tooWide, nameof(parameters));
+        }
+
         if (parameters.PkgInv is not null)
         {
             await _packageConsumption.Begin(parameters, cancellationToken);
@@ -225,7 +237,7 @@ public sealed class InvoiceWorkflowService
     /// <param name="parameters">Entry parameters of the draft.</param>
     /// <param name="operatorContext">Operator identity of the request.</param>
     /// <param name="cancellationToken">Cancels the reads.</param>
-    /// <returns>The coverage response; the blocking DR-01 patient message when the patient number is blank; the blocking DR-03 message alone when V_PAT_DATA has no row.</returns>
+    /// <returns>The coverage response; the blocking DR-01 patient message when the patient number is blank; the blocking width messages when PATIENTNO, CLAIM_NO or VISIT_UNIQUE is wider than its item; the blocking DR-03 message alone when V_PAT_DATA has no row.</returns>
     public async Task<CoverageResponse> GetCoverage(
         string patientNo,
         DateTime? draftDate,
@@ -236,6 +248,8 @@ public sealed class InvoiceWorkflowService
         ArgumentNullException.ThrowIfNull(parameters);
         ArgumentNullException.ThrowIfNull(operatorContext);
 
+        parameters = WithoutDateAdmin(parameters);
+
         if (IsBlank(patientNo))
         {
             return new CoverageResponse { Messages = PatientRequired() };
@@ -244,6 +258,11 @@ public sealed class InvoiceWorkflowService
         if (PatientNoTooLong(patientNo) is { } tooLong)
         {
             return new CoverageResponse { Messages = new[] { tooLong } };
+        }
+
+        if (ParameterWidthMessages(parameters) is { Count: > 0 } tooWide)
+        {
+            return new CoverageResponse { Messages = tooWide };
         }
 
         var coverage = await _lookups.GetPatientCoverage(patientNo, cancellationToken);
@@ -534,25 +553,23 @@ public sealed class InvoiceWorkflowService
             header = ApplySubPayType(header, findings.Add(HeaderRecordRules.ApplyPaymentTypeDefault(header)));
         }
 
-        return Saved(await CreateNew(draft.RequestId, header, lines, clinic, findings, operatorContext, cancellationToken));
+        return Saved(await CreateNew(
+            draft.RequestId, header, lines, profiles.Lists, parameters, clinic, findings, operatorContext, cancellationToken));
     }
 
-    /// <summary>Returns a saved invoice as a read-only view, or null when it is not found.</summary>
+    /// <summary>Returns a saved invoice as a read-only view, restricted to the ROW_TYPE of the server-owned LOCAL_DOC_TYPE, or null when it is not found.</summary>
     /// <param name="invNo">Invoice number.</param>
-    /// <param name="parameters">Entry parameters supplying the local document type filter.</param>
     /// <param name="operatorContext">Operator identity of the request.</param>
     /// <param name="cancellationToken">Cancels the read.</param>
     /// <returns>The invoice header, lines and display values, or null.</returns>
     public async Task<InvoiceViewResponse?> GetInvoice(
         long invNo,
-        InvoiceEntryParameters parameters,
         OperatorContext operatorContext,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(parameters);
         ArgumentNullException.ThrowIfNull(operatorContext);
 
-        if (await _invoices.GetInvoice(invNo, parameters.LocalDocType, cancellationToken) is not { } invoice)
+        if (await _invoices.GetInvoice(invNo, new InvoiceEntryParameters().LocalDocType, cancellationToken) is not { } invoice)
         {
             return null;
         }
@@ -590,7 +607,7 @@ public sealed class InvoiceWorkflowService
         return await _invoices.GetLastInvoiceNo(operatorContext.InfoCenterId, cancellationToken);
     }
 
-    /// <summary>Returns the persisted insurance, line and transfer details of a saved invoice, or null when it is not found.</summary>
+    /// <summary>Returns the persisted insurance, line and transfer details of a saved invoice, restricted to the ROW_TYPE of the server-owned LOCAL_DOC_TYPE, or null when it is not found.</summary>
     /// <param name="invNo">Invoice number.</param>
     /// <param name="operatorContext">Operator identity of the request.</param>
     /// <param name="cancellationToken">Cancels the read.</param>
@@ -602,7 +619,7 @@ public sealed class InvoiceWorkflowService
     {
         ArgumentNullException.ThrowIfNull(operatorContext);
 
-        if (await _invoices.GetMoreDetails(invNo, cancellationToken) is not { } details)
+        if (await _invoices.GetMoreDetails(invNo, new InvoiceEntryParameters().LocalDocType, cancellationToken) is not { } details)
         {
             return null;
         }
@@ -772,7 +789,7 @@ public sealed class InvoiceWorkflowService
                     new MessageDto
                     {
                         Field = null,
-                        Text = RequestImportFailedPrefix + failure.Message,
+                        Text = SelectedRequestRowUnreadableText,
                         Severity = ValidationMessage.Blocking,
                         Rule = null,
                     },
@@ -862,7 +879,7 @@ public sealed class InvoiceWorkflowService
     /// <param name="request">Draft, package service id and optional parent source id.</param>
     /// <param name="operatorContext">Operator identity bound into the package header.</param>
     /// <param name="cancellationToken">Cancels the reads, the preview and the import.</param>
-    /// <returns>Imported lines, the import result, the warning and the adjusted ADD_TO_LIST, or the blocking SERVICEID message when the package service id is blank.</returns>
+    /// <returns>Imported lines, the import result, the warning and the adjusted ADD_TO_LIST, or the blocking SERVICEID message when the package service id is blank or wider than SERVICEID.</returns>
     public async Task<ImportResponse> ImportPackage(
         PackageImportRequest request,
         OperatorContext operatorContext,
@@ -874,6 +891,11 @@ public sealed class InvoiceWorkflowService
         if (IsBlank(request.PackageServiceId))
         {
             return new ImportResponse { Messages = new[] { Blocking(ServiceIdItem, PackageServiceRequiredText) } };
+        }
+
+        if (TooWide(ServiceIdItem, request.PackageServiceId.Trim(), ServiceIdBytes) is { } packageTooWide)
+        {
+            return new ImportResponse { Messages = new[] { packageTooWide } };
         }
 
         var draft = Sanitize(request.Draft, operatorContext);
@@ -965,7 +987,7 @@ public sealed class InvoiceWorkflowService
     /// <param name="draftDate">Draft date bound as INVDATE by the date-filtered lists RESERV_NO and OFFERS; null returns their missing INVDATE message.</param>
     /// <param name="operatorContext">Operator identity supplying the information centre.</param>
     /// <param name="cancellationToken">Cancels the read.</param>
-    /// <returns>The rows, a blocking message naming a missing item, or null.</returns>
+    /// <returns>The rows, a blocking message naming a missing or refused item, or null.</returns>
     public async Task<LovResponse?> GetLov(
         string name,
         IReadOnlyDictionary<string, string?> binds,
@@ -989,21 +1011,36 @@ public sealed class InvoiceWorkflowService
             case "COMPANY1_2":
                 return Rows(lov, await _lovs.Company(operatorContext.InfoCenterId, cancellationToken));
             case "SUB_COMPANY":
-                return BindText(values, CompCodeItem) is { } compCode
-                    ? Rows(lov, await _lovs.SubCompany(compCode, cancellationToken))
-                    : MissingBind(lov, CompCodeItem);
+                if (BindText(values, CompCodeItem) is not { } compCode)
+                {
+                    return MissingBind(lov, CompCodeItem);
+                }
+
+                return TooWide(CompCodeItem, compCode, CompCodeBytes) is { } compCodeTooLong
+                    ? BindRejected(lov, compCodeTooLong)
+                    : Rows(lov, await _lovs.SubCompany(compCode, operatorContext.InfoCenterId, cancellationToken));
             case "THE_CLASS":
-                return BindText(values, SubCompCodeItem) is { } subCompCode
-                    ? Rows(lov, await _lovs.TheClass(subCompCode, cancellationToken))
-                    : MissingBind(lov, SubCompCodeItem);
+                if (BindText(values, SubCompCodeItem) is not { } subCompCode)
+                {
+                    return MissingBind(lov, SubCompCodeItem);
+                }
+
+                return TooWide(SubCompCodeItem, subCompCode, SubCompCodeBytes) is { } subCompCodeTooLong
+                    ? BindRejected(lov, subCompCodeTooLong)
+                    : Rows(lov, await _lovs.TheClass(subCompCode, operatorContext.InfoCenterId, cancellationToken));
             case "PAY_TYPE1" or "PAY_TYPE2":
                 return Rows(lov, await _lovs.PayTypes(cancellationToken));
             case "DOC":
                 return Rows(lov, await _lovs.Doc(operatorContext.InfoCenterId, cancellationToken));
             case "RESERV_NO":
-                if (BindInt(values, DocIdItem) is not { } docId)
+                if (BindPositiveInt(values, DocIdItem) is not (true, var doctor))
                 {
                     return MissingBind(lov, DocIdItem);
+                }
+
+                if (doctor is not { } docId)
+                {
+                    return BindRejected(lov, Blocking(DocIdItem, $"{DocIdItem} must be a positive whole number."));
                 }
 
                 if (BindText(values, PatientNoItem) is not { } patientNo)
@@ -1021,15 +1058,20 @@ public sealed class InvoiceWorkflowService
                     return MissingBind(lov, InvDateItem);
                 }
 
-                return Rows(lov, await _lovs.ReservNo(reservationDate, docId, patientNo, cancellationToken)) with
+                return Rows(lov, await _lovs.ReservNo(reservationDate, docId, patientNo, operatorContext.InfoCenterId, cancellationToken)) with
                 {
                     ViewOnly = true,
                     OpenItems = new[] { OpenItemIds.OI42 },
                 };
             case "OFFERS":
-                if (BindInt(values, PayTypeItem) is not { } payType)
+                if (BindPositiveInt(values, PayTypeItem) is not (true, var payTypeNumber))
                 {
                     return MissingBind(lov, PayTypeItem);
+                }
+
+                if (payTypeNumber is not { } payType || payType is not (CashPayType or CreditPayType))
+                {
+                    return BindRejected(lov, Blocking(PayTypeItem, $"{PayTypeItem} must be 1 (Cash) or 2 (Credit)."));
                 }
 
                 if (draftDate is not { } offerDate)
@@ -1135,6 +1177,8 @@ public sealed class InvoiceWorkflowService
         string requestId,
         InvoiceHeaderDraft header,
         IReadOnlyList<InvoiceLineDraft> lines,
+        IReadOnlyList<decimal?> lists,
+        InvoiceEntryParameters parameters,
         ClinicProfile? clinic,
         Findings findings,
         OperatorContext operatorContext,
@@ -1147,6 +1191,15 @@ public sealed class InvoiceWorkflowService
         {
             try
             {
+                var locked = await LockGateInputs(session, header, lines, lists, parameters, cancellationToken);
+                var lockedGateIds = OpenItemGate.Evaluate(
+                    header, locked.Profiles.TopLevel, locked.Gate.CardId, locked.Gate.MaxDeductable, locked.Gate.UseAdvanced, parameters);
+                if (lockedGateIds.Count > 0)
+                {
+                    await ThrowGate(lockedGateIds, findings.Warnings, header, cancellationToken);
+                }
+
+                header = header with { AddToList = AddToListRule.Derive(locked.Profiles.TopLevel) };
                 result = await _invoiceApi.CreateFullInvoice(
                     session, header, lines, operatorContext, requestId, cancellationToken);
 
@@ -1920,8 +1973,7 @@ public sealed class InvoiceWorkflowService
 
     private async Task<ClaimPreloadData?> ReadClaimPreload(InvoiceEntryParameters parameters, CancellationToken cancellationToken)
     {
-        var claimNo = Trimmed(parameters.ClaimNo);
-        if (claimNo is null or NoClaimParameter or NewConsultationClaimParameter or IndependentServiceClaimParameter)
+        if (PreloadClaimNo(parameters) is not { } claimNo)
         {
             return null;
         }
@@ -1930,6 +1982,13 @@ public sealed class InvoiceWorkflowService
             ? new ClaimPreloadData(preload.Header, preload.ListId, preload.MaxDeductable, preload.CardId)
             : null;
     }
+
+    /// <summary>Returns the claim number whose first invoice preloads the header, or null when the claim parameter preloads nothing.</summary>
+    private static string? PreloadClaimNo(InvoiceEntryParameters parameters) =>
+        Trimmed(parameters.ClaimNo) is { } claimNo
+        && claimNo is not (NoClaimParameter or NewConsultationClaimParameter or IndependentServiceClaimParameter)
+            ? claimNo
+            : null;
 
     private async Task<ClaimPreloadData?> ReadPatientClaimPreload(
         InvoiceEntryParameters parameters,
@@ -1977,22 +2036,64 @@ public sealed class InvoiceWorkflowService
         return new GateInputs(maxDeductable, useAdvanced, cardId);
     }
 
-    private async Task<int?> ReadX422(InvoiceEntryParameters parameters, CancellationToken cancellationToken)
+    /// <summary>Re-reads the gate inputs and line profiles inside the session's transaction, locking the claim's first T_INV invoice row, the PATIENT, DISC_CLASSES, SERVICES and PACKAGE_DTL rows, and the base-table rows of a credit header's V_PAT_DATA deductible.</summary>
+    private async Task<(GateInputs Gate, ProfileSet Profiles)> LockGateInputs(
+        IOracleSession session,
+        InvoiceHeaderDraft header,
+        IReadOnlyList<InvoiceLineDraft> lines,
+        IReadOnlyList<decimal?> lists,
+        InvoiceEntryParameters parameters,
+        CancellationToken cancellationToken)
     {
-        var preferences = await _lookups.GetPreferences(cancellationToken);
-        if (!preferences.TryGetValue(ApprovalPreference, out var value))
-        {
-            return parameters.X422ApprovCheck;
-        }
+        var preload = await LockPatientClaimPreload(session, parameters, header.PatientNo, cancellationToken);
 
-        if (value is null)
+        int? cardId = IsBlank(header.PatientNo)
+            ? null
+            : await _lookups.LockPatientCardId(session, header.PatientNo!, cancellationToken);
+        cardId ??= preload?.CardId;
+
+        int? useAdvanced = !IsBlank(header.SubCompCode) && header.ClassCode is int classCode
+            ? await _lookups.LockClassAdvancedMode(session, header.SubCompCode!, ClassText(classCode)!, cancellationToken)
+            : null;
+
+        var profiles = await BuildProfiles(lines, lists, new ProfileReads(_lookups, session), cancellationToken);
+
+        decimal? coverageDeductable = header.PayType == CreditPayType && !IsBlank(header.PatientNo)
+            ? await _lookups.LockPatientMaxDeductable(session, header.PatientNo!, cancellationToken)
+            : null;
+
+        return (new GateInputs(Greater(coverageDeductable, preload?.MaxDeductable), useAdvanced, cardId), profiles);
+    }
+
+    /// <summary>Returns the deductible and card id of the claim's first invoice when it preloads the patient's header, locking that T_INV row until the session's transaction ends; null when no claim preload applies.</summary>
+    private async Task<(decimal? MaxDeductable, int? CardId)?> LockPatientClaimPreload(
+        IOracleSession session,
+        InvoiceEntryParameters parameters,
+        string? patientNo,
+        CancellationToken cancellationToken)
+    {
+        if (PreloadClaimNo(parameters) is not { } claimNo || Trimmed(patientNo) is not { } patient)
         {
             return null;
         }
 
-        return int.TryParse(value.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var mode)
-            ? mode
-            : parameters.X422ApprovCheck;
+        return await _lookups.LockClaimPreload(session, claimNo, cancellationToken) is { } preload
+            && string.Equals(Trimmed(preload.PatientNo), patient, StringComparison.Ordinal)
+                ? (preload.MaxDeductable, preload.CardId)
+                : null;
+    }
+
+    /// <summary>Returns the PREF 422 approval-check setting when it holds an integer, otherwise 1 (enforced); the entry parameter's X422_APPROV_CHECK is not read (D-73).</summary>
+    /// <param name="parameters">Entry parameters of the draft; not read.</param>
+    /// <param name="cancellationToken">Cancels the preference read.</param>
+    private async Task<int?> ReadX422(InvoiceEntryParameters parameters, CancellationToken cancellationToken)
+    {
+        var preferences = await _lookups.GetPreferences(cancellationToken);
+        return preferences.TryGetValue(ApprovalPreference, out var value)
+            && value is not null
+            && int.TryParse(value.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var mode)
+                ? mode
+                : ApprovalCheckEnforced;
     }
 
     /// <summary>Returns the rolled-back package preview of the service lines not in the excluded indexes, or null when none remains.</summary>
@@ -2124,7 +2225,7 @@ public sealed class InvoiceWorkflowService
         return rejected;
     }
 
-    /// <summary>Returns the indexes of the plain lines that are package services not yet expanded (known package ids, or IS_PACKAGE = 1 on the claim preload's list, else on the list of a preview of the role lines) and the plain lines left unclassified when neither list exists.</summary>
+    /// <summary>Finds unexpanded package parents and lines whose package role remains unknown (D-38).</summary>
     private async Task<ParentScan> UnexpandedParents(
         IReadOnlyList<InvoiceLineDraft> lines,
         IReadOnlySet<int> rejected,
@@ -2216,7 +2317,7 @@ public sealed class InvoiceWorkflowService
         return packages;
     }
 
-    /// <summary>Returns the lines excluded from the context preview and that preview, adding the role-line preview to <paramref name="succeeded"/> when it runs and succeeds. When the package refuses the preview as holding an unexpanded package parent while plain lines are unclassified, they are classified on the draft-level list (the price plan's, or OI-24) and the preview is re-run once without the parents found; every other failure propagates.</summary>
+    /// <summary>Previews eligible lines, retrying once without unexpanded package parents (D-38).</summary>
     private async Task<(HashSet<int> Excluded, PreviewResult? Preview)> ContextPreview(
         IReadOnlyList<InvoiceLineDraft> lines,
         IReadOnlySet<int> rejected,
@@ -2252,7 +2353,7 @@ public sealed class InvoiceWorkflowService
         return (excluded, await RulesPreview(contextHeader, lines, excluded, operatorContext, profileReads, cancellationToken));
     }
 
-    /// <summary>Returns the context preview of the lines that are neither rejected nor unexpanded parents, with every line's list and profile; every preview that succeeds, the context preview included, is added to <paramref name="succeeded"/>.</summary>
+    /// <summary>Reads the eligible lines' lists and profiles and collects successful previews (D-38).</summary>
     private async Task<LineContext> ReadLineContext(
         IReadOnlyList<InvoiceLineDraft> lines,
         InvoiceHeaderDraft header,
@@ -2414,13 +2515,13 @@ public sealed class InvoiceWorkflowService
         }
 
         var queueFlags = new Dictionary<decimal, Dictionary<string, int>>();
-        foreach (var listId in listOrder)
+        foreach (var listId in profileReads.Locks ? listOrder.Order() : listOrder.AsEnumerable())
         {
             var serviceIds = serviceIdsByList[listId];
             await profileReads.Load(serviceIds.Select(serviceId => ((decimal?)listId, (string?)serviceId)), cancellationToken);
 
             var listFlags = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            foreach (var (serviceId, flag) in await _lookups.GetServiceQueueFlags(serviceIds, listId, cancellationToken))
+            foreach (var (serviceId, flag) in await profileReads.QueueFlags(serviceIds, listId, cancellationToken))
             {
                 listFlags[serviceId.Trim()] = flag;
             }
@@ -2506,7 +2607,7 @@ public sealed class InvoiceWorkflowService
             {
                 if (!packageComponents.TryGetValue((packageListId, packageId), out var components))
                 {
-                    components = await _lookups.GetPackageComponentFlags(packageId, packageListId, cancellationToken);
+                    components = await profileReads.PackageComponents(packageId, packageListId, cancellationToken);
                     packageComponents[(packageListId, packageId)] = components;
                 }
 
@@ -2567,7 +2668,7 @@ public sealed class InvoiceWorkflowService
         Trimmed(serviceId) is { } id
         && requestedServices.Contains(id);
 
-    /// <summary>Returns the draft with the operator identity and the server-owned fields reset; refuses a null line, or a patient number wider than PATIENTNO, before any read.</summary>
+    /// <summary>Returns the draft with the operator identity and the server-owned fields reset; refuses a null line, or a PATIENTNO, CLAIM_NO, VISIT_UNIQUE, COMP_CODE or line SERVICEID wider than its item, before any read.</summary>
     private static DraftDto Sanitize(DraftDto draft, OperatorContext operatorContext)
     {
         ArgumentNullException.ThrowIfNull(draft);
@@ -2580,11 +2681,18 @@ public sealed class InvoiceWorkflowService
             throw failure;
         }
 
-        if (draft.Header?.PatientNo is { } patientNo && !IsBlank(patientNo) && PatientNoTooLong(patientNo) is { } tooLong)
+        var tooWide = new List<MessageDto>();
+        AddIfTooWide(tooWide, PatientNoItem, draft.Header?.PatientNo, PatientNoBytes);
+        tooWide.AddRange(ParameterWidthMessages(draft.Parameters));
+        AddIfTooWide(tooWide, CompCodeItem, draft.Header?.CompCode, CompCodeBytes);
+        for (var index = 0; index < lines.Count; index++)
         {
-            var failure = new ArgumentException(tooLong.Text, nameof(draft));
-            failure.Data[ProblemDetailsWriter.MessagesDataKey] = new[] { tooLong };
-            throw failure;
+            AddIfTooWide(tooWide, ServiceIdItem, lines[index].ServiceId, ServiceIdBytes, index + 1);
+        }
+
+        if (tooWide.Count > 0)
+        {
+            throw WidthRejected(tooWide, nameof(draft));
         }
 
         var header = WithOperator(draft.Header ?? new InvoiceHeaderDraft(), operatorContext) with
@@ -2601,9 +2709,13 @@ public sealed class InvoiceWorkflowService
         {
             Header = header,
             Lines = lines.Select(line => line with { FixPay = null, PayRate = null }).ToArray(),
-            Parameters = draft.Parameters ?? new InvoiceEntryParameters(),
+            Parameters = WithoutDateAdmin(draft.Parameters ?? new InvoiceEntryParameters()),
         };
     }
+
+    /// <summary>Returns the parameters with INV_DATE_ADMIN set to 2 (normal user), whatever the request carried (D-98).</summary>
+    private static InvoiceEntryParameters WithoutDateAdmin(InvoiceEntryParameters parameters) =>
+        parameters with { InvDateAdmin = NormalDateUser };
 
     private static InvoiceHeaderDraft WithOperator(InvoiceHeaderDraft header, OperatorContext operatorContext) => header with
     {
@@ -2806,17 +2918,47 @@ public sealed class InvoiceWorkflowService
     };
 
     /// <summary>Returns the blocking PATIENTNO message when the patient number exceeds the item's width in characters or UTF-8 bytes, else null.</summary>
-    private static MessageDto? PatientNoTooLong(string patientNo)
+    private static MessageDto? PatientNoTooLong(string patientNo) => TooWide(PatientNoItem, patientNo, PatientNoBytes);
+
+    /// <summary>Returns the blocking message on <paramref name="item"/> when the value exceeds <paramref name="maxBytes"/> in characters or UTF-8 bytes, else null; a line number names the draft line.</summary>
+    private static MessageDto? TooWide(string item, string value, int maxBytes, int? lineNumber = null)
     {
-        if (patientNo.Length > PatientNoBytes)
+        var subject = lineNumber is { } line ? $"{item} on line {line}" : item;
+        if (value.Length > maxBytes)
         {
-            return Blocking(PatientNoItem, $"{PatientNoItem} has {patientNo.Length} characters; at most {PatientNoBytes} can be bound.");
+            return Blocking(item, $"{subject} has {value.Length} characters; at most {maxBytes} can be bound.");
         }
 
-        var bytes = System.Text.Encoding.UTF8.GetByteCount(patientNo);
-        return bytes > PatientNoBytes
-            ? Blocking(PatientNoItem, $"{PatientNoItem} has {bytes} bytes in UTF-8; at most {PatientNoBytes} can be bound.")
+        var bytes = System.Text.Encoding.UTF8.GetByteCount(value);
+        return bytes > maxBytes
+            ? Blocking(item, $"{subject} has {bytes} bytes in UTF-8; at most {maxBytes} can be bound.")
             : null;
+    }
+
+    /// <summary>Adds the blocking message of a non-blank value wider than its item; a line number names the draft line.</summary>
+    private static void AddIfTooWide(List<MessageDto> messages, string item, string? value, int maxBytes, int? lineNumber = null)
+    {
+        if (!IsBlank(value) && TooWide(item, value!, maxBytes, lineNumber) is { } message)
+        {
+            messages.Add(message);
+        }
+    }
+
+    /// <summary>Returns the blocking CLAIM_NO and VISIT_UNIQUE messages of entry parameters wider than those items, in that order.</summary>
+    private static List<MessageDto> ParameterWidthMessages(InvoiceEntryParameters? parameters)
+    {
+        var messages = new List<MessageDto>();
+        AddIfTooWide(messages, ClaimNoItem, parameters?.ClaimNo, ClaimNoBytes);
+        AddIfTooWide(messages, VisitUniqueItem, parameters?.VisitUnique, VisitUniqueBytes);
+        return messages;
+    }
+
+    /// <summary>Returns the 422 field-validation failure carrying the blocking width messages.</summary>
+    private static ArgumentException WidthRejected(IReadOnlyList<MessageDto> messages, string paramName)
+    {
+        var failure = new ArgumentException(string.Join(" ", messages.Select(message => message.Text)), paramName);
+        failure.Data[ProblemDetailsWriter.MessagesDataKey] = messages.ToArray();
+        return failure;
     }
 
     private static MessageDto Blocking(string field, string text) => new()
@@ -2859,10 +3001,22 @@ public sealed class InvoiceWorkflowService
     private static string? BindText(IReadOnlyDictionary<string, string?> values, string item) =>
         values.TryGetValue(item, out var value) ? Trimmed(value) : null;
 
-    private static int? BindInt(IReadOnlyDictionary<string, string?> values, string item) =>
-        BindText(values, item) is { } text && int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var number)
-            ? number
-            : null;
+    /// <summary>Reads an item's untrimmed value as a canonical positive whole number: ASCII digits with no sign, padding or leading zero.</summary>
+    /// <returns>Whether the item has a non-blank value, and the number, or null when that value is not such a number.</returns>
+    private static (bool Present, int? Number) BindPositiveInt(IReadOnlyDictionary<string, string?> values, string item)
+    {
+        if (!values.TryGetValue(item, out var text) || string.IsNullOrWhiteSpace(text))
+        {
+            return (false, null);
+        }
+
+        return text[0] != '0'
+            && text.All(char.IsAsciiDigit)
+            && int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var number)
+            && number > 0
+                ? (true, number)
+                : (true, null);
+    }
 
     private static object? ColumnValue(IReadOnlyDictionary<string, object?> row, string column)
     {
@@ -3034,8 +3188,10 @@ public sealed class InvoiceWorkflowService
 
     private sealed record PreviewResult(IReadOnlyList<EditablePreviewLine> Lines, PreviewTotalsRow Totals)
     {
+        /// <summary>Lines whose manual price override the preview checked.</summary>
         public IReadOnlySet<InvoiceLineDraft> CheckedOverrides { get; init; } = new HashSet<InvoiceLineDraft>();
 
+        /// <summary>Checked lines whose price override was refused; the preview priced them without it.</summary>
         public IReadOnlySet<InvoiceLineDraft> RefusedOverrides { get; init; } = new HashSet<InvoiceLineDraft>();
     }
 
@@ -3046,6 +3202,8 @@ public sealed class InvoiceWorkflowService
         IReadOnlyList<ServiceProfile?> ByLine,
         IReadOnlyList<decimal?> Lists)
     {
+        /// <summary>Returns a set with no top-level profiles and a null profile and list per line.</summary>
+        /// <param name="lineCount">Number of draft lines.</param>
         public static ProfileSet Empty(int lineCount) =>
             new(Array.Empty<ServiceProfile>(), new ServiceProfile?[lineCount], new decimal?[lineCount]);
     }
@@ -3058,18 +3216,25 @@ public sealed class InvoiceWorkflowService
         private readonly Dictionary<string, object?> _adjusted = new(StringComparer.Ordinal);
         private readonly SortedSet<string> _openItems = new(StringComparer.Ordinal);
 
+        /// <summary>True when any recorded message is blocking.</summary>
         public bool IsBlocking => _messages.Exists(message => message.Severity == ValidationMessage.Blocking);
 
+        /// <summary>Recorded messages, blocking ones first, otherwise in recording order.</summary>
         public IReadOnlyList<MessageDto> Messages =>
             _messages.OrderBy(message => message.Severity == ValidationMessage.Blocking ? 0 : 1).ToArray();
 
+        /// <summary>Recorded non-blocking messages.</summary>
         public IReadOnlyList<MessageDto> Warnings =>
             _messages.Where(message => message.Severity != ValidationMessage.Blocking).ToArray();
 
+        /// <summary>Copy of the adjusted values by item name.</summary>
         public IReadOnlyDictionary<string, object?> Adjusted => new Dictionary<string, object?>(_adjusted, StringComparer.Ordinal);
 
+        /// <summary>Recorded open-item ids in ordinal order.</summary>
         public IReadOnlyList<string> OpenItems => _openItems.ToArray();
 
+        /// <summary>Records a rule result's messages and adjusted values.</summary>
+        /// <returns>The result, unchanged.</returns>
         public RuleResult Add(RuleResult result)
         {
             foreach (var message in result.Messages)
@@ -3085,14 +3250,20 @@ public sealed class InvoiceWorkflowService
             return result;
         }
 
+        /// <summary>Records a message.</summary>
         public void Add(MessageDto message) => _messages.Add(message);
 
+        /// <summary>Sets an item's adjusted value, replacing any earlier one.</summary>
         public void Adjust(string item, object? value) => _adjusted[item] = value;
 
+        /// <summary>Records an open-item id.</summary>
         public void AddOpenItem(string openItemId) => _openItems.Add(openItemId);
 
+        /// <summary>Records several open-item ids.</summary>
         public void AddOpenItems(IEnumerable<string> openItemIds) => _openItems.UnionWith(openItemIds);
 
+        /// <summary>Builds the validate response from the recorded messages, adjusted values and open items.</summary>
+        /// <param name="visitLine">Visit-line choice to return, if any.</param>
         public ValidateDraftResponse ToValidateResponse(VisitLineChoice? visitLine = null) => new()
         {
             Messages = Messages,
@@ -3102,15 +3273,25 @@ public sealed class InvoiceWorkflowService
         };
     }
 
-    /// <summary>Service profiles of one workflow call, read once per price list (a lone service through GetServiceProfile, several through GetServiceProfiles) and kept by list and service id, and its COMPANYS.IS_DIRECT reads, at most one per company code.</summary>
+    /// <summary>Caches service profiles and company-direct flags for one workflow call.</summary>
     private sealed class ProfileReads
     {
         private readonly ILookupQueries _lookups;
+        private readonly IOracleSession? _lockSession;
         private readonly Dictionary<(decimal ListId, string ServiceId), ServiceProfile?> _read = new();
         private readonly Dictionary<string, Lazy<Task<int?>>> _isDirect = new(StringComparer.Ordinal);
 
         /// <summary>Creates an empty set of reads over the lookups.</summary>
-        public ProfileReads(ILookupQueries lookups) => _lookups = lookups;
+        /// <param name="lookups">Lookups the profiles are read through.</param>
+        /// <param name="lockSession">Session whose transaction the service, queue and package-component reads lock their rows in; null reads without locks.</param>
+        public ProfileReads(ILookupQueries lookups, IOracleSession? lockSession = null)
+        {
+            _lookups = lookups;
+            _lockSession = lockSession;
+        }
+
+        /// <summary>True when the reads lock their rows in a session.</summary>
+        public bool Locks => _lockSession is not null;
 
         /// <summary>Reads the profiles of the keys with a list and a service that are not read yet, once per list; a service not on its list, or a blank one, reads as null.</summary>
         public async Task Load(IEnumerable<(decimal? ListId, string? ServiceId)> keys, CancellationToken cancellationToken)
@@ -3141,7 +3322,15 @@ public sealed class InvoiceWorkflowService
             foreach (var list in listOrder)
             {
                 var serviceIds = unreadByList[list];
-                if (serviceIds.Count == 1)
+                if (_lockSession is not null)
+                {
+                    var locked = await _lookups.LockServiceProfiles(_lockSession, serviceIds, list, cancellationToken);
+                    foreach (var serviceId in serviceIds)
+                    {
+                        _read[(list, serviceId)] = locked.GetValueOrDefault(serviceId);
+                    }
+                }
+                else if (serviceIds.Count == 1)
                 {
                     var serviceId = serviceIds[0];
                     _read[(list, serviceId)] = IsBlank(serviceId)
@@ -3163,6 +3352,39 @@ public sealed class InvoiceWorkflowService
         /// <exception cref="KeyNotFoundException">The service was not loaded on the list.</exception>
         public ServiceProfile? Get(decimal? listId, string? serviceId) =>
             listId is { } list && serviceId is { } service ? _read[(list, service)] : null;
+
+        /// <summary>Returns the ADD_TO_QUE flags of services on a list: read through GetServiceQueueFlags, or in a lock session taken from their loaded profiles; services without a row are absent.</summary>
+        /// <exception cref="KeyNotFoundException">In a lock session, a service was not loaded on the list.</exception>
+        public async Task<IReadOnlyDictionary<string, int>> QueueFlags(
+            IReadOnlyCollection<string> serviceIds,
+            decimal listId,
+            CancellationToken cancellationToken)
+        {
+            if (_lockSession is null)
+            {
+                return await _lookups.GetServiceQueueFlags(serviceIds, listId, cancellationToken);
+            }
+
+            var flags = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var serviceId in serviceIds)
+            {
+                if (_read[(listId, serviceId)] is { } profile)
+                {
+                    flags[serviceId] = profile.AddToQue ?? 0;
+                }
+            }
+
+            return flags;
+        }
+
+        /// <summary>Returns the component flags of a package on a list, read through GetPackageComponentFlags, or LockPackageComponentFlags in a lock session.</summary>
+        public Task<IReadOnlyList<ServiceProfile>> PackageComponents(
+            string packageServiceId,
+            decimal listId,
+            CancellationToken cancellationToken) =>
+            _lockSession is null
+                ? _lookups.GetPackageComponentFlags(packageServiceId, listId, cancellationToken)
+                : _lookups.LockPackageComponentFlags(_lockSession, packageServiceId, listId, cancellationToken);
 
         /// <summary>Returns the deferred COMPANYS.IS_DIRECT read of the header's company, the same one for every call with that company code; a blank company reads as null without a read.</summary>
         public Lazy<Task<int?>> CompanyIsDirect(InvoiceHeaderDraft header, CancellationToken cancellationToken)

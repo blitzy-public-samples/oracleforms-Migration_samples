@@ -38,7 +38,7 @@ public sealed record DraftDto : IValidatableObject
     [JsonConverter(typeof(RequestHeaderContract))]
     public InvoiceHeaderDraft Header { get; init; } = new();
 
-    /// <summary>The <c>D_INV</c> lines in grid order; a line's zero-based position is its line index; their JSON omits the display-only <c>CATID</c>, <c>FIXPAY</c>, <c>PAYRATE</c>, lens and <c>INS_EMP</c> members.</summary>
+    /// <summary>The <c>D_INV</c> lines in grid order; a line's zero-based position is its line index; their JSON omits <c>CATID</c> and the display-only <c>FIXPAY</c>, <c>PAYRATE</c>, lens and <c>INS_EMP</c> members.</summary>
     [JsonConverter(typeof(RequestLinesContract))]
     public IReadOnlyList<InvoiceLineDraft> Lines { get; init; } = [];
 
@@ -159,7 +159,7 @@ public sealed record DraftDto : IValidatableObject
         nameof(InvoiceHeaderDraft.DocId1),
         nameof(InvoiceHeaderDraft.SeqNo));
 
-    /// <summary>JSON contract of the lines that omits the display-only <c>CATID</c>, <c>FIXPAY</c>, <c>PAYRATE</c>, lens and <c>INS_EMP</c> members.</summary>
+    /// <summary>JSON contract of the lines that omits <c>CATID</c> and the display-only <c>FIXPAY</c>, <c>PAYRATE</c>, lens and <c>INS_EMP</c> members.</summary>
     private sealed class RequestLinesContract() : OmittingContract<IReadOnlyList<InvoiceLineDraft>>(
         nameof(InvoiceLineDraft.CatId),
         nameof(InvoiceLineDraft.FixPay),

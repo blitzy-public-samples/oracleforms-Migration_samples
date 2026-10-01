@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 
 namespace Billing.Invoicing.Api.Errors;
 
-/// <summary>Maps a model-state key to the legacy item name of a field-validation message.</summary>
+/// <summary>Maps known model-state members to legacy items and formats other members as upper-snake field names.</summary>
 public static class ModelStateFieldMap
 {
     private const string LineItem = "LINE";
@@ -58,9 +58,9 @@ public static class ModelStateFieldMap
         ["TeethNo2"] = "TEETH_NO2",
     };
 
-    /// <summary>Returns the legacy item name of the member a model-state key addresses.</summary>
+    /// <summary>Maps known members to legacy item names and formats unknown members as upper-snake field names.</summary>
     /// <param name="modelStateKey">JSON path, such as <c>$.draft.lines[0].qty</c>, or member path, such as <c>Draft.DISC_T</c> or <c>payType</c>.</param>
-    /// <returns>The upper-case legacy item name, such as <c>PATIENTNO</c>, <c>QTY</c> or <c>LINE</c>; <c>null</c> for a form-level key.</returns>
+    /// <returns>The mapped legacy item name or an upper-snake fallback for unknown members; <c>null</c> for a form-level key.</returns>
     public static string? FieldOf(string? modelStateKey)
     {
         if (string.IsNullOrWhiteSpace(modelStateKey))
@@ -118,7 +118,7 @@ public static class ModelStateFieldMap
 
     /// <summary>Converts a Pascal- or camel-case member name to upper snake case.</summary>
     /// <param name="member">Non-empty identifier.</param>
-    /// <returns>The name in upper case with an underscore before each word and before a digit run that ends a word of two or more letters.</returns>
+    /// <returns>The member name formatted in upper snake case.</returns>
     private static string UpperSnake(string member)
     {
         var builder = new StringBuilder(member.Length * 2);

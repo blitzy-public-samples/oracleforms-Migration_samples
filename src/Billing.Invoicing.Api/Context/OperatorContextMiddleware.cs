@@ -52,7 +52,8 @@ public sealed class OperatorContextMiddleware
         string userNoText = ReadHeader(context.Request, UserNoHeader, missing);
         var userNo = 0;
         if (userNoText.Length > 0
-            && !int.TryParse(userNoText, NumberStyles.Integer, CultureInfo.InvariantCulture, out userNo))
+            && (userNoText[0] == '0'
+                || !int.TryParse(userNoText, NumberStyles.None, CultureInfo.InvariantCulture, out userNo)))
         {
             missing.Add(UserNoHeader);
         }

@@ -106,7 +106,6 @@ public static class FinalDiscountLimitRule
         }
         catch (OverflowException)
         {
-            // Returns null when the percent is outside the decimal range.
             return null;
         }
     }

@@ -16,7 +16,7 @@ public sealed class OracleSessionFactory : IOracleSessionFactory
     /// <summary>Stores the data-layer settings; opens nothing.</summary>
     /// <param name="options">Connection string and command settings.</param>
     /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
-    /// <exception cref="ArgumentOutOfRangeException"><see cref="InvoicingDataOptions.CommandTimeoutSeconds"/> is below 1.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><see cref="InvoicingDataOptions.CommandTimeoutSeconds"/> is below 1 or above <see cref="InvoicingDataOptions.MaxCommandTimeoutSeconds"/>.</exception>
     public OracleSessionFactory(InvoicingDataOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -27,7 +27,7 @@ public sealed class OracleSessionFactory : IOracleSessionFactory
 
     /// <summary>Opens a connection within <see cref="InvoicingDataOptions.CommandTimeoutSeconds"/> and begins a read-committed transaction on it; an open that exceeds it fails with a <see cref="TimeoutException"/>.</summary>
     /// <param name="cancellationToken">Cancels the connection open.</param>
-    /// <returns>The open session; disposing it uncommitted rolls the transaction back.</returns>
+    /// <returns>The open session; disposing it uncommitted attempts to roll back its local transaction, and the outcome can remain uncertain.</returns>
     public async Task<IOracleSession> Open(CancellationToken cancellationToken = default)
     {
         var connection = await OpenConnection(_options, cancellationToken).ConfigureAwait(false);
@@ -46,12 +46,12 @@ public sealed class OracleSessionFactory : IOracleSessionFactory
         return new OracleSession(connection, transaction, TimeSpan.FromSeconds(_options.CommandTimeoutSeconds));
     }
 
-    /// <summary>Opens a connection without a transaction within <see cref="InvoicingDataOptions.CommandTimeoutSeconds"/>; marks a blank or malformed connection string under <see cref="OracleFailureTranslator.ConfigurationFaultKey"/> and open failures under <see cref="OracleErrorParser.DuringOpenKey"/> in <see cref="Exception.Data"/>, and rethrows; a connection whose open is still running at the deadline is released once that open settles.</summary>
+    /// <summary>Opens a non-transactional connection within the configured deadline and tags connection failures (D-89).</summary>
     /// <param name="options">Settings holding the connection string and the open deadline.</param>
     /// <param name="cancellationToken">Cancels the connection open.</param>
     /// <returns>An open connection the caller disposes.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
-    /// <exception cref="ArgumentOutOfRangeException"><see cref="InvoicingDataOptions.CommandTimeoutSeconds"/> is below 1.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><see cref="InvoicingDataOptions.CommandTimeoutSeconds"/> is below 1 or above <see cref="InvoicingDataOptions.MaxCommandTimeoutSeconds"/>.</exception>
     /// <exception cref="InvalidOperationException">The connection string is blank.</exception>
     /// <exception cref="ArgumentException">The connection string is malformed.</exception>
     /// <exception cref="TimeoutException">The open did not complete within <see cref="InvoicingDataOptions.CommandTimeoutSeconds"/>.</exception>

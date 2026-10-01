@@ -57,8 +57,8 @@ public sealed record InvoiceEntryParameters
     /// <summary>PARAMETER.DIRECT_COMP_SHARE; company direct share of the selected company.</summary>
     public decimal? DirectCompShare { get; init; }
 
-    /// <summary>PARAMETER.LOCAL_DOC_TYPE; the invoice ROW_TYPE queried.</summary>
-    public int LocalDocType { get; init; } = 505;
+    /// <summary>PARAMETER.LOCAL_DOC_TYPE; the Form's initial value 505, never bound from a request (D-111).</summary>
+    public int LocalDocType { get; } = 505;
 
     /// <summary>PARAMETER.VISIT_UNIQUE; the patient visit the draft belongs to.</summary>
     public string? VisitUnique { get; init; }

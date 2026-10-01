@@ -160,7 +160,7 @@ public static class LineInputBinder
                 continue;
             }
 
-            // A value over its field's destination width in characters or UTF-8 bytes is rejected, never truncated to fit.
+            // A value over its field's destination width in characters or UTF-8 bytes is rejected, never truncated to fit (D-109).
             string? rejection = null;
             if (value.Length > maxLength)
             {

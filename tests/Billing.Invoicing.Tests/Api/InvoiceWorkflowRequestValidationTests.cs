@@ -405,6 +405,111 @@ public sealed class InvoiceWorkflowRequestValidationTests
     }
 
     [Theory]
+    [Trait("Decision", "D-107")]
+    [InlineData("SUB_COMPANY", "COMP_CODE", "12345678901", "COMP_CODE has 11 characters; at most 10 can be bound.")]
+    [InlineData("SUB_COMPANY", "COMP_CODE", "\u00E9\u00E9\u00E9\u00E9\u00E9\u00E9", "COMP_CODE has 12 bytes in UTF-8; at most 10 can be bound.")]
+    [InlineData("THE_CLASS", "SUB_COMP_CODE", "12345678901", "SUB_COMP_CODE has 11 characters; at most 10 can be bound.")]
+    [InlineData("THE_CLASS", "SUB_COMP_CODE", "\u00E9\u00E9\u00E9\u00E9\u00E9\u00E9", "SUB_COMP_CODE has 12 bytes in UTF-8; at most 10 can be bound.")]
+    public async Task GetLov_DependentCompanyListParentOverTenBytes_ReturnsBlockingParentWithoutReads(string name, string item, string value, string text)
+    {
+        var ports = new FakePorts();
+        var binds = new Dictionary<string, string?> { [item] = value };
+
+        var response = await Service(ports).GetLov(name, binds, null, Operator);
+
+        Assert.NotNull(response);
+        Assert.Equal(name, response.Name);
+        Assert.Empty(response.Rows);
+        AssertBlocking(response.Messages, item, text);
+        Assert.Empty(ports.Calls);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-107")]
+    [InlineData("SUB_COMPANY", "COMP_CODE", "1234567890", "SubCompany")]
+    [InlineData("SUB_COMPANY", "COMP_CODE", " 1234567890 ", "SubCompany")]
+    [InlineData("SUB_COMPANY", "COMP_CODE", "\u00E9\u00E9\u00E9\u00E9\u00E9", "SubCompany")]
+    [InlineData("THE_CLASS", "SUB_COMP_CODE", "1234567890", "TheClass")]
+    [InlineData("THE_CLASS", "SUB_COMP_CODE", "\u00E9\u00E9\u00E9\u00E9\u00E9", "TheClass")]
+    public async Task GetLov_DependentCompanyListParentOfTenBytes_QueriesTheList(string name, string item, string value, string query)
+    {
+        var ports = new FakePorts();
+        var binds = new Dictionary<string, string?> { [item] = value };
+
+        var response = await Service(ports).GetLov(name, binds, null, Operator);
+
+        Assert.NotNull(response);
+        Assert.Empty(response.Messages);
+        Assert.Equal(new[] { query }, ports.Calls);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-107")]
+    [InlineData("-1")]
+    [InlineData("0")]
+    [InlineData("+12")]
+    [InlineData("012")]
+    [InlineData("1.5")]
+    [InlineData("12a")]
+    [InlineData("99999999999")]
+    [InlineData(" 12")]
+    [InlineData("12 ")]
+    [InlineData(" 12 ")]
+    [InlineData("\t12")]
+    public async Task GetLov_ReservNoDoctorNotACanonicalPositiveNumber_ReturnsBlockingDocIdxWithoutReads(string docIdx)
+    {
+        var ports = new FakePorts();
+        var binds = new Dictionary<string, string?> { ["DOCIDX"] = docIdx, ["PATIENTNO"] = "P1" };
+
+        var response = await Service(ports).GetLov("RESERV_NO", binds, new DateTime(2026, 3, 31), Operator);
+
+        Assert.NotNull(response);
+        Assert.Empty(response.Rows);
+        AssertBlocking(response.Messages, "DOCIDX", "DOCIDX must be a positive whole number.");
+        Assert.Empty(ports.Calls);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-107")]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("+1")]
+    [InlineData("01")]
+    [InlineData("3")]
+    [InlineData(" 1")]
+    [InlineData("1 ")]
+    [InlineData(" 2 ")]
+    [InlineData("abc")]
+    public async Task GetLov_OffersPayTypeNotCashOrCredit_ReturnsBlockingPayTypeWithoutReads(string payType)
+    {
+        var ports = new FakePorts();
+        var binds = new Dictionary<string, string?> { ["PAYTYPE"] = payType };
+
+        var response = await Service(ports).GetLov("OFFERS", binds, new DateTime(2026, 3, 31), Operator);
+
+        Assert.NotNull(response);
+        Assert.Empty(response.Rows);
+        AssertBlocking(response.Messages, "PAYTYPE", "PAYTYPE must be 1 (Cash) or 2 (Credit).");
+        Assert.Empty(ports.Calls);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-107")]
+    [InlineData("1")]
+    [InlineData("2")]
+    public async Task GetLov_OffersPayTypeCashOrCredit_QueriesTheList(string payType)
+    {
+        var ports = new FakePorts();
+        var binds = new Dictionary<string, string?> { ["PAYTYPE"] = payType };
+
+        var response = await Service(ports).GetLov("OFFERS", binds, new DateTime(2026, 3, 31), Operator);
+
+        Assert.NotNull(response);
+        Assert.Empty(response.Messages);
+        Assert.Equal(new[] { "Offers" }, ports.Calls);
+    }
+
+    [Theory]
     [Trait("Decision", "D-77")]
     [InlineData("PATIENTNO", "P123456789012", "PATIENTNO has 13 characters; at most 12 can be bound.")]
     [InlineData("PATIENTNO", "\u00E9\u00E9\u00E9\u00E9\u00E9\u00E9\u00E9", "PATIENTNO has 14 bytes in UTF-8; at most 12 can be bound.")]
@@ -472,6 +577,355 @@ public sealed class InvoiceWorkflowRequestValidationTests
         Assert.Empty(ports.Calls);
     }
 
+    [Theory]
+    [Trait("Decision", "D-108")]
+    [InlineData("CLAIM_NO", 'C', 41, "CLAIM_NO has 41 characters; at most 40 can be bound.")]
+    [InlineData("CLAIM_NO", '\u00E9', 21, "CLAIM_NO has 42 bytes in UTF-8; at most 40 can be bound.")]
+    [InlineData("VISIT_UNIQUE", '9', 40, "VISIT_UNIQUE has 40 characters; at most 39 can be bound.")]
+    [InlineData("VISIT_UNIQUE", '\u00E9', 20, "VISIT_UNIQUE has 40 bytes in UTF-8; at most 39 can be bound.")]
+    public async Task NewDraft_ParameterOverItsWidth_WritesFieldValidation422WithoutReads(string item, char character, int length, string text)
+    {
+        var ports = new FakePorts();
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(
+            () => Service(ports).NewDraft(EntryParameters(item, new string(character, length)), Operator));
+        var written = await ProblemDetailsWriterTests.WriteHandled(error);
+
+        AssertWidthRefused(written, (item, text));
+        Assert.Empty(ports.Calls);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-108")]
+    [InlineData('C', 40)]
+    [InlineData('\u00E9', 20)]
+    public async Task NewDraft_ParametersAtTheirWidths_ReadTheClaimPreloadAndTheVisitDoctor(char character, int claimNoLength)
+    {
+        var ports = new FakePorts();
+        var parameters = new InvoiceEntryParameters { ClaimNo = new string(character, claimNoLength), VisitUnique = new string('9', 39) };
+
+        await Service(ports).NewDraft(parameters, Operator);
+
+        Assert.Contains("GetClaimPreload", ports.Calls);
+        Assert.Contains("GetVisitDoctor", ports.Calls);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-108")]
+    [InlineData("CLAIM_NO", 'C', 41, "CLAIM_NO has 41 characters; at most 40 can be bound.")]
+    [InlineData("CLAIM_NO", '\u00E9', 21, "CLAIM_NO has 42 bytes in UTF-8; at most 40 can be bound.")]
+    [InlineData("VISIT_UNIQUE", '9', 40, "VISIT_UNIQUE has 40 characters; at most 39 can be bound.")]
+    public async Task GetCoverage_ParameterOverItsWidth_ReturnsTheBlockingMessageWithoutLookups(string item, char character, int length, string text)
+    {
+        var ports = new FakePorts();
+
+        var response = await Service(ports).GetCoverage("P1", null, EntryParameters(item, new string(character, length)), Operator);
+
+        AssertBlocking(response.Messages, item, text);
+        Assert.Null(response.Coverage);
+        Assert.Empty(ports.Calls);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-108")]
+    public async Task GetCoverage_ParametersAtTheirWidths_ReadTheCoverage()
+    {
+        var ports = new FakePorts();
+        var parameters = new InvoiceEntryParameters { ClaimNo = new string('C', 40), VisitUnique = new string('9', 39) };
+
+        var response = await Service(ports).GetCoverage("P1", null, parameters, Operator);
+
+        Assert.Equal("GetPatientCoverage", ports.Calls[0]);
+        Assert.DoesNotContain(response.Messages, message => message.Text.EndsWith("can be bound.", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [Trait("Decision", "D-108")]
+    [InlineData("validate", "CLAIM_NO", 'C', 41, "CLAIM_NO has 41 characters; at most 40 can be bound.")]
+    [InlineData("validate", "VISIT_UNIQUE", '9', 40, "VISIT_UNIQUE has 40 characters; at most 39 can be bound.")]
+    [InlineData("preview", "CLAIM_NO", '\u00E9', 21, "CLAIM_NO has 42 bytes in UTF-8; at most 40 can be bound.")]
+    [InlineData("preview", "VISIT_UNIQUE", '9', 40, "VISIT_UNIQUE has 40 characters; at most 39 can be bound.")]
+    public async Task DraftRequest_ParameterOverItsWidth_WritesFieldValidation422WithoutReads(
+        string operation,
+        string item,
+        char character,
+        int length,
+        string text)
+    {
+        var ports = new FakePorts();
+        var draft = new DraftDto
+        {
+            Header = new InvoiceHeaderDraft { PatientNo = "P1" },
+            Parameters = EntryParameters(item, new string(character, length)),
+        };
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() => DraftRequest(Service(ports), operation, draft));
+        var written = await ProblemDetailsWriterTests.WriteHandled(error);
+
+        AssertWidthRefused(written, (item, text));
+        Assert.Empty(ports.Calls);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-108")]
+    public async Task Validate_PatientParametersAtTheirWidths_ReadTheClaimPreload()
+    {
+        var ports = new FakePorts();
+        var request = new ValidateDraftRequest
+        {
+            Target = "PATIENTNO",
+            Draft = new DraftDto
+            {
+                Header = new InvoiceHeaderDraft { PatientNo = "P1" },
+                Parameters = new InvoiceEntryParameters { ClaimNo = new string('C', 40), VisitUnique = new string('9', 39) },
+            },
+        };
+
+        await Service(ports).Validate(request, Operator);
+
+        Assert.Equal("GetClaimPreload", ports.Calls[0]);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-108")]
+    [InlineData('C', 11, "COMP_CODE has 11 characters; at most 10 can be bound.")]
+    [InlineData('\u00E9', 6, "COMP_CODE has 12 bytes in UTF-8; at most 10 can be bound.")]
+    public async Task Validate_CompCodeOverItsWidth_WritesFieldValidation422WithoutReads(char character, int length, string text)
+    {
+        var ports = new FakePorts();
+        var request = new ValidateDraftRequest
+        {
+            Target = "COMP_CODE",
+            Draft = new DraftDto { Header = new InvoiceHeaderDraft { PatientNo = "P1", CompCode = new string(character, length) } },
+        };
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() => Service(ports).Validate(request, Operator));
+        var written = await ProblemDetailsWriterTests.WriteHandled(error);
+
+        AssertWidthRefused(written, ("COMP_CODE", text));
+        Assert.Empty(ports.Calls);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-108")]
+    public async Task Validate_CompCodeAtItsWidth_ReadsTheCompanyType()
+    {
+        var ports = new FakePorts();
+        var request = new ValidateDraftRequest
+        {
+            Target = "COMP_CODE",
+            Draft = new DraftDto { Header = new InvoiceHeaderDraft { PatientNo = "P1", CompCode = new string('C', 10) } },
+        };
+
+        await Service(ports).Validate(request, Operator);
+
+        Assert.Contains("GetCompanyType", ports.Calls);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-108")]
+    [InlineData('S', 21, "SERVICEID on line 1 has 21 characters; at most 20 can be bound.")]
+    [InlineData('\u00E9', 11, "SERVICEID on line 1 has 22 bytes in UTF-8; at most 20 can be bound.")]
+    public async Task Preview_LineServiceIdOverItsWidth_WritesFieldValidation422NamingTheLineWithoutReads(char character, int length, string text)
+    {
+        var ports = new FakePorts();
+        var draft = new DraftDto
+        {
+            Header = new InvoiceHeaderDraft { PatientNo = "P1" },
+            Lines = new[] { new InvoiceLineDraft { ServiceId = new string(character, length), Qty = 1m, ClientId = "C1" } },
+        };
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() => Service(ports).Preview(draft, Operator));
+        var written = await ProblemDetailsWriterTests.WriteHandled(error);
+
+        AssertWidthRefused(written, ("SERVICEID", text));
+        Assert.Empty(ports.Calls);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-108")]
+    public async Task Preview_LineServiceIdAtItsWidth_ProceedsToTheReads()
+    {
+        var ports = new FakePorts();
+        var draft = new DraftDto
+        {
+            Header = new InvoiceHeaderDraft { PatientNo = "P1" },
+            Lines = new[] { new InvoiceLineDraft { ServiceId = new string('S', 20), Qty = 1m, ClientId = "C1" } },
+        };
+
+        var failure = await Record.ExceptionAsync(() => Service(ports).Preview(draft, Operator));
+
+        Assert.False(failure is ArgumentException { Data: var data } && data.Contains(ProblemDetailsWriter.MessagesDataKey));
+        Assert.NotEmpty(ports.Calls);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-108")]
+    public async Task ImportRequests_VisitUniqueOverItsWidth_WritesFieldValidation422WithoutReads()
+    {
+        var ports = new FakePorts();
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(
+            () => Service(ports).ImportRequests(RequestImport("P1", new string('9', 40), docId: 5), Operator));
+        var written = await ProblemDetailsWriterTests.WriteHandled(error);
+
+        AssertWidthRefused(written, ("VISIT_UNIQUE", "VISIT_UNIQUE has 40 characters; at most 39 can be bound."));
+        Assert.Empty(ports.Calls);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-108")]
+    public async Task ImportRequests_VisitUniqueAtItsWidth_ReadsTheSelectedRequestRows()
+    {
+        var ports = new FakePorts();
+
+        await Service(ports).ImportRequests(RequestImport("P1", new string('9', 39), docId: 5), Operator);
+
+        Assert.Contains("GetSelectedRequestRows", ports.Calls);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-108")]
+    [InlineData('S', 21, "SERVICEID has 21 characters; at most 20 can be bound.")]
+    [InlineData('\u00E9', 11, "SERVICEID has 22 bytes in UTF-8; at most 20 can be bound.")]
+    public async Task ImportPackage_PackageServiceIdOverItsWidth_ReturnsBlockingServiceIdMessageWithoutReads(char character, int length, string text)
+    {
+        var ports = new FakePorts();
+
+        var response = await Service(ports).ImportPackage(
+            new PackageImportRequest { PackageServiceId = " " + new string(character, length) + " " },
+            Operator);
+
+        AssertBlocking(response.Messages, "SERVICEID", text);
+        Assert.Empty(response.Lines);
+        Assert.Null(response.Result);
+        Assert.Empty(ports.Calls);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-108")]
+    public async Task ImportPackage_TrimmedPackageServiceIdAtItsWidth_ProceedsToTheReads()
+    {
+        var ports = new FakePorts();
+
+        var failure = await Record.ExceptionAsync(() => Service(ports).ImportPackage(
+            new PackageImportRequest { PackageServiceId = " " + new string('S', 20) + " " },
+            Operator));
+
+        Assert.False(failure is ArgumentException { Data: var data } && data.Contains(ProblemDetailsWriter.MessagesDataKey));
+        Assert.NotEmpty(ports.Calls);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-108")]
+    public async Task Validate_SeveralItemsOverTheirWidths_WritesEveryMessageInItemThenLineOrder()
+    {
+        var ports = new FakePorts();
+        var request = new ValidateDraftRequest
+        {
+            Target = "RECORD",
+            Draft = new DraftDto
+            {
+                Header = new InvoiceHeaderDraft { PatientNo = "P123456789012", CompCode = new string('C', 11) },
+                Parameters = new InvoiceEntryParameters { ClaimNo = new string('C', 41), VisitUnique = new string('9', 40) },
+                Lines = new[]
+                {
+                    new InvoiceLineDraft { ServiceId = "S1", Qty = 1m, ClientId = "C1" },
+                    new InvoiceLineDraft { ServiceId = new string('S', 21), Qty = 1m, ClientId = "C2" },
+                },
+            },
+        };
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() => Service(ports).Validate(request, Operator));
+        var written = await ProblemDetailsWriterTests.WriteHandled(error);
+
+        AssertWidthRefused(
+            written,
+            ("PATIENTNO", "PATIENTNO has 13 characters; at most 12 can be bound."),
+            ("CLAIM_NO", "CLAIM_NO has 41 characters; at most 40 can be bound."),
+            ("VISIT_UNIQUE", "VISIT_UNIQUE has 40 characters; at most 39 can be bound."),
+            ("COMP_CODE", "COMP_CODE has 11 characters; at most 10 can be bound."),
+            ("SERVICEID", "SERVICEID on line 2 has 21 characters; at most 20 can be bound."));
+        Assert.Empty(ports.Calls);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-108")]
+    [InlineData("CLAIM_NO", 'C', 41, "CLAIM_NO has 41 characters; at most 40 can be bound.")]
+    [InlineData("VISIT_UNIQUE", '9', 40, "VISIT_UNIQUE has 40 characters; at most 39 can be bound.")]
+    [InlineData("COMP_CODE", 'K', 11, "COMP_CODE has 11 characters; at most 10 can be bound.")]
+    public async Task Create_ItemOverItsWidth_WritesFieldValidation422BeforeAnyDraftRead(string item, char character, int length, string text)
+    {
+        var ports = new FakePorts();
+        var value = new string(character, length);
+        var request = item == "COMP_CODE"
+            ? CreateRequest(new InvoiceHeaderDraft { PatientNo = "P1", CompCode = value }, new InvoiceEntryParameters())
+            : CreateRequest(new InvoiceHeaderDraft { PatientNo = "P1" }, EntryParameters(item, value));
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() => Service(ports).Create(request, Operator));
+        var written = await ProblemDetailsWriterTests.WriteHandled(error);
+
+        AssertWidthRefused(written, (item, text));
+        Assert.Equal(nameof(IInvoiceQueries.GetCreateRequest), ports.Calls[0]);
+        Assert.DoesNotContain(nameof(IInvoiceQueries.GetClaimPreload), ports.Calls);
+        Assert.DoesNotContain(nameof(ILookupQueries.GetPatientCoverage), ports.Calls);
+        Assert.DoesNotContain(nameof(ILookupQueries.GetCompanyType), ports.Calls);
+        Assert.DoesNotContain(nameof(ILookupQueries.GetVisitDoctor), ports.Calls);
+        Assert.DoesNotContain(nameof(IOracleSessionFactory.Open), ports.Calls);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-108")]
+    public async Task Create_ItemsAtTheirWidths_ReadTheClaimPreload()
+    {
+        var ports = new FakePorts();
+        var request = CreateRequest(
+            new InvoiceHeaderDraft { PatientNo = "P1", CompCode = new string('K', 10) },
+            new InvoiceEntryParameters { ClaimNo = new string('C', 40), VisitUnique = new string('9', 39) });
+
+        await Service(ports).Create(request, Operator);
+
+        Assert.Contains(nameof(IInvoiceQueries.GetClaimPreload), ports.Calls);
+    }
+
+    private static CreateInvoiceRequest CreateRequest(InvoiceHeaderDraft header, InvoiceEntryParameters parameters) => new()
+    {
+        Draft = new DraftDto
+        {
+            RequestId = "0123456789ABCDEF0123456789ABCDEF",
+            DraftSeal = FakePorts.DraftSeal,
+            Header = header,
+            Parameters = parameters,
+        },
+    };
+
+    private static InvoiceEntryParameters EntryParameters(string item, string value) => item switch
+    {
+        "CLAIM_NO" => new InvoiceEntryParameters { ClaimNo = value },
+        "VISIT_UNIQUE" => new InvoiceEntryParameters { VisitUnique = value },
+        _ => throw new ArgumentOutOfRangeException(nameof(item), item, null),
+    };
+
+    private static Task DraftRequest(InvoiceWorkflowService service, string operation, DraftDto draft) => operation switch
+    {
+        "validate" => service.Validate(new ValidateDraftRequest { Target = "PATIENTNO", Draft = draft }, Operator),
+        "preview" => service.Preview(draft, Operator),
+        _ => throw new ArgumentOutOfRangeException(nameof(operation), operation, null),
+    };
+
+    private static void AssertWidthRefused(
+        (int Status, string? ContentType, System.Text.Json.JsonElement Body) written,
+        params (string Field, string Text)[] expected)
+    {
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, written.Status);
+        Assert.Equal("field-validation", written.Body.GetProperty("type").GetString());
+        var messages = written.Body.GetProperty("messages").EnumerateArray().ToArray();
+        Assert.Equal(
+            expected,
+            messages.Select(message => (message.GetProperty("field").GetString() ?? string.Empty, message.GetProperty("text").GetString() ?? string.Empty)).ToArray());
+        Assert.All(messages, message => Assert.Equal(ValidationMessage.Blocking, message.GetProperty("severity").GetString()));
+    }
+
     private static void AssertPatientNoRefused((int Status, string? ContentType, System.Text.Json.JsonElement Body) written, string text)
     {
         Assert.Equal(StatusCodes.Status422UnprocessableEntity, written.Status);
@@ -508,6 +962,9 @@ public sealed class InvoiceWorkflowRequestValidationTests
 
         /// <summary>Database time returned by the lookups' database-time read.</summary>
         public DateTime DatabaseTime { get; } = new(2026, 1, 2, 3, 4, 5, DateTimeKind.Unspecified);
+
+        /// <summary>Seal returned by every draft-date seal, so a request carrying it passes the issued-date check.</summary>
+        public static string DraftSeal { get; } = new('A', 64);
 
         /// <summary>Date passed to the last date-filtered LOV query.</summary>
         public DateTime? LovDate { get; private set; }
@@ -560,6 +1017,8 @@ public sealed class InvoiceWorkflowRequestValidationTests
                     return Task.FromResult((IOracleSession)Port(typeof(IOracleSession), SessionPrefix));
                 case nameof(ILookupQueries.GetDatabaseTime):
                     return Task.FromResult(DatabaseTime);
+                case nameof(IBilInvoiceApiGateway.SealDraftDate):
+                    return DraftSeal;
                 case nameof(ILovQueries.ReservNo) or nameof(ILovQueries.Offers):
                     LovDate = args.OfType<DateTime>().First();
                     break;

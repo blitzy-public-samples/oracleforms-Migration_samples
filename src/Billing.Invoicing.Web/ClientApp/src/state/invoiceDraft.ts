@@ -15,6 +15,7 @@ import type {
   NewDraftResponse,
   PreviewResponse,
   ValidateDraftResponse,
+  ValidateTarget,
 } from '../api/types';
 import type { ApiError } from '../api/client';
 
@@ -139,6 +140,30 @@ export const ADJUSTED_KEY_MAP: Readonly<Record<AdjustedKey, AdjustedTarget>> = {
   DOCIDX: { scope: 'header', field: 'docId' },
   LDISCT: { scope: 'line', field: 'discountType' },
   REUND: { scope: 'display', key: 'REUND' },
+};
+
+/** Validation targets whose message source holds a Save verdict. */
+const VALIDATE_TARGETS: Readonly<Record<ValidateTarget, true>> = {
+  PATIENTNO: true,
+  COMP_CODE: true,
+  DOCIDX: true,
+  CLINICID: true,
+  DEPT_WISE: true,
+  CALL: true,
+  FINALDISC_PERC: true,
+  FINALDISC: true,
+  AMOUNT_1: true,
+  AMOUNT_2: true,
+  SUB_PAYTYPE: true,
+  SERVICEID: true,
+  QTY: true,
+  LDISCT: true,
+  APPROV_REF_NO: true,
+  PRICE: true,
+  DISC: true,
+  MY_DISC: true,
+  LINE: true,
+  RECORD: true,
 };
 
 const DISCOUNT_LIMIT_TEXT = 'Maximum discount allawed is';
@@ -463,6 +488,11 @@ function isUnavailable(error: ApiError): boolean {
   return error.status === 503 || error.type === 'oracle-unavailable';
 }
 
+/** True for a source whose messages hold a Save verdict: `PREVIEW`, a `LINE:<i>:<TARGET>` key or a validation target. */
+function isVerdictSource(source: string): boolean {
+  return source === 'PREVIEW' || LINE_KEY.test(source) || Object.hasOwn(VALIDATE_TARGETS, source);
+}
+
 /** Applies an API failure for `source` to messages, open items, errors or the connectivity flag; `lineClientId` names the line of a `LINE:<i>:<TARGET>` source. */
 function applyError(state: InvoiceDraftState, source: string, error: ApiError, lineClientId: string | null = null): InvoiceDraftState {
   const message = error.message ?? '';
@@ -472,6 +502,12 @@ function applyError(state: InvoiceDraftState, source: string, error: ApiError, l
 
   if (error.status === 503 || error.type === 'oracle-unavailable') {
     return { ...state, connectivityDown: true };
+  }
+
+  // A success body the client rejected leaves a verdict source with one Blocking form-level message until its next result (D-119).
+  if (error.type === 'invalid-response' && isVerdictSource(source)) {
+    const rejected: MessageDto = { field: null, text: message, severity: 'Blocking', rule: null };
+    return { ...state, messages: replaceSource(state.messages, source, [rejected]) };
   }
 
   if (error.status === 501 || error.type === 'open-item') {
@@ -1023,7 +1059,7 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
   }
 }
 
-/** True when the draft can be submitted: loaded, unsaved, editable, conflict-free, without rejected entries and without Blocking messages. */
+/** True when the draft can be submitted: loaded, unsaved, editable, conflict-free, without rejected entries and without messages other than warnings. */
 export function canSave(state: InvoiceDraftState): boolean {
   if (state.draft === null || state.saved !== null || state.readOnly || state.idempotencyConflict !== null) {
     return false;
@@ -1031,7 +1067,7 @@ export function canSave(state: InvoiceDraftState): boolean {
   if (Object.keys(state.entryErrors).length > 0) {
     return false;
   }
-  return !Object.values(state.messages).some((list) => list.some((m) => m.severity === 'Blocking'));
+  return !Object.values(state.messages).some((list) => list.some((m) => m.severity !== 'Warning'));
 }
 
 /** Parses operator text into a decimal entry, keeping the text as entered and rejecting what the Api would read differently. */

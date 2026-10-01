@@ -29,7 +29,7 @@ public static class ClientIdBinder
                 continue;
             }
 
-            // A client id over the t_vc element size in characters or UTF-8 bytes is rejected, never truncated to fit.
+            // A client id over the t_vc element size in characters or UTF-8 bytes is rejected, never truncated to fit (D-109).
             string? rejection = null;
             if (clientId.Length > MaxElementLength)
             {

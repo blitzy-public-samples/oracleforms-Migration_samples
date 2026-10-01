@@ -28,9 +28,9 @@ public sealed record FixtureMessage(string? Field, string Text, string Severity)
 public sealed record FixtureError(string Package, int Number, string MessagePrefix);
 
 /// <summary>Comparison settings of a fixture document.</summary>
-/// <param name="MoneyDecimals">Scale at which numeric values not keyed in <paramref name="Decimals"/> are compared.</param>
+/// <param name="MoneyDecimals">Scale at which numeric values whose keys are in neither <paramref name="Exact"/> nor <paramref name="Decimals"/> are compared.</param>
 /// <param name="Exact">Value keys compared as exact text.</param>
-/// <param name="Decimals">Value keys whose numbers are compared as exact decimals, each mapped to the largest scale its expected value may carry.</param>
+/// <param name="Decimals">Value keys whose numbers are compared as exact decimals, each mapped to the maximum fractional scale allowed in its expected value.</param>
 public sealed record FixtureCompare(int MoneyDecimals, IReadOnlyList<string> Exact, IReadOnlyDictionary<string, int>? Decimals = null);
 
 /// <summary>Database rows and shared-package outputs a package case assumes.</summary>
@@ -133,7 +133,7 @@ public static partial class ParityFixture
         throw new KeyNotFoundException($"Fixture '{id}' has no case '{name}'.");
     }
 
-    /// <summary>Whether a case is derivable and therefore asserted.</summary>
+    /// <summary>Whether a case's status is derivable.</summary>
     /// <param name="c">The case.</param>
     /// <returns>True when the case status is <see cref="Derivable"/>.</returns>
     public static bool IsDerivable(FixtureCase c)

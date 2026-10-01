@@ -88,7 +88,7 @@ public static class HeaderInputBinder
     {
         if (value is not null)
         {
-            // A value over the field width in characters or UTF-8 bytes is rejected, never truncated to fit.
+            // A value over the field width in characters or UTF-8 bytes is rejected, never truncated to fit (D-109).
             string? rejection = null;
             if (value.Length > maxLength)
             {

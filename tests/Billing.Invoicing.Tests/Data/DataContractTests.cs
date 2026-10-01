@@ -1,14 +1,20 @@
+using System.Data;
 using System.Globalization;
 using System.Reflection;
 using System.Text.RegularExpressions;
+using System.Xml.Linq;
+using Billing.Invoicing.Data.Errors;
 using Billing.Invoicing.Data.Oracle;
 using Billing.Invoicing.Data.Plsql;
 using Billing.Invoicing.Data.Queries;
 using Billing.Invoicing.Domain.Model;
+using Dapper;
+using Microsoft.Data.Sqlite;
+using Oracle.ManagedDataAccess.Client;
 
 namespace Billing.Invoicing.Tests.Data;
 
-/// <summary>T_INV block, T082 and T085 query predicates, the D-12 selected-row mapping (D-26) and the D-93 saved-invoice projection of <see cref="InvoiceQueries"/>, and the D-12 approval check mode of <see cref="BilImportGateway"/>.</summary>
+/// <summary>Data-layer query predicates, binds and row mappings, including the D-93 saved-invoice projections and the D-108 bind-width guards, and the D-12 approval check mode of <see cref="BilImportGateway"/>.</summary>
 [Trait("Category", "DataUnit")]
 public sealed class DataContractTests
 {
@@ -36,6 +42,7 @@ public sealed class DataContractTests
     private const string ReqNeedAColumn = "REQ_NEED_A";
     private const string ApprovRefNoColumn = "APPROV_REF_NO";
     private const string ClaimBind = "claimNo";
+    private const string PackListParametersName = "PackListParameters";
 
     private const string LineRowTypeName = "InvoiceLineRow";
     private const string LineDraftMapperName = "ToLineDraft";
@@ -66,9 +73,66 @@ public sealed class DataContractTests
     private const string TotalDiscountColumn = "TOTAL_DISCOUNT";
     private const string TotalNetColumn = "TOTAL_NET";
 
+    private const string SolutionFileName = "SmallCashInvoice.sln";
+    private const string FormExportPath = "05_Complex/Inv_Small_Cash.xml";
+    private const string EncodedNewline = "&#10;";
+    private const string OwnCentre = "7";
+    private const string ForeignCentre = "8";
+    private const string OwnCompany = "C1";
+    private const string ForeignCompany = "C9";
+    private const string PatientHolding = "P1";
+    private const int ActiveDoctor = 12;
+    private const int InactiveDoctor = 13;
+    private const int ForeignDoctor = 14;
+
+    private const string LovSeed =
+        "WITH COMPANYS (COMP_CODE, COMP_NAME, comp_type, parent_comp) AS (VALUES "
+        + "('S2', 'Second sub', 3, 'C1'), "
+        + "('S1', 'First sub', 3, 'C1'), "
+        + "('S9', 'Foreign sub', 3, 'C9'), "
+        + "('C1', 'Own company', 1, NULL), "
+        + "('C9', 'Foreign company', 1, NULL)), "
+        + "v_VALID_MAIN_CO (COMP_CODE, COMP_NAME, info_center_id) AS (VALUES "
+        + "('C1', 'Own company', '7'), "
+        + "('C9', 'Foreign company', '8')), "
+        + "DISC_CLASSES (CLASS_CODE, CLASS_NAME, COMP_CODE) AS (VALUES "
+        + "(1, 'Gold', 'S1'), "
+        + "(2, 'Silver', 'S1'), "
+        + "(3, 'Main', 'C1'), "
+        + "(9, 'Foreign', 'S9')), "
+        + "DOCTORS (DOCID, DOC_NAME, CLINICID, DOC_ACTIVE, CURR_INFO_CENTER) AS (VALUES "
+        + "(12, 'Own active', 5, 1, '7'), "
+        + "(13, 'Own inactive', 5, 0, '7'), "
+        + "(14, 'Foreign active', 5, 1, '8')), "
+        + "CLINICS (CLINICID, CLINICNAME) AS (VALUES "
+        + "(5, 'Clinic five')), "
+        + "DOC_DATES (RESERV_NO, THE_TIME, PATAINTNO, PATIENTNAME, DOC_DATES_ROW_ID, THE_DATE, DOCID, PFLAG) AS (VALUES "
+        + "(1, '10:00', NULL, NULL, 101, '2026-03-31 00:00:00', 12, 'AM'), "
+        + "(2, '10:15', 'P1', 'Patient one', 102, '2026-03-31 00:00:00', 12, 'AM'), "
+        + "(3, '10:30', 'P2', 'Patient two', 103, '2026-03-31 00:00:00', 12, 'AM'), "
+        + "(4, '11:00', NULL, NULL, 104, '2026-03-31 00:00:00', 13, 'AM'), "
+        + "(5, '11:15', NULL, NULL, 105, '2026-03-31 00:00:00', 14, 'AM')), "
+        + "PAY_TYPES (PAY_TYPE_ID, PAY_TYPE_NAME_en, PAY_TYPE_NAME_ar, PAY_TYPE_ACC_NO, PAY_COMM_RATE, PAY_COMM_ACC, RECEP_USe) AS (VALUES "
+        + "(1, 'Mada', 'Mada AR', '4001', 1.5, '4002', 1), "
+        + "(2, 'Visa', 'Visa AR', '4003', 2.5, '4004', 1), "
+        + "(3, 'Internal', 'Internal AR', '4005', 0, '4006', 0)) ";
+
+    private static readonly DateTime ReservationDate = new(2026, 3, 31);
+
     private static readonly string[] RequestRowApprovalColumns = ["REQ_A_STATUS", "REQ_NEED_A", "APPROV_REF_NO"];
 
     private static readonly string[] ClaimPreloadCardColumns = ["INS_NUMBER", "CARD_END", "PAT_POLICY_NO"];
+
+    private static readonly (string Form, string Target)[] RecordGroupBindNames =
+    [
+        (":global.lang", ":lang"),
+        (":t_inv.comp_Code", ":compCode"),
+        (":SUB_COMP_CODE", ":subCompCode"),
+        (":invdate", ":invDate"),
+        (":docidx", ":docId"),
+        (":global.reserv_system_500", ":reservSystem500"),
+        (":PATIENTNO", ":patientNo"),
+    ];
 
     private static readonly Regex WhitespaceRun = new(@"\s+", RegexOptions.CultureInvariant);
 
@@ -344,6 +408,180 @@ public sealed class DataContractTests
     }
 
     [Theory]
+    [Trait("Decision", "D-108")]
+    [InlineData("C-7788")]
+    [InlineData(null)]
+    public void BoundedInput_AtOrWithinWidth_IsAnAnsiVarchar2SizedToTheWidth(string? claimNo)
+    {
+        var parameters = new DynamicParameters();
+
+        BoundedVarchar2.AddInput(parameters, ClaimBind, claimNo, BoundedVarchar2.ClaimNoBytes, ClaimBind);
+
+        DbString bound = parameters.Get<DbString>(ClaimBind);
+        Assert.Equal(claimNo, bound.Value);
+        Assert.True(bound.IsAnsi);
+        Assert.False(bound.IsFixedLength);
+        Assert.Equal(BoundedVarchar2.ClaimNoBytes, bound.Length);
+
+        using var command = new OracleCommand();
+        bound.AddParameter(command, ClaimBind);
+
+        OracleParameter parameter = Assert.Single(command.Parameters.Cast<OracleParameter>());
+        Assert.Equal(ClaimBind, parameter.ParameterName);
+        Assert.Equal(OracleDbType.Varchar2, parameter.OracleDbType);
+        Assert.Equal(ParameterDirection.Input, parameter.Direction);
+        Assert.Equal(BoundedVarchar2.ClaimNoBytes, parameter.Size);
+        Assert.Equal((object?)claimNo ?? DBNull.Value, parameter.Value);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-108")]
+    [InlineData('C', 41, "claimNo has 41 characters; at most 40 can be bound.")]
+    [InlineData('\u00E9', 21, "claimNo has 42 bytes in UTF-8; at most 40 can be bound.")]
+    public void BoundedInput_OverWidth_IsRejectedAndNotBound(char character, int length, string expectedText)
+    {
+        var parameters = new DynamicParameters();
+
+        ArgumentException error = Assert.Throws<ArgumentException>(
+            () => BoundedVarchar2.AddInput(parameters, ClaimBind, new string(character, length), BoundedVarchar2.ClaimNoBytes, ClaimBind));
+
+        Assert.Equal(ClaimBind, error.ParamName);
+        Assert.Equal(expectedText, error.Data[OracleFailureTranslator.BindingRejectionKey]);
+        Assert.Empty(parameters.ParameterNames);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-108")]
+    public void BoundedInputList_ExpandsIntoAnsiVarchar2ElementsSizedToTheServiceIdWidth()
+    {
+        string atWidth = new('S', BoundedVarchar2.ServiceIdBytes);
+
+        DbString[] elements = BoundedVarchar2.InputList(ServiceIdsBind, ["S1", atWidth], BoundedVarchar2.ServiceIdBytes, ServiceIdsBind);
+
+        Assert.Equal(new[] { "S1", atWidth }, elements.Select(element => element.Value));
+        Assert.All(elements, element =>
+        {
+            Assert.True(element.IsAnsi);
+            Assert.Equal(BoundedVarchar2.ServiceIdBytes, element.Length);
+        });
+
+        MethodInfo? packList = typeof(SqlMapper).GetMethod(PackListParametersName, BindingFlags.Public | BindingFlags.Static);
+        Assert.NotNull(packList);
+
+        using var command = new OracleCommand(LookupQueries.GetServiceQueueFlagsSql);
+        packList.Invoke(null, BindingFlags.DoNotWrapExceptions, null, [command, ServiceIdsBind, elements], CultureInfo.InvariantCulture);
+
+        OracleParameter[] expanded = command.Parameters.Cast<OracleParameter>().ToArray();
+        Assert.Equal(new[] { ServiceIdsBind + "1", ServiceIdsBind + "2" }, expanded.Select(parameter => parameter.ParameterName));
+        Assert.Equal(new object[] { "S1", atWidth }, expanded.Select(parameter => parameter.Value));
+        Assert.All(expanded, parameter =>
+        {
+            Assert.Equal(OracleDbType.Varchar2, parameter.OracleDbType);
+            Assert.Equal(BoundedVarchar2.ServiceIdBytes, parameter.Size);
+        });
+        Assert.EndsWith($"SERVICEID IN (:{ServiceIdsBind}1,:{ServiceIdsBind}2)", command.CommandText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-108")]
+    public void BoundedInputList_OverWidthElement_IsRejected()
+    {
+        ArgumentException error = Assert.Throws<ArgumentException>(
+            () => BoundedVarchar2.InputList(ServiceIdsBind, ["S1", new string('S', 21)], BoundedVarchar2.ServiceIdBytes, ServiceIdsBind));
+
+        Assert.Equal(ServiceIdsBind, error.ParamName);
+        Assert.Equal("serviceIds has 21 characters; at most 20 can be bound.", error.Data[OracleFailureTranslator.BindingRejectionKey]);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-108")]
+    [InlineData("visit-doctor", VisitBind, "visitUnique has 40 characters; at most 39 can be bound.")]
+    [InlineData("visit-doctor-bytes", VisitBind, "visitUnique has 40 bytes in UTF-8; at most 39 can be bound.")]
+    [InlineData("company-type", "compCode", "compCode has 11 characters; at most 10 can be bound.")]
+    [InlineData("company-is-direct", "compCode", "compCode has 11 characters; at most 10 can be bound.")]
+    [InlineData("class-advanced-mode", "subCompCode", "subCompCode has 11 characters; at most 10 can be bound.")]
+    [InlineData("requested-services", ClaimBind, "claimNo has 41 characters; at most 40 can be bound.")]
+    [InlineData("service-profile", "serviceId", "serviceId has 21 characters; at most 20 can be bound.")]
+    [InlineData("package-component-flags", "packageServiceId", "packageServiceId has 21 characters; at most 20 can be bound.")]
+    [InlineData("service-profiles", ServiceIdsBind, "serviceIds has 21 characters; at most 20 can be bound.")]
+    [InlineData("service-queue-flags", ServiceIdsBind, "serviceIds has 21 characters; at most 20 can be bound.")]
+    [InlineData("claim-preload", ClaimBind, "claimNo has 41 characters; at most 40 can be bound.")]
+    [InlineData("claim-preload-bytes", ClaimBind, "claimNo has 41 bytes in UTF-8; at most 40 can be bound.")]
+    [InlineData("patient-coverage", PatientBind, "patientNo has 13 characters; at most 12 can be bound.")]
+    [InlineData("patient-coverage-bytes", PatientBind, "patientNo has 13 bytes in UTF-8; at most 12 can be bound.")]
+    [InlineData("clinic-profile", PatientBind, "patientNo has 13 characters; at most 12 can be bound.")]
+    [InlineData("patient-card-id", PatientBind, "patientNo has 13 characters; at most 12 can be bound.")]
+    [InlineData("selected-request-rows-patient", PatientBind, "patientNo has 13 characters; at most 12 can be bound.")]
+    [InlineData("selected-request-rows-visit", VisitBind, "visitUnique has 40 characters; at most 39 can be bound.")]
+    [InlineData("selected-request-rows-visit-bytes", VisitBind, "visitUnique has 40 bytes in UTF-8; at most 39 can be bound.")]
+    [InlineData("last-invoice-no", InfoCenterBind, "infoCenterId has 11 characters; at most 10 can be bound.")]
+    [InlineData("last-invoice-no-bytes", InfoCenterBind, "infoCenterId has 11 bytes in UTF-8; at most 10 can be bound.")]
+    [InlineData("create-request", "requestId", "requestId has 65 characters; at most 64 can be bound.")]
+    [InlineData("create-request-bytes", "requestId", "requestId has 65 bytes in UTF-8; at most 64 can be bound.")]
+    public async Task QueryBind_OverWidthIsRefusedBeforeTheConnectionOpensAndAtWidthReachesIt(string queryCase, string paramName, string expectedText)
+    {
+        ArgumentException error = await Assert.ThrowsAsync<ArgumentException>(() => InvokeQuery(queryCase, overWidth: true));
+
+        Assert.Equal(paramName, error.ParamName);
+        Assert.Equal(expectedText, error.Data[OracleFailureTranslator.BindingRejectionKey]);
+
+        DataFailure? failure = new OracleFailureTranslator().Translate(error);
+        Assert.NotNull(failure);
+        Assert.Equal(422, failure.Status);
+        Assert.Equal("field-validation", failure.Type);
+        Assert.Equal(expectedText, failure.Message);
+        Assert.Null(failure.Field);
+
+        InvalidOperationException open = await Assert.ThrowsAsync<InvalidOperationException>(() => InvokeQuery(queryCase, overWidth: false));
+
+        Assert.True(open.Data[OracleFailureTranslator.ConfigurationFaultKey] is true);
+    }
+
+    /// <summary>Calls one width-checked query, over a blank connection string, with its checked bind one past or exactly at its width.</summary>
+    /// <param name="queryCase">Query and value kind to call.</param>
+    /// <param name="overWidth">True for a value one past the width.</param>
+    /// <returns>The query's task.</returns>
+    private static Task InvokeQuery(string queryCase, bool overWidth)
+    {
+        var options = new InvoicingDataOptions();
+        var lookups = new LookupQueries(options);
+        string Wide(int width) => new('9', overWidth ? width + 1 : width);
+        string WideInBytes(int width)
+        {
+            int bytes = overWidth ? width + 1 : width;
+            return new string('\u00E9', bytes / 2) + new string('9', bytes % 2);
+        }
+
+        return queryCase switch
+        {
+            "visit-doctor" => lookups.GetVisitDoctor(Wide(BoundedVarchar2.VisitUniqueBytes)),
+            "visit-doctor-bytes" => lookups.GetVisitDoctor(WideInBytes(BoundedVarchar2.VisitUniqueBytes)),
+            "company-type" => lookups.GetCompanyType(Wide(BoundedVarchar2.CompCodeBytes)),
+            "company-is-direct" => lookups.GetCompanyIsDirect(Wide(BoundedVarchar2.CompCodeBytes)),
+            "class-advanced-mode" => lookups.GetClassAdvancedMode(Wide(BoundedVarchar2.SubCompCodeBytes), "4"),
+            "requested-services" => lookups.GetRequestedServices(Wide(BoundedVarchar2.ClaimNoBytes), 1m),
+            "service-profile" => lookups.GetServiceProfile(Wide(BoundedVarchar2.ServiceIdBytes), 1m),
+            "package-component-flags" => lookups.GetPackageComponentFlags(Wide(BoundedVarchar2.ServiceIdBytes), 1m),
+            "service-profiles" => lookups.GetServiceProfiles(["S1", Wide(BoundedVarchar2.ServiceIdBytes)], 1m),
+            "service-queue-flags" => lookups.GetServiceQueueFlags(["S1", Wide(BoundedVarchar2.ServiceIdBytes)], 1m),
+            "claim-preload" => new InvoiceQueries(options).GetClaimPreload(Wide(BoundedVarchar2.ClaimNoBytes)),
+            "claim-preload-bytes" => new InvoiceQueries(options).GetClaimPreload(WideInBytes(BoundedVarchar2.ClaimNoBytes)),
+            "patient-coverage" => lookups.GetPatientCoverage(Wide(BoundedVarchar2.PatientNoBytes)),
+            "patient-coverage-bytes" => lookups.GetPatientCoverage(WideInBytes(BoundedVarchar2.PatientNoBytes)),
+            "clinic-profile" => lookups.GetClinicProfile(5, Wide(BoundedVarchar2.PatientNoBytes)),
+            "patient-card-id" => lookups.GetPatientCardId(Wide(BoundedVarchar2.PatientNoBytes)),
+            "selected-request-rows-patient" => new InvoiceQueries(options).GetSelectedRequestRows(Wide(BoundedVarchar2.PatientNoBytes), "41", 1),
+            "selected-request-rows-visit" => new InvoiceQueries(options).GetSelectedRequestRows(PatientHolding, Wide(BoundedVarchar2.VisitUniqueBytes), 1),
+            "selected-request-rows-visit-bytes" => new InvoiceQueries(options).GetSelectedRequestRows(PatientHolding, WideInBytes(BoundedVarchar2.VisitUniqueBytes), 1),
+            "last-invoice-no" => new InvoiceQueries(options).GetLastInvoiceNo(Wide(BoundedVarchar2.InfoCenterIdBytes)),
+            "last-invoice-no-bytes" => new InvoiceQueries(options).GetLastInvoiceNo(WideInBytes(BoundedVarchar2.InfoCenterIdBytes)),
+            "create-request" => new InvoiceQueries(options).GetCreateRequest(Wide(BoundedVarchar2.RequestIdBytes)),
+            "create-request-bytes" => new InvoiceQueries(options).GetCreateRequest(WideInBytes(BoundedVarchar2.RequestIdBytes)),
+            _ => throw new ArgumentOutOfRangeException(nameof(queryCase), queryCase, null),
+        };
+    }
+
+    [Theory]
     [Trait("Decision", "D-93")]
     [InlineData(nameof(InvoiceQueries.GetInvoiceLinesSql))]
     [InlineData(nameof(InvoiceQueries.GetMoreDetailsLinesSql))]
@@ -499,6 +737,136 @@ public sealed class DataContractTests
         Assert.Equal(invDate, header.InvDate);
     }
 
+    [Theory]
+    [Trait("Decision", "D-105")]
+    [InlineData(LovQueries.PayTypesSql, "SELECTPAY_TYPE_ID,PAY_TYPE_NAMEFROM(")]
+    [InlineData(LovQueries.ReservNoSql, "SELECTRESERV_NO,THE_TIME,PATAINTNOFROM(")]
+    public void PaymentAndReservationLovs_ProjectOnlyTheLovMappedColumns(string sql, string projection)
+    {
+        Assert.StartsWith(projection, Squash(sql), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-105")]
+    [Trait("Decision", "D-106")]
+    [InlineData(LovQueries.PayTypesSql, "PAY_TYPE")]
+    [InlineData(LovQueries.ReservNoSql, "RESERV_NO")]
+    [InlineData(LovQueries.SubCompanySql, "SUB_COMP")]
+    [InlineData(LovQueries.TheClassSql, "THE_CLASS")]
+    public void WrappedLov_KeepsItsRecordGroupSelectVerbatimExceptForBindNames(string sql, string recordGroup)
+    {
+        Assert.Contains(RecordGroupSelect(recordGroup), sql, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-106")]
+    [InlineData(LovQueries.SubCompanySql, "compCode,infoCenterId")]
+    [InlineData(LovQueries.TheClassSql, "subCompCode,infoCenterId")]
+    [InlineData(LovQueries.ReservNoSql, "invDate,docId,reservSystem500,patientNo,infoCenterId")]
+    public void DependentLov_BindsItsRecordGroupItemsAndTheInformationCentre(string sql, string binds)
+    {
+        Assert.Equal(binds.Split(','), Binds(sql));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-106")]
+    public async Task SubCompanySql_InSqlite_ListsOnlySubCompaniesOfACompanyOfTheCentre()
+    {
+        var own = await LovRows(LovQueries.SubCompanySql, new { compCode = OwnCompany, infoCenterId = OwnCentre });
+        var foreign = await LovRows(LovQueries.SubCompanySql, new { compCode = ForeignCompany, infoCenterId = OwnCentre });
+        var foreignAtItsCentre = await LovRows(LovQueries.SubCompanySql, new { compCode = ForeignCompany, infoCenterId = ForeignCentre });
+
+        Assert.Equal(new object?[] { "S1", "S2" }, own.Select(row => row["COMP_CODE"]));
+        Assert.All(own, row => Assert.Equal(new[] { "COMP_CODE", "COMP_NAME" }, row.Keys));
+        Assert.Empty(foreign);
+        Assert.Equal(new object?[] { "S9" }, foreignAtItsCentre.Select(row => row["COMP_CODE"]));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-106")]
+    public async Task TheClassSql_InSqlite_ListsOnlyClassesOfASubCompanyOfACompanyOfTheCentre()
+    {
+        var own = await LovRows(LovQueries.TheClassSql, new { subCompCode = "S1", infoCenterId = OwnCentre });
+        var foreign = await LovRows(LovQueries.TheClassSql, new { subCompCode = "S9", infoCenterId = OwnCentre });
+        var notASubCompany = await LovRows(LovQueries.TheClassSql, new { subCompCode = OwnCompany, infoCenterId = OwnCentre });
+
+        Assert.Equal(new object?[] { 1L, 2L }, own.Select(row => row["CLASS_CODE"]).Order());
+        Assert.All(own, row => Assert.Equal(new[] { "CLASS_CODE", "CLASS_NAME" }, row.Keys));
+        Assert.Empty(foreign);
+        Assert.Empty(notASubCompany);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-105")]
+    [Trait("Decision", "D-106")]
+    public async Task ReservNoSql_InSqlite_ListsOnlyTheProjectedColumnsForAnActiveDoctorOfTheCentre()
+    {
+        var own = await LovRows(LovQueries.ReservNoSql, ReservationBinds(ActiveDoctor, OwnCentre));
+        var inactive = await LovRows(LovQueries.ReservNoSql, ReservationBinds(InactiveDoctor, OwnCentre));
+        var foreign = await LovRows(LovQueries.ReservNoSql, ReservationBinds(ForeignDoctor, OwnCentre));
+        var foreignAtItsCentre = await LovRows(LovQueries.ReservNoSql, ReservationBinds(ForeignDoctor, ForeignCentre));
+
+        Assert.Equal(new object?[] { 1L, 2L }, own.Select(row => row["RESERV_NO"]).Order());
+        Assert.All(own, row => Assert.Equal(new[] { "RESERV_NO", "THE_TIME", "PATAINTNO" }, row.Keys));
+        Assert.Empty(inactive);
+        Assert.Empty(foreign);
+        Assert.Equal(new object?[] { 5L }, foreignAtItsCentre.Select(row => row["RESERV_NO"]));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-105")]
+    public async Task PayTypesSql_InSqlite_ListsOnlyTheTypeIdAndEnglishName()
+    {
+        var rows = await LovRows(LovQueries.PayTypesSql, new { lang = "E" });
+
+        Assert.Equal(new object?[] { 1L, 2L }, rows.Select(row => row["PAY_TYPE_ID"]).Order());
+        Assert.Equal(new object?[] { "Mada", "Visa" }, rows.Select(row => row["PAY_TYPE_NAME"]).Order());
+        Assert.All(rows, row => Assert.Equal(new[] { "PAY_TYPE_ID", "PAY_TYPE_NAME" }, row.Keys));
+    }
+
+    [Theory]
+    [Trait("Decision", "D-107")]
+    [InlineData("12345678901", "compCode has 11 characters; at most 10 can be bound.")]
+    [InlineData("\u00E9\u00E9\u00E9\u00E9\u00E9\u00E9", "compCode has 12 bytes in UTF-8; at most 10 can be bound.")]
+    public void SubCompany_CompCodeOverTenBytes_IsRefusedBeforeAConnectionOpens(string compCode, string text)
+    {
+        var queries = new LovQueries(new InvoicingDataOptions { ConnectionString = string.Empty });
+
+        var failure = Assert.Throws<ArgumentException>(() => { _ = queries.SubCompany(compCode, OwnCentre); });
+
+        Assert.Equal(nameof(compCode), failure.ParamName);
+        Assert.Equal(text, failure.Data[OracleFailureTranslator.BindingRejectionKey]);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-107")]
+    [InlineData(nameof(LovQueries.Company), "infoCenterId", "infoCenterId has 11 characters; at most 10 can be bound.")]
+    [InlineData(nameof(LovQueries.SubCompany), "infoCenterId", "infoCenterId has 11 characters; at most 10 can be bound.")]
+    [InlineData(nameof(LovQueries.TheClass), "subCompCode", "subCompCode has 11 characters; at most 10 can be bound.")]
+    [InlineData(nameof(LovQueries.Doc), "infoCenterId", "infoCenterId has 11 characters; at most 10 can be bound.")]
+    [InlineData(nameof(LovQueries.ReservNo), "patientNo", "patientNo has 13 characters; at most 12 can be bound.")]
+    [InlineData(nameof(LovQueries.Offers), "infoCenterId", "infoCenterId has 11 characters; at most 10 can be bound.")]
+    public void LovQuery_TextBindOverItsWidth_IsRefusedBeforeAConnectionOpens(string method, string paramName, string text)
+    {
+        var queries = new LovQueries(new InvoicingDataOptions { ConnectionString = string.Empty });
+        const string ElevenCharacters = "12345678901";
+        Action call = method switch
+        {
+            nameof(LovQueries.Company) => () => _ = queries.Company(ElevenCharacters),
+            nameof(LovQueries.SubCompany) => () => _ = queries.SubCompany(OwnCompany, ElevenCharacters),
+            nameof(LovQueries.TheClass) => () => _ = queries.TheClass(ElevenCharacters, OwnCentre),
+            nameof(LovQueries.Doc) => () => _ = queries.Doc(ElevenCharacters),
+            nameof(LovQueries.ReservNo) => () => _ = queries.ReservNo(ReservationDate, ActiveDoctor, "P123456789012", OwnCentre),
+            nameof(LovQueries.Offers) => () => _ = queries.Offers(1, ReservationDate, ElevenCharacters),
+            _ => throw new ArgumentOutOfRangeException(nameof(method), method, null),
+        };
+
+        var failure = Assert.Throws<ArgumentException>(call);
+
+        Assert.Equal(paramName, failure.ParamName);
+        Assert.Equal(text, failure.Data[OracleFailureTranslator.BindingRejectionKey]);
+    }
+
     /// <summary>Maps a private InvoiceHeaderRow holding only INVDATE with the private ToHeaderDraft.</summary>
     /// <param name="invDate">INVDATE of the row.</param>
     /// <returns>The header draft.</returns>
@@ -572,4 +940,69 @@ public sealed class DataContractTests
     /// <summary>Distinct bind names in order of first appearance.</summary>
     private static string[] Binds(string sql) =>
         BindReference.Matches(sql).Select(match => match.Groups[1].Value).Distinct(StringComparer.Ordinal).ToArray();
+
+    /// <summary>RecordGroupQuery of a record group of the Form export, with its encoded newlines decoded and its Form bind names mapped to the LovQueries bind names.</summary>
+    private static string RecordGroupSelect(string recordGroup)
+    {
+        XDocument export = XDocument.Load(Path.Combine(FindRepositoryRoot(), FormExportPath));
+        XElement group = Assert.Single(
+            export.Descendants(),
+            element => element.Name.LocalName == "RecordGroup" && (string?)element.Attribute("Name") == recordGroup);
+        string? query = (string?)group.Attribute("RecordGroupQuery");
+        Assert.NotNull(query);
+
+        string select = query.Replace(EncodedNewline, "\n", StringComparison.Ordinal);
+        foreach (var (form, target) in RecordGroupBindNames)
+        {
+            select = select.Replace(form, target, StringComparison.Ordinal);
+        }
+
+        return select;
+    }
+
+    /// <summary>Runs a LOV SELECT unchanged over the seeded rows in an in-memory SQLite database with DECODE registered.</summary>
+    /// <returns>The rows keyed by upper-case column name in column order.</returns>
+    private static async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> LovRows(string sql, object binds)
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        connection.CreateFunction(
+            "decode",
+            (string? value, string first, string? firstResult, string second, string? secondResult) =>
+                value == first ? firstResult : value == second ? secondResult : null);
+
+        var rows = await connection.QueryAsync(LovSeed + sql, binds);
+
+        return rows
+            .Cast<IDictionary<string, object?>>()
+            .Select(row => (IReadOnlyDictionary<string, object?>)row.ToDictionary(
+                column => column.Key.ToUpperInvariant(),
+                column => column.Value,
+                StringComparer.Ordinal))
+            .ToArray();
+    }
+
+    /// <summary>RESERV_NO binds for the seeded reservation date and patient P1, as <see cref="LovQueries.ReservNo"/> binds them.</summary>
+    private static object ReservationBinds(int docId, string infoCenterId) => new
+    {
+        invDate = ReservationDate,
+        docId,
+        reservSystem500 = 0,
+        patientNo = PatientHolding,
+        infoCenterId,
+    };
+
+    /// <summary>Nearest directory at or above the test output directory that holds the solution file.</summary>
+    private static string FindRepositoryRoot()
+    {
+        for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, SolutionFileName)))
+            {
+                return directory.FullName;
+            }
+        }
+
+        throw new InvalidOperationException($"No directory containing {SolutionFileName} was found at or above {AppContext.BaseDirectory}.");
+    }
 }

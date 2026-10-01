@@ -7,7 +7,7 @@ using Billing.Invoicing.Domain.Model;
 
 namespace Billing.Invoicing.Tests.Api;
 
-/// <summary>Legacy item names <see cref="ModelStateFieldMap.FieldOf"/> derives from JSON, query, route and member model-state keys.</summary>
+/// <summary>Legacy item names, upper-snake fallbacks and form-level nulls that <see cref="ModelStateFieldMap.FieldOf"/> returns for JSON, query, route and member model-state keys.</summary>
 [Trait("Category", "Orchestration")]
 public sealed class ModelStateFieldMapTests
 {

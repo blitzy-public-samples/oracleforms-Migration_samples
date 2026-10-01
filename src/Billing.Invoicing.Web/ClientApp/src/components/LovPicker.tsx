@@ -47,7 +47,7 @@ const MAX_COLUMN_CHARS = 40;
 /** Characters added to each column width. */
 const COLUMN_PADDING_CHARS = 2;
 
-/** Dialog title per LOV, from the Form's LOV Title attribute. */
+/** Dialog titles from the Form; untitled payment LOVs use their LOV names. */
 const TITLES: Record<LovName, string> = {
   COMPANY1_2: 'Select Company',
   SUB_COMPANY: 'Select Company',
@@ -60,7 +60,7 @@ const TITLES: Record<LovName, string> = {
   CAT: 'Select Category',
 };
 
-/** Displayed columns per LOV, in the Form's LOVColumnMapping order. */
+/** Displayed columns per LOV, in the Form's LOVColumnMapping order; RESERV_NO leaves out PATIENTNAME and the hidden row id (D-105). */
 const COLUMNS: Record<LovName, readonly string[]> = {
   COMPANY1_2: ['COMP_CODE', 'CURR_CODE', 'COMP_NAME'],
   SUB_COMPANY: ['COMP_CODE', 'COMP_NAME'],
@@ -68,7 +68,7 @@ const COLUMNS: Record<LovName, readonly string[]> = {
   PAY_TYPE1: ['PAY_TYPE_ID', 'PAY_TYPE_NAME'],
   PAY_TYPE2: ['PAY_TYPE_ID', 'PAY_TYPE_NAME'],
   DOC: ['DOCID', 'DOC_NAME', 'CLINICID', 'CLINICNAME'],
-  RESERV_NO: ['RESERV_NO', 'THE_TIME', 'PATAINTNO', 'PATIENTNAME'],
+  RESERV_NO: ['RESERV_NO', 'THE_TIME', 'PATAINTNO'],
   OFFERS: ['OFERID', 'OFFER_NAME'],
   CAT: ['CATID', 'CATDESC', 'STORE_ID'],
 };
@@ -313,7 +313,7 @@ export default function LovPicker({ name, binds = {}, onPick, onClose }: LovPick
     setFirstVisible(Math.floor(scroller.scrollTop / rowHeight));
   };
 
-  /** Makes the row at `position` active and scrolls it into view; `focus` moves focus to its select button. */
+  /** Moves to a row, optionally focusing its select button when the active row changes. */
   const moveTo = (position: number, focus: boolean) => {
     if (total === 0) {
       return;

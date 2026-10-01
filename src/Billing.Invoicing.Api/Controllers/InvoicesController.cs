@@ -90,9 +90,8 @@ public sealed class InvoicesController : ControllerBase
         return Created($"/api/invoices/{invoice.InvNo}", invoice);
     }
 
-    /// <summary>Returns a saved invoice, read-only.</summary>
+    /// <summary>Returns a saved invoice of the server-owned document type, read-only.</summary>
     /// <param name="invNo">Invoice number, a positive whole number.</param>
-    /// <param name="parameters">Entry parameters supplying the local document type filter.</param>
     /// <returns>200 with the invoice; 404 <c>not-found</c> when it is not found; 422 for a missing operator header or an invalid invoice number.</returns>
     [HttpGet("{invNo}")]
     [ProducesResponseType<InvoiceViewResponse>(StatusCodes.Status200OK)]
@@ -100,7 +99,7 @@ public sealed class InvoicesController : ControllerBase
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity, ProblemJson)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable, ProblemJson)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status500InternalServerError, ProblemJson)]
-    public async Task<ActionResult<InvoiceViewResponse>> Get(string invNo, [FromQuery] InvoiceEntryParameters parameters)
+    public async Task<ActionResult<InvoiceViewResponse>> Get(string invNo)
     {
         if (CurrentOperator() is not { } operatorContext)
         {
@@ -112,7 +111,7 @@ public sealed class InvoicesController : ControllerBase
             return await InvalidInvoiceNumber();
         }
 
-        var response = await _workflow.GetInvoice(number, parameters, operatorContext, HttpContext.RequestAborted);
+        var response = await _workflow.GetInvoice(number, operatorContext, HttpContext.RequestAborted);
         return response is null ? await InvoiceNotFound(number) : Ok(response);
     }
 

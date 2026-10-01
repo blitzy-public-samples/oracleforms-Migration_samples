@@ -54,7 +54,9 @@ public sealed class LegacyExternalCalls : ILegacyExternalCalls
         throw new NotImplementedException(PricePlanMessage);
 
     /// <summary>Stands in for the PAT_CARD_INV.jsp and iqama_check.jsp report URLs; throws OI-47 or OI-48.</summary>
+    /// <param name="invNo">Invoice number.</param>
     /// <param name="kind">patient-card or barcode-sms (OI-47), or iqama-check (OI-48); compared ordinally.</param>
+    /// <param name="cancellationToken">Not read; the method always throws.</param>
     /// <exception cref="NotImplementedException">For a known kind, with a message starting with its open-item id.</exception>
     /// <exception cref="ArgumentException">For any other kind, including null.</exception>
     public Task<string> BuildLegacyDocument(long invNo, string kind, CancellationToken cancellationToken = default) =>

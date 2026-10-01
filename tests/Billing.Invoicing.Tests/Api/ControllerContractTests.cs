@@ -221,7 +221,7 @@ public sealed class ControllerContractTests
         var fakes = new FakeDataPorts();
         var context = NewContext();
 
-        var result = await Controller<InvoicesController>(fakes, context).Get(invNo, new InvoiceEntryParameters());
+        var result = await Controller<InvoicesController>(fakes, context).Get(invNo);
 
         Assert.IsType<EmptyResult>(result.Result);
         await AssertInvalidInvoiceNumber(context, fakes);
@@ -258,7 +258,7 @@ public sealed class ControllerContractTests
         var fakes = new FakeDataPorts();
         var context = NewContext(withOperator: false);
 
-        var result = await Controller<InvoicesController>(fakes, context).Get("abc", new InvoiceEntryParameters());
+        var result = await Controller<InvoicesController>(fakes, context).Get("abc");
 
         Assert.IsType<EmptyResult>(result.Result);
         Assert.Equal(StatusCodes.Status422UnprocessableEntity, context.Response.StatusCode);
@@ -272,7 +272,7 @@ public sealed class ControllerContractTests
         var fakes = new FakeDataPorts();
         var context = NewContext();
 
-        var result = await Controller<InvoicesController>(fakes, context).Get("007", new InvoiceEntryParameters());
+        var result = await Controller<InvoicesController>(fakes, context).Get("007");
 
         Assert.IsType<EmptyResult>(result.Result);
         Assert.Equal(7L, Assert.Single(fakes.Invoices.Calls).Arg<long>());
@@ -341,7 +341,7 @@ public sealed class ControllerContractTests
             new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase) { ["OFERID"] = null, ["OFFER_NAME"] = "Unnumbered" },
         ];
 
-        var result = await Controller<LookupsController>(fakes, NewContext()).Lov("OFFERS", null, null, null, null, 1, DraftDate);
+        var result = await Controller<LookupsController>(fakes, NewContext()).Lov("OFFERS", null, null, null, null, "1", DraftDate);
 
         var value = Assert.IsType<LovResponse>(Assert.IsType<OkObjectResult>(result.Result).Value);
         Assert.Equal("OFFERS", value.Name);
@@ -539,6 +539,48 @@ public sealed class ControllerContractTests
         Assert.Equal(2m, Assert.IsType<decimal>(call.Args[4]));
     }
 
+    [Theory]
+    [Trait("Decision", "D-107")]
+    [InlineData("/api/lov/OFFERS?payType=%2B1&draftDate=2026-03-31", "PAYTYPE", "PAYTYPE must be 1 (Cash) or 2 (Credit).")]
+    [InlineData("/api/lov/OFFERS?payType=01&draftDate=2026-03-31", "PAYTYPE", "PAYTYPE must be 1 (Cash) or 2 (Credit).")]
+    [InlineData("/api/lov/OFFERS?payType=%201&draftDate=2026-03-31", "PAYTYPE", "PAYTYPE must be 1 (Cash) or 2 (Credit).")]
+    [InlineData("/api/lov/OFFERS?payType=abc&draftDate=2026-03-31", "PAYTYPE", "PAYTYPE must be 1 (Cash) or 2 (Credit).")]
+    [InlineData("/api/lov/RESERV_NO?docIdx=%2012%20&patientNo=P1&draftDate=2026-03-31", "DOCIDX", "DOCIDX must be a positive whole number.")]
+    [InlineData("/api/lov/RESERV_NO?docIdx=%2B12&patientNo=P1&draftDate=2026-03-31", "DOCIDX", "DOCIDX must be a positive whole number.")]
+    [InlineData("/api/lov/RESERV_NO?docIdx=012&patientNo=P1&draftDate=2026-03-31", "DOCIDX", "DOCIDX must be a positive whole number.")]
+    public async Task Pipeline_LovWithANonCanonicalNumericBind_Writes422OnItsItemWithoutReads(string path, string field, string text)
+    {
+        var fakes = new FakeDataPorts();
+
+        var (status, contentType, body) = await SendAsync(fakes, "GET", path);
+
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, status);
+        Assert.Equal(ProblemJson, contentType);
+        Assert.Equal("field-validation", body.GetProperty("type").GetString());
+        var message = Assert.Single(body.GetProperty("messages").EnumerateArray());
+        Assert.Equal(field, message.GetProperty("field").GetString());
+        Assert.Equal(text, message.GetProperty("text").GetString());
+        Assert.Equal(ValidationMessage.Blocking, message.GetProperty("severity").GetString());
+        Assert.Empty(fakes.Journal);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-107")]
+    [InlineData("/api/lov/OFFERS?payType=2&draftDate=2026-03-31", "Offers", 2)]
+    [InlineData("/api/lov/RESERV_NO?docIdx=12&patientNo=P1&draftDate=2026-03-31", "ReservNo", 12)]
+    public async Task Pipeline_LovWithACanonicalNumericBind_QueriesTheListWithThatNumber(string path, string method, int number)
+    {
+        var fakes = new FakeDataPorts();
+
+        var (status, _, body) = await SendAsync(fakes, "GET", path);
+
+        Assert.Equal(StatusCodes.Status200OK, status);
+        Assert.Empty(body.GetProperty("rows").EnumerateArray());
+        var call = Assert.Single(fakes.Lovs.Calls);
+        Assert.Equal(method, call.Method);
+        Assert.Contains(number, call.Args.OfType<int>());
+    }
+
     /// <summary>Sends one request with the operator headers and an optional JSON body through the controllers, the exception handler and the operator-context middleware, in-process.</summary>
     private static async Task<(int Status, string? ContentType, JsonElement Body)> SendAsync(FakeDataPorts fakes, string method, string path, string? json = null)
     {
@@ -563,7 +605,9 @@ public sealed class ControllerContractTests
         await using var scope = provider.CreateAsyncScope();
         var context = new DefaultHttpContext { RequestServices = scope.ServiceProvider };
         context.Request.Method = method;
-        context.Request.Path = path;
+        var query = path.IndexOf('?', StringComparison.Ordinal);
+        context.Request.Path = query < 0 ? path : path[..query];
+        context.Request.QueryString = query < 0 ? QueryString.Empty : new QueryString(path[query..]);
         context.Request.Headers["X-His-User-No"] = "1";
         context.Request.Headers["X-His-User-Name"] = "dev";
         context.Request.Headers["X-His-Info-Center-Id"] = "1";

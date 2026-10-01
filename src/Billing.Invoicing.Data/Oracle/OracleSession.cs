@@ -5,7 +5,7 @@ using Oracle.ManagedDataAccess.Client;
 
 namespace Billing.Invoicing.Data.Oracle;
 
-/// <summary>Unit of work over one Oracle connection and transaction; rolls back when disposed uncommitted. UNVERIFIED against Oracle.</summary>
+/// <summary>Unit of work over one Oracle connection and transaction; attempts to roll back its local transaction when disposed uncommitted, and the outcome can remain uncertain. UNVERIFIED against Oracle.</summary>
 public sealed class OracleSession : IOracleSession
 {
     /// <summary>The <see cref="Exception.Data"/> key whose value is the <see cref="List{T}"/> of later failures attached to a first failure.</summary>
@@ -44,8 +44,13 @@ public sealed class OracleSession : IOracleSession
     /// <summary>The transaction that commands of this session enlist in.</summary>
     internal OracleTransaction Transaction { get; }
 
-    /// <summary>Commits the transaction within the session's call deadline; a failure propagates unchanged, an expired deadline as a <see cref="TimeoutException"/>, and either leaves the session uncompleted.</summary>
+    /// <summary>Commits the transaction within the session's call deadline.</summary>
     /// <param name="cancellationToken">Cancels the commit request.</param>
+    /// <exception cref="ObjectDisposedException">The session is disposed.</exception>
+    /// <exception cref="InvalidOperationException">The session is already committed or rolled back, or an earlier call on it did not complete within its deadline.</exception>
+    /// <exception cref="TimeoutException">The commit did not complete within the call deadline; the session stays uncompleted.</exception>
+    /// <exception cref="OperationCanceledException">The caller cancelled while the commit was still running; the session stays uncompleted.</exception>
+    /// <exception cref="Exception">The commit failed; its failure propagates unchanged and the session stays uncompleted.</exception>
     public async Task Commit(CancellationToken cancellationToken = default)
     {
         EnsureActive();
@@ -67,8 +72,13 @@ public sealed class OracleSession : IOracleSession
         _completed = true;
     }
 
-    /// <summary>Rolls back the whole transaction within the session's call deadline; a failure propagates unchanged and an expired deadline as a <see cref="TimeoutException"/>.</summary>
+    /// <summary>Rolls back the whole transaction within the session's call deadline.</summary>
     /// <param name="cancellationToken">Cancels the rollback request.</param>
+    /// <exception cref="ObjectDisposedException">The session is disposed.</exception>
+    /// <exception cref="InvalidOperationException">The session is already committed or rolled back, or an earlier call on it did not complete within its deadline.</exception>
+    /// <exception cref="TimeoutException">The rollback did not complete within the call deadline.</exception>
+    /// <exception cref="OperationCanceledException">The caller cancelled while the rollback was still running.</exception>
+    /// <exception cref="Exception">The rollback failed; its failure propagates unchanged.</exception>
     public async Task Rollback(CancellationToken cancellationToken = default)
     {
         EnsureActive();
@@ -124,7 +134,8 @@ public sealed class OracleSession : IOracleSession
         }
     }
 
-    /// <summary>Rolls back an uncompleted transaction and releases the transaction and the connection through <see cref="ReleaseWithinDeadline"/>; cleanup failures attach to the first recorded failure, are thrown when none is recorded and an uncompleted session's last call succeeded, and are otherwise dropped; repeat calls do nothing.</summary>
+    /// <summary>Releases the session and attempts rollback of unfinished work, preserving the first failure; the rollback outcome can remain uncertain (D-89).</summary>
+    /// <exception cref="Exception">A rollback or release failure of an uncompleted session whose last call succeeded and that recorded no earlier failure.</exception>
     public async ValueTask DisposeAsync()
     {
         if (_disposed)
@@ -220,7 +231,7 @@ public sealed class OracleSession : IOracleSession
         }
     }
 
-    /// <summary>Runs an Oracle call within a deadline: an expired deadline is a <see cref="TimeoutException"/>; a caller cancellation is an <see cref="OperationCanceledException"/> while the call is still running, and otherwise the call's own result or failure stands; a failure before either propagates unchanged.</summary>
+    /// <summary>Runs an Oracle call under a deadline, distinguishing timeout from caller cancellation (D-89).</summary>
     /// <param name="operation">Name of the call, used in the timeout message.</param>
     /// <param name="deadline">Time the call may take.</param>
     /// <param name="call">Starts the call with a token that is cancelled when the deadline expires or the caller cancels.</param>
@@ -231,6 +242,7 @@ public sealed class OracleSession : IOracleSession
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="deadline"/> is not above zero or exceeds <see cref="MaxDeadline"/>.</exception>
     /// <exception cref="InvalidOperationException"><paramref name="call"/> returned no task.</exception>
     /// <exception cref="TimeoutException">The call did not complete within <paramref name="deadline"/>.</exception>
+    /// <exception cref="OperationCanceledException">The caller cancelled while the call was still running.</exception>
     internal static async Task RunWithinDeadline(
         string operation,
         TimeSpan deadline,
@@ -284,7 +296,7 @@ public sealed class OracleSession : IOracleSession
         }
     }
 
-    /// <summary>Rolls back when asked, then releases the transaction and the connection, each step within the deadline; after a call still running, or a rollback that failed or did not complete, both are released in the background once that call settles, and a release still running at its deadline hands the connection to the background the same way.</summary>
+    /// <summary>Attempts rollback and releases the transaction and connection within deadlines, deferring unfinished operations (D-89).</summary>
     /// <param name="deadline">Time each step may take.</param>
     /// <param name="stillRunning">A call on the connection that did not complete within its deadline, or null.</param>
     /// <param name="rollback">Rolls the transaction back with the given token, or null when the transaction is completed.</param>

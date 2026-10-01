@@ -18,6 +18,7 @@ import type {
   LovBinds,
   LovResponse,
   MessageDto,
+  MessageSeverity,
   MoreDetailsResponse,
   NewDraftResponse,
   PackageImportRequest,
@@ -88,6 +89,11 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 }
 
+/** 'Warning' for exactly 'Warning', else 'Blocking'. */
+function messageSeverity(value: unknown): MessageSeverity {
+  return value === 'Warning' ? 'Warning' : 'Blocking';
+}
+
 function messageArray(value: unknown): MessageDto[] {
   if (!Array.isArray(value)) {
     return [];
@@ -98,10 +104,30 @@ function messageArray(value: unknown): MessageDto[] {
       messages.push({
         field: stringOrNull(item.field),
         text: item.text,
-        severity: item.severity === 'Warning' ? 'Warning' : 'Blocking',
+        severity: messageSeverity(item.severity),
         rule: stringOrNull(item.rule),
       });
     }
+  }
+  return messages;
+}
+
+/** Normalised copy of a success body's message list; undefined unless every entry is an object with text. */
+function successMessages(value: unknown): MessageDto[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const messages: MessageDto[] = [];
+  for (const item of value) {
+    if (!isRecord(item) || typeof item.text !== 'string') {
+      return undefined;
+    }
+    messages.push({
+      field: stringOrNull(item.field),
+      text: item.text,
+      severity: messageSeverity(item.severity),
+      rule: stringOrNull(item.rule),
+    });
   }
   return messages;
 }
@@ -216,7 +242,45 @@ function parseErrorBody(text: string, contentType: string | null): unknown {
   }
 }
 
-async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+/** Reads a parsed success body as its endpoint's contract; undefined when the body does not match it. */
+type BodyReader<T> = (payload: unknown) => T | undefined;
+
+/** Object body whose `messages` list is replaced by its normalised copy. */
+function messagesBody<T extends { messages: MessageDto[] }>(payload: unknown): T | undefined {
+  if (!isRecord(payload)) {
+    return undefined;
+  }
+  const messages = successMessages(payload.messages);
+  return messages === undefined ? undefined : ({ ...payload, messages } as T);
+}
+
+/** Object body. */
+function objectBody<T>(payload: unknown): T | undefined {
+  return isRecord(payload) ? (payload as T) : undefined;
+}
+
+/** Array body. */
+function arrayBody<T>(payload: unknown): T[] | undefined {
+  return Array.isArray(payload) ? (payload as T[]) : undefined;
+}
+
+/** ValidateDraft body with its own and its nested coverage's message lists normalised. */
+function validateBody(payload: unknown): ValidateDraftResponse | undefined {
+  const response = messagesBody<ValidateDraftResponse>(payload);
+  if (response === undefined || response.coverage === null || response.coverage === undefined) {
+    return response;
+  }
+  const coverage = messagesBody<CoverageResponse>(response.coverage);
+  return coverage === undefined ? undefined : { ...response, coverage };
+}
+
+async function request<T>(
+  method: 'GET' | 'POST',
+  path: string,
+  read: BodyReader<T>,
+  body?: unknown,
+  signal?: AbortSignal,
+): Promise<T> {
   const init: RequestInit = { method, headers: operatorHeaders(body !== undefined) };
   if (body !== undefined) {
     init.body = JSON.stringify(body);
@@ -248,27 +312,38 @@ async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown, 
   if (text.trim() === '') {
     throw new EmptyResponseError({
       status: response.status,
-      type: 'http-error',
+      type: 'invalid-response',
       title: 'Empty response',
       message: `The response to ${method} ${path} has no body.`,
     });
   }
+  let parsed: unknown;
   try {
-    return JSON.parse(text) as T;
+    parsed = JSON.parse(text) as unknown;
   } catch {
     throw new ApiError({
       status: response.status,
-      type: 'http-error',
+      type: 'invalid-response',
       title: 'Invalid response',
       message: `The response to ${method} ${path} is not JSON.`,
     });
   }
+  const result = read(parsed);
+  if (result === undefined) {
+    throw new ApiError({
+      status: response.status,
+      type: 'invalid-response',
+      title: 'Invalid response',
+      message: `The response to ${method} ${path} does not match its contract.`,
+    });
+  }
+  return result;
 }
 
 /** Sends a request whose success has no body; resolves once the call succeeds, with or without a body. */
 async function requestNoContent(method: 'POST', path: string): Promise<void> {
   try {
-    await request<unknown>(method, path);
+    await request<unknown>(method, path, (payload) => payload);
   } catch (error) {
     if (!(error instanceof EmptyResponseError)) {
       throw error;
@@ -399,13 +474,13 @@ function toDraftRequest(draft: DraftRequestDto): DraftRequestDto {
 /** GET /api/drafts/new with the entry parameters of a query string such as window.location.search. */
 export async function newDraft(search: string): Promise<NewDraftResponse> {
   const query = search === '' || search.startsWith('?') ? search : `?${search}`;
-  return request<NewDraftResponse>('GET', `/api/drafts/new${query}`);
+  return request('GET', `/api/drafts/new${query}`, messagesBody<NewDraftResponse>);
 }
 
 /** POST /api/drafts/validate: runs the item, line or record checks for one validated target. */
 export async function validateDraft(req: ValidateDraftRequest): Promise<ValidateDraftResponse> {
   const body: ValidateDraftRequest = { draft: toDraftRequest(req.draft), target: req.target, lineIndex: req.lineIndex };
-  return request<ValidateDraftResponse>('POST', '/api/drafts/validate', body);
+  return request('POST', '/api/drafts/validate', validateBody, body);
 }
 
 /** GET /api/patients/{patientNo}/coverage for the draft date and entry parameters. */
@@ -417,34 +492,33 @@ export async function getCoverage(
   const query = new URLSearchParams();
   appendQuery(query, { draftDate });
   appendQuery(query, parameters);
-  return request<CoverageResponse>('GET', withQuery(`/api/patients/${segment(patientNo)}/coverage`, query));
+  return request('GET', withQuery(`/api/patients/${segment(patientNo)}/coverage`, query), messagesBody<CoverageResponse>);
 }
 
 /** POST /api/invoices/preview: package-calculated lines, totals and payment status of a draft. */
 export async function previewInvoice(draft: DraftDto): Promise<PreviewResponse> {
-  return request<PreviewResponse>('POST', '/api/invoices/preview', toDraftRequest(draft));
+  return request('POST', '/api/invoices/preview', messagesBody<PreviewResponse>, toDraftRequest(draft));
 }
 
 /** POST /api/invoices: saves the draft and resolves with the 201 body. */
 export async function createInvoice(req: CreateInvoiceRequest): Promise<CreateInvoiceResponse> {
   const body: CreateInvoiceRequest = { draft: toDraftRequest(req.draft) };
-  return request<CreateInvoiceResponse>('POST', '/api/invoices', body);
+  return request('POST', '/api/invoices', messagesBody<CreateInvoiceResponse>, body);
 }
 
-/** GET /api/invoices/{invNo} with the entry parameters of a query string such as window.location.search: read-only view of a saved invoice. */
-export async function getInvoice(invNo: number, search: string): Promise<InvoiceViewResponse> {
-  const query = search === '' || search.startsWith('?') ? search : `?${search}`;
-  return request<InvoiceViewResponse>('GET', `/api/invoices/${segment(invNo)}${query}`);
+/** GET /api/invoices/{invNo}: read-only view of a saved invoice. */
+export async function getInvoice(invNo: number): Promise<InvoiceViewResponse> {
+  return request('GET', `/api/invoices/${segment(invNo)}`, objectBody<InvoiceViewResponse>);
 }
 
 /** GET /api/invoices/last: highest invoice number of the operator's information centre. */
 export async function getLastInvoiceNo(): Promise<LastInvoiceNoResponse> {
-  return request<LastInvoiceNoResponse>('GET', '/api/invoices/last');
+  return request('GET', '/api/invoices/last', objectBody<LastInvoiceNoResponse>);
 }
 
 /** GET /api/invoices/{invNo}/more: persisted MORE-canvas fields of a saved invoice. */
 export async function getMoreDetails(invNo: number): Promise<MoreDetailsResponse> {
-  return request<MoreDetailsResponse>('GET', `/api/invoices/${segment(invNo)}/more`);
+  return request('GET', `/api/invoices/${segment(invNo)}/more`, objectBody<MoreDetailsResponse>);
 }
 
 /** POST /api/invoices/{invNo}/sms. */
@@ -465,13 +539,13 @@ export async function transferStock(invNo: number): Promise<void> {
 /** POST /api/imports/requests: imports the visit's selected service requests as draft lines. */
 export async function importRequests(req: ImportRequestsRequest): Promise<ImportResponse> {
   const body: ImportRequestsRequest = { draft: toDraftRequest(req.draft) };
-  return request<ImportResponse>('POST', '/api/imports/requests', body);
+  return request('POST', '/api/imports/requests', messagesBody<ImportResponse>, body);
 }
 
 /** POST /api/imports/visit-line: the consultation, review or fixed-service visit line. */
 export async function importVisitLine(req: VisitLineRequest): Promise<ImportResponse> {
   const body: VisitLineRequest = { draft: toDraftRequest(req.draft) };
-  return request<ImportResponse>('POST', '/api/imports/visit-line', body);
+  return request('POST', '/api/imports/visit-line', messagesBody<ImportResponse>, body);
 }
 
 /** POST /api/imports/package: the component lines of a package service. */
@@ -481,13 +555,13 @@ export async function importPackage(req: PackageImportRequest): Promise<ImportRe
     packageServiceId: req.packageServiceId,
     parentSourceId: req.parentSourceId,
   };
-  return request<ImportResponse>('POST', '/api/imports/package', body);
+  return request('POST', '/api/imports/package', messagesBody<ImportResponse>, body);
 }
 
 /** POST /api/imports/bundled-offer: the lines of a bundled offer. */
 export async function importBundledOffer(req: BundledOfferRequest): Promise<ImportResponse> {
   const body: BundledOfferRequest = { draft: toDraftRequest(req.draft), offerId: req.offerId, bundleQty: req.bundleQty };
-  return request<ImportResponse>('POST', '/api/imports/bundled-offer', body);
+  return request('POST', '/api/imports/bundled-offer', messagesBody<ImportResponse>, body);
 }
 
 /** GET /api/lov/{name} with the non-empty item binds; `signal` aborts the request. */
@@ -501,15 +575,15 @@ export async function getLov(name: string, binds: LovBinds = {}, signal?: AbortS
     payType: binds.payType,
     draftDate: binds.draftDate,
   });
-  return request<LovResponse>('GET', withQuery(`/api/lov/${segment(name)}`, query), undefined, signal);
+  return request('GET', withQuery(`/api/lov/${segment(name)}`, query), messagesBody<LovResponse>, undefined, signal);
 }
 
 /** GET /api/lookups/invoice-types. */
 export async function getInvoiceTypes(): Promise<LookupItem[]> {
-  return request<LookupItem[]>('GET', '/api/lookups/invoice-types');
+  return request('GET', '/api/lookups/invoice-types', arrayBody<LookupItem>);
 }
 
 /** GET /api/lookups/currencies. */
 export async function getCurrencies(): Promise<LookupItem[]> {
-  return request<LookupItem[]>('GET', '/api/lookups/currencies');
+  return request('GET', '/api/lookups/currencies', arrayBody<LookupItem>);
 }

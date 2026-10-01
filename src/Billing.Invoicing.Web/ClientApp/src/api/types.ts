@@ -1,6 +1,6 @@
 /** JSON shapes sent to and received from the Billing.Invoicing.Api host; dates are ISO 8601 strings. */
 
-/** Decimal of the Api contract: a number as the Api returns it, or decimal text as the operator entered it, which the Api reads unchanged. */
+/** A decimal returned as a number or entered as numeric text. */
 export type DecimalValue = number | string;
 
 /** Invoice header draft: the T_INV fields of BIL_INVOICE_ENGINE.t_header_input in spec order, then the Form-only header items. */
@@ -155,7 +155,7 @@ export interface InvoiceLineDraft {
   clientId: string | null;
   /** D_INV.PRICE as displayed from an LOV, an import or a preview. */
   price: number | null;
-  /** D_INV.CATID. Display only; not saved (OI-33). Absent from a DraftDto line. */
+  /** D_INV.CATID; selectable in a draft and returned by preview, but omitted from package input (OI-33). */
   catId?: number | null;
   /** D_INV.FIXPAY. Display only; not saved (OI-33). Absent from a DraftDto line. */
   fixPay?: number | null;
@@ -175,7 +175,7 @@ export interface InvoiceLineDraft {
   insEmp?: number | null;
 }
 
-/** The 32 INV_SMALL_CASH module parameters set by the calling module, in Form order. */
+/** The 32 INV_SMALL_CASH module parameters in Form declaration order. */
 export interface InvoiceEntryParameters {
   /** PARAMETER.IS_HOME_CARE. */
   isHomeCare: string | null;
@@ -214,7 +214,7 @@ export interface InvoiceEntryParameters {
   /** PARAMETER.DIRECT_COMP_SHARE. */
   directCompShare: number | null;
   /** PARAMETER.LOCAL_DOC_TYPE. */
-  localDocType: number;
+  readonly localDocType: number;
   /** PARAMETER.VISIT_UNIQUE. */
   visitUnique: string | null;
   /** PARAMETER.NEW_DOC. */
@@ -490,10 +490,10 @@ export interface DraftDto {
   discountLimitChoice: DiscountLimitChoice | null;
 }
 
-/** Display-only header members never sent in a request body. */
+/** Unsupplied or display-only header members omitted from request bodies. */
 export type RequestOmittedHeaderMember = 'preAuthorization' | 'oferId' | 'docId1' | 'seqNo';
 
-/** Display-only line members never sent in a request body. */
+/** Line members omitted from request bodies, including selectable CATID and display-only fields. */
 export type RequestOmittedLineMember =
   | 'catId'
   | 'fixPay'
@@ -511,7 +511,7 @@ export type DraftRequestHeader = Omit<InvoiceHeaderDraft, RequestOmittedHeaderMe
 /** Line as sent in a request body. */
 export type DraftRequestLine = Omit<InvoiceLineDraft, RequestOmittedLineMember>;
 
-/** Draft as sent in a request body, without the display-only members. */
+/** Draft request containing only members accepted by its request contract. */
 export interface DraftRequestDto {
   /** 32-character upper-case hexadecimal request id, kept for the life of the draft. */
   requestId: string;
@@ -654,7 +654,7 @@ export interface ValidateDraftResponse {
 export interface CoverageResponse {
   /** Patient coverage; null when the patient has none. */
   coverage: PatientCoverageSnapshot | null;
-  /** Pay type decided for the patient: 1 cash, 2 credit. */
+  /** Pay type decided for the patient: 0 when undetermined; otherwise 1 cash or 2 credit. */
   payType: number;
   /** Eligibility messages, blocking and warning. */
   messages: MessageDto[];
@@ -718,7 +718,7 @@ export interface InvoiceViewResponse {
   header: InvoiceHeaderDraft;
   /** Saved invoice lines. */
   lines: InvoiceLineDraft[];
-  /** Display-only lookup names and persisted totals keyed by upper-case column or item name, with the saved-line totals TOTAL_GROSS, TOTAL_DISCOUNT and TOTAL_NET, CASH_COLLECTED as the amount due and TOTAL_COLLECTED as amount 1 plus amount 2. */
+  /** Lookup names and saved values by upper-case key, with line totals summed at read time; CASH_COLLECTED is the amount due, TOTAL_COLLECTED amount 1 plus amount 2. */
   display: Record<string, unknown>;
   /** Whether the invoice is read-only. */
   readOnly: boolean;
@@ -869,7 +869,7 @@ export interface ProblemPayload {
   adjusted?: AdjustedValues;
   /** Open-item id of a blocked operation (open-item). */
   openItemId?: string | null;
-  /** Oracle text after the ORA prefix, or the open-item message. */
+  /** Oracle text after the ORA prefix, 'The Oracle error text could not be read.' when it cannot be extracted, or the open-item message. */
   message?: string | null;
   /** Signed Oracle error number, such as -20931. */
   oracleErrorNumber?: number | null;

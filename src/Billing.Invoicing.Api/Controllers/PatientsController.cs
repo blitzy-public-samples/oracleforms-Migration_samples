@@ -59,7 +59,7 @@ public sealed class PatientsController : ControllerBase
             return await OperatorMissing();
         }
 
-        // A blank patient number reaches the workflow as empty, which returns the patient-required message.
+        // A blank patient number reaches the workflow as empty, which returns the patient-required message (D-100).
         CoverageResponse response = await _workflow.GetCoverage(
             patientNo ?? string.Empty,
             draftDate,

@@ -3,6 +3,7 @@ using System.Data.Common;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using Billing.Invoicing.Data.Oracle;
+using Billing.Invoicing.Data.Plsql;
 using Billing.Invoicing.Data.Ports;
 using Billing.Invoicing.Domain.Model;
 using Billing.Invoicing.Domain.Rules;
@@ -37,7 +38,7 @@ public sealed class InvoiceQueries : IInvoiceQueries
         + "(SELECT CASE WHEN COUNT(*) = 1 THEN MAX(g.COMP_NAME) END FROM COMPANYS g WHERE g.COMP_CODE IN (SELECT y.XGROUP FROM COMPANYS y WHERE y.COMP_CODE = t.SUB_COMP_CODE)) AS G_NAME, "
         + "(SELECT CASE WHEN COUNT(*) = 1 THEN MAX(x.CARD_NAME) END FROM CASH_CARD_DISC x WHERE x.CARD_ID = t.CARD_ID) AS CARD_NAME "
         + "FROM T_INV t "
-        + "WHERE (t.INVTYPEID <> 8 and t.INVTYPEID <> 9) and t.PHARMACY_INV_NO is null AND t.INV_NO = :invNo AND (:rowType IS NULL OR t.ROW_TYPE = :rowType) "
+        + "WHERE (t.INVTYPEID <> 8 and t.INVTYPEID <> 9) and t.PHARMACY_INV_NO is null AND t.INV_NO = :invNo AND t.ROW_TYPE = :rowType "
         + "ORDER BY t.INV_NO";
 
     /// <summary>Lines of a saved invoice in D_INV_ROW_ID order, the row id returned as text; binds :invNo.</summary>
@@ -58,10 +59,10 @@ public sealed class InvoiceQueries : IInvoiceQueries
         + "COALESCE(SUM(COALESCE(d.MY_NET, 0)), 0) AS TOTAL_NET "
         + "FROM D_INV d WHERE d.INV_NO = :invNo AND COALESCE(d.IS_DELETED, 0) = 0";
 
-    /// <summary>More-details insurance header of a saved invoice; binds :invNo.</summary>
+    /// <summary>More-details insurance header of a saved invoice; binds :invNo and :rowType.</summary>
     public const string GetMoreDetailsSql =
         "SELECT t.INV_NO, t.INS_NUMBER, t.CARD_END, t.PAT_POLICY_NO FROM T_INV t "
-        + "WHERE (t.INVTYPEID <> 8 and t.INVTYPEID <> 9) and t.PHARMACY_INV_NO is null AND t.INV_NO = :invNo";
+        + "WHERE (t.INVTYPEID <> 8 and t.INVTYPEID <> 9) and t.PHARMACY_INV_NO is null AND t.INV_NO = :invNo AND t.ROW_TYPE = :rowType";
 
     /// <summary>More-details dental, lens, approval and insurance-employee fields of each saved line in D_INV_ROW_ID order, the row id returned as text; binds :invNo.</summary>
     public const string GetMoreDetailsLinesSql =
@@ -110,7 +111,7 @@ public sealed class InvoiceQueries : IInvoiceQueries
     /// <summary>Stores the data-layer settings; opens nothing.</summary>
     /// <param name="options">Connection string and command settings.</param>
     /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
-    /// <exception cref="ArgumentOutOfRangeException"><see cref="InvoicingDataOptions.CommandTimeoutSeconds"/> is below 1.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><see cref="InvoicingDataOptions.CommandTimeoutSeconds"/> is below 1 or above <see cref="InvoicingDataOptions.MaxCommandTimeoutSeconds"/>.</exception>
     public InvoiceQueries(InvoicingDataOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -121,41 +122,50 @@ public sealed class InvoiceQueries : IInvoiceQueries
 
     /// <summary>Saved invoice header, lines and display values keyed by column name, or null when not found.</summary>
     /// <param name="invNo">Invoice number.</param>
-    /// <param name="localDocType">LOCAL_DOC_TYPE entry parameter: 532 or 505 filters ROW_TYPE 1, 783 filters ROW_TYPE 2, any other value or null applies no filter.</param>
+    /// <param name="localDocType">LOCAL_DOC_TYPE resolved by the server: 532 or 505 filters ROW_TYPE 1, 783 filters ROW_TYPE 2.</param>
     /// <param name="cancellationToken">Cancels the connection open and the reads.</param>
     /// <returns>The header, the lines in D_INV_ROW_ID order and the display values, or null.</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="localDocType"/> is not 505, 532 or 783; no connection is opened.</exception>
     /// <exception cref="InvalidCastException">The saved invoice has no INVDATE, or a whole-number column holds a fractional number.</exception>
     public async Task<(InvoiceHeaderDraft Header, IReadOnlyList<InvoiceLineDraft> Lines, IReadOnlyDictionary<string, object?> Display)?> GetInvoice(
         long invNo,
-        int? localDocType,
+        int localDocType,
         CancellationToken cancellationToken = default)
     {
+        var rowType = RowTypeOf(localDocType);
+
         await using var connection = await OracleSessionFactory.OpenConnection(_options, cancellationToken).ConfigureAwait(false);
 
-        return await ReadInvoice(connection, invNo, localDocType, _options.CommandTimeoutSeconds, cancellationToken).ConfigureAwait(false);
+        return await ReadInvoice(connection, invNo, rowType, _options.CommandTimeoutSeconds, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>More-details header, line and transfer rows of a saved invoice keyed by upper-case column name, or null when not found.</summary>
     /// <param name="invNo">Invoice number.</param>
+    /// <param name="localDocType">LOCAL_DOC_TYPE resolved by the server: 532 or 505 filters ROW_TYPE 1, 783 filters ROW_TYPE 2.</param>
     /// <param name="cancellationToken">Cancels the connection open and the reads.</param>
     /// <returns>The header row, the line rows in D_INV_ROW_ID order and the transfer rows, or null.</returns>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="localDocType"/> is not 505, 532 or 783; no connection is opened.</exception>
     public async Task<(IReadOnlyDictionary<string, object?> Header, IReadOnlyList<IReadOnlyDictionary<string, object?>> Lines, IReadOnlyList<IReadOnlyDictionary<string, object?>> Transfers)?> GetMoreDetails(
         long invNo,
+        int localDocType,
         CancellationToken cancellationToken = default)
     {
+        var rowType = RowTypeOf(localDocType);
+
         await using var connection = await OracleSessionFactory.OpenConnection(_options, cancellationToken).ConfigureAwait(false);
 
-        return await ReadMoreDetails(connection, invNo, _options.CommandTimeoutSeconds, cancellationToken).ConfigureAwait(false);
+        return await ReadMoreDetails(connection, invNo, rowType, _options.CommandTimeoutSeconds, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Last invoice number of an information centre, or null when it has none.</summary>
     /// <param name="infoCenterId">Information centre id of the operator.</param>
     /// <param name="cancellationToken">Cancels the connection open and the read.</param>
     /// <returns>The highest matching invoice number, or null.</returns>
-    /// <exception cref="ArgumentException"><paramref name="infoCenterId"/> is null, empty or white space.</exception>
+    /// <exception cref="ArgumentException"><paramref name="infoCenterId"/> is null, empty or white space, or longer than 10 characters or UTF-8 bytes.</exception>
     public async Task<long?> GetLastInvoiceNo(string infoCenterId, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(infoCenterId);
+        BoundedVarchar2.Validate("infoCenterId", infoCenterId, BoundedVarchar2.InfoCenterIdBytes, nameof(infoCenterId));
 
         await using var connection = await OracleSessionFactory.OpenConnection(_options, cancellationToken).ConfigureAwait(false);
 
@@ -168,7 +178,7 @@ public sealed class InvoiceQueries : IInvoiceQueries
     /// <param name="payType">Pay type: 1 matches 'Cash' rows, 2 matches 'Credit' rows.</param>
     /// <param name="cancellationToken">Cancels the connection open and the read.</param>
     /// <returns>Every matching row with its request row id, service id and approval fields.</returns>
-    /// <exception cref="ArgumentException"><paramref name="patientNo"/> or <paramref name="visitUnique"/> is null, empty or white space.</exception>
+    /// <exception cref="ArgumentException"><paramref name="patientNo"/> or <paramref name="visitUnique"/> is null, empty or white space, <paramref name="patientNo"/> is longer than 12 characters or UTF-8 bytes, or <paramref name="visitUnique"/> is longer than 39 characters or UTF-8 bytes.</exception>
     /// <exception cref="InvalidCastException">A selected row has no PAT_SERV_REQ_ROW_ID or SERVICEID, or a non-integral number.</exception>
     /// <exception cref="OverflowException">A selected row holds a number outside the Int32 or Int64 range.</exception>
     public async Task<IReadOnlyList<(long PatServReqRowId, string ServiceId, int? ReqAStatus, int? ReqNeedA, string? ApprovRefNo)>> GetSelectedRequestRows(
@@ -179,6 +189,8 @@ public sealed class InvoiceQueries : IInvoiceQueries
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(patientNo);
         ArgumentException.ThrowIfNullOrWhiteSpace(visitUnique);
+        BoundedVarchar2.Validate("patientNo", patientNo, BoundedVarchar2.PatientNoBytes, nameof(patientNo));
+        BoundedVarchar2.Validate("visitUnique", visitUnique, BoundedVarchar2.VisitUniqueBytes, nameof(visitUnique));
 
         await using var connection = await OracleSessionFactory.OpenConnection(_options, cancellationToken).ConfigureAwait(false);
 
@@ -190,12 +202,13 @@ public sealed class InvoiceQueries : IInvoiceQueries
     /// <param name="claimNo">Claim number; '1' and '2' never match.</param>
     /// <param name="cancellationToken">Cancels the connection open and the read.</param>
     /// <returns>A header carrying claim, patient, clinic, company, sub-company, class, pay type, insurance number, card end and policy number, with LIST_ID, MAX_DEDUCTABLE and CARD_ID; or null.</returns>
-    /// <exception cref="ArgumentException"><paramref name="claimNo"/> is null, empty or white space.</exception>
+    /// <exception cref="ArgumentException"><paramref name="claimNo"/> is null, empty or white space, or longer than 40 characters or UTF-8 bytes.</exception>
     public async Task<(InvoiceHeaderDraft Header, decimal? ListId, decimal? MaxDeductable, int? CardId)?> GetClaimPreload(
         string claimNo,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(claimNo);
+        BoundedVarchar2.Validate("claimNo", claimNo, BoundedVarchar2.ClaimNoBytes, nameof(claimNo));
 
         await using var connection = await OracleSessionFactory.OpenConnection(_options, cancellationToken).ConfigureAwait(false);
 
@@ -206,28 +219,29 @@ public sealed class InvoiceQueries : IInvoiceQueries
     /// <param name="requestId">Idempotency request id of the draft.</param>
     /// <param name="cancellationToken">Cancels the connection open and the read.</param>
     /// <returns>The recorded invoice number, patient and completion time with the invoice's date, company, sub-company and clinic age-limit flag, or null; the invoice fields are null and the flag false while no invoice row matches.</returns>
-    /// <exception cref="ArgumentException"><paramref name="requestId"/> is null, empty or white space.</exception>
+    /// <exception cref="ArgumentException"><paramref name="requestId"/> is null, empty or white space, or longer than 64 characters or UTF-8 bytes.</exception>
     public async Task<(long? InvNo, string? PatientNo, DateTimeOffset? CompletedAt, DateTime? InvDate, string? CompCode, string? SubCompCode, bool ClinicHasAgeLimit)?> GetCreateRequest(
         string requestId,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(requestId);
+        BoundedVarchar2.Validate("requestId", requestId, BoundedVarchar2.RequestIdBytes, nameof(requestId));
 
         await using var connection = await OracleSessionFactory.OpenConnection(_options, cancellationToken).ConfigureAwait(false);
 
         return await ReadCreateRequest(connection, requestId, _options.CommandTimeoutSeconds, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>Reads a saved invoice header, then its lines and line totals when the header exists.</summary>
+    /// <summary>Reads a saved invoice header of the ROW_TYPE, then its lines and line totals when the header exists.</summary>
     private static async Task<(InvoiceHeaderDraft Header, IReadOnlyList<InvoiceLineDraft> Lines, IReadOnlyDictionary<string, object?> Display)?> ReadInvoice(
         DbConnection connection,
         long invNo,
-        int? localDocType,
+        int rowType,
         int commandTimeoutSeconds,
         CancellationToken cancellationToken)
     {
         var headerParameters = InvoiceNumberParameters(invNo);
-        headerParameters.Add("rowType", RowTypeFilter(localDocType), DbType.Int32);
+        headerParameters.Add("rowType", rowType, DbType.Int32);
 
         var header = await connection.QueryFirstOrDefaultAsync<InvoiceHeaderRow>(
             Command(GetInvoiceSql, headerParameters, commandTimeoutSeconds, cancellationToken)).ConfigureAwait(false);
@@ -252,15 +266,19 @@ public sealed class InvoiceQueries : IInvoiceQueries
         return (ToHeaderDraft(header), drafts, ToDisplay(header, lineDisplay, totals));
     }
 
-    /// <summary>Reads the more-details header row, then the line and transfer rows when the header exists.</summary>
+    /// <summary>Reads the more-details header row of the ROW_TYPE, then the line and transfer rows when the header exists.</summary>
     private static async Task<(IReadOnlyDictionary<string, object?> Header, IReadOnlyList<IReadOnlyDictionary<string, object?>> Lines, IReadOnlyList<IReadOnlyDictionary<string, object?>> Transfers)?> ReadMoreDetails(
         DbConnection connection,
         long invNo,
+        int rowType,
         int commandTimeoutSeconds,
         CancellationToken cancellationToken)
     {
+        var headerParameters = InvoiceNumberParameters(invNo);
+        headerParameters.Add("rowType", rowType, DbType.Int32);
+
         var header = await connection.QueryFirstOrDefaultAsync<object>(
-            Command(GetMoreDetailsSql, InvoiceNumberParameters(invNo), commandTimeoutSeconds, cancellationToken)).ConfigureAwait(false);
+            Command(GetMoreDetailsSql, headerParameters, commandTimeoutSeconds, cancellationToken)).ConfigureAwait(false);
         if (header is null)
         {
             return null;
@@ -282,7 +300,7 @@ public sealed class InvoiceQueries : IInvoiceQueries
         CancellationToken cancellationToken)
     {
         var parameters = new DynamicParameters();
-        parameters.Add("infoCenterId", infoCenterId, DbType.AnsiString);
+        BoundedVarchar2.AddInput(parameters, "infoCenterId", infoCenterId, BoundedVarchar2.InfoCenterIdBytes, nameof(infoCenterId));
 
         var value = await connection.ExecuteScalarAsync<object?>(
             Command(GetLastInvoiceNoSql, parameters, commandTimeoutSeconds, cancellationToken)).ConfigureAwait(false);
@@ -300,8 +318,8 @@ public sealed class InvoiceQueries : IInvoiceQueries
         CancellationToken cancellationToken)
     {
         var parameters = new DynamicParameters();
-        parameters.Add("patientNo", patientNo, DbType.AnsiString);
-        parameters.Add("visitUnique", visitUnique, DbType.AnsiString);
+        BoundedVarchar2.AddInput(parameters, "patientNo", patientNo, BoundedVarchar2.PatientNoBytes, nameof(patientNo));
+        BoundedVarchar2.AddInput(parameters, "visitUnique", visitUnique, BoundedVarchar2.VisitUniqueBytes, nameof(visitUnique));
         parameters.Add("payType", payType, DbType.Int32);
 
         var rows = await connection.QueryAsync<RequestRow>(
@@ -318,7 +336,7 @@ public sealed class InvoiceQueries : IInvoiceQueries
         CancellationToken cancellationToken)
     {
         var parameters = new DynamicParameters();
-        parameters.Add("claimNo", claimNo, DbType.AnsiString);
+        BoundedVarchar2.AddInput(parameters, "claimNo", claimNo, BoundedVarchar2.ClaimNoBytes, nameof(claimNo));
 
         var row = await connection.QueryFirstOrDefaultAsync<ClaimPreloadRow>(
             Command(GetClaimPreloadSql, parameters, commandTimeoutSeconds, cancellationToken)).ConfigureAwait(false);
@@ -352,7 +370,7 @@ public sealed class InvoiceQueries : IInvoiceQueries
         CancellationToken cancellationToken)
     {
         var parameters = new DynamicParameters();
-        parameters.Add("requestId", requestId, DbType.AnsiString);
+        BoundedVarchar2.AddInput(parameters, "requestId", requestId, BoundedVarchar2.RequestIdBytes, nameof(requestId));
 
         var row = await connection.QueryFirstOrDefaultAsync<CreateRequestRow>(
             Command(GetCreateRequestSql, parameters, commandTimeoutSeconds, cancellationToken)).ConfigureAwait(false);
@@ -384,12 +402,13 @@ public sealed class InvoiceQueries : IInvoiceQueries
         return parameters;
     }
 
-    /// <summary>ROW_TYPE filter for a LOCAL_DOC_TYPE: 532 or 505 gives 1, 783 gives 2, anything else none.</summary>
-    private static int? RowTypeFilter(int? localDocType) => localDocType switch
+    /// <summary>ROW_TYPE of a LOCAL_DOC_TYPE: 532 or 505 gives 1, 783 gives 2.</summary>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="localDocType"/> is not 505, 532 or 783.</exception>
+    private static int RowTypeOf(int localDocType) => localDocType switch
     {
         532 or 505 => 1,
         783 => 2,
-        _ => null,
+        _ => throw new ArgumentOutOfRangeException(nameof(localDocType), localDocType, "LOCAL_DOC_TYPE must be 505, 532 or 783."),
     };
 
     /// <summary>Header draft of a saved invoice row; the pre-authorisation and header offer stay null.</summary>
@@ -496,7 +515,7 @@ public sealed class InvoiceQueries : IInvoiceQueries
         [nameof(InvoiceLineRow.VAT_VAL_PAT_EX)] = row.VAT_VAL_PAT_EX,
     };
 
-    /// <summary>Display values of a saved invoice: the lookups, OFFER_NAME as null, the persisted display columns with CASH_COLLECTED as the amount due, TOTAL_COLLECTED as amount 1 plus amount 2, the line totals as read, PRE_AUTHORIZATION and LINE_DISPLAY.</summary>
+    /// <summary>Builds saved-invoice display values, distinguishing amount due from total collected.</summary>
     private static Dictionary<string, object?> ToDisplay(
         InvoiceHeaderRow row,
         IReadOnlyList<IReadOnlyDictionary<string, object?>> lineDisplay,
@@ -546,7 +565,7 @@ public sealed class InvoiceQueries : IInvoiceQueries
             [LineDisplayKey] = lineDisplay,
         };
 
-    /// <summary>Selected request row as the port tuple.</summary>
+    /// <summary>Selected request row as the port tuple, mapped strictly (D-114).</summary>
     /// <exception cref="InvalidCastException">The row has no PAT_SERV_REQ_ROW_ID or SERVICEID, or a non-integral number.</exception>
     /// <exception cref="OverflowException">The row holds a number outside the Int32 or Int64 range.</exception>
     private static (long PatServReqRowId, string ServiceId, int? ReqAStatus, int? ReqNeedA, string? ApprovRefNo) ToSelectedRequestRow(RequestRow row) =>
@@ -619,179 +638,328 @@ public sealed class InvoiceQueries : IInvoiceQueries
     /// <summary>Row of <see cref="GetInvoiceSql"/>.</summary>
     private sealed class InvoiceHeaderRow
     {
+        /// <summary>Invoice number.</summary>
         public decimal? INV_NO { get; set; }
+        /// <summary>Patient number.</summary>
         public string? PATIENTNO { get; set; }
+        /// <summary>Invoice date.</summary>
         public DateTime? INVDATE { get; set; }
+        /// <summary>Invoice type id.</summary>
         public decimal? INVTYPEID { get; set; }
+        /// <summary>Pay type: 1 cash, 2 credit.</summary>
         public decimal? PAYTYPE { get; set; }
+        /// <summary>Payment method 1.</summary>
         public decimal? SUB_PAYTYPE { get; set; }
+        /// <summary>Payment method 2.</summary>
         public decimal? SUB_PAYTYPE2 { get; set; }
+        /// <summary>Clinic id.</summary>
         public decimal? CLINICID { get; set; }
+        /// <summary>Doctor id.</summary>
         public decimal? DOCID { get; set; }
+        /// <summary>Currency code.</summary>
         public string? CURR_CODE { get; set; }
+        /// <summary>Persisted pre-authorisation.</summary>
         public string? PRE_AUTHORIZATION { get; set; }
+        /// <summary>Claim number.</summary>
         public string? CLAIM_NO { get; set; }
+        /// <summary>Claim flag.</summary>
         public string? CLAIM_FLAG { get; set; }
+        /// <summary>Note number.</summary>
         public string? NOTE_NO { get; set; }
+        /// <summary>Final discount percent.</summary>
         public decimal? FINALDISC_PERC { get; set; }
+        /// <summary>Final discount amount.</summary>
         public decimal? FINALDISC { get; set; }
+        /// <summary>Amount paid by payment method 1.</summary>
         public decimal? AMOUNT_1 { get; set; }
+        /// <summary>Amount paid by payment method 2.</summary>
         public decimal? AMOUNT_2 { get; set; }
+        /// <summary>Add-to-visit-list flag.</summary>
         public decimal? ADD_TO_LIST { get; set; }
+        /// <summary>User number of the operator who created the invoice.</summary>
         public decimal? USER_NO { get; set; }
+        /// <summary>Machine name of the creating host.</summary>
         public string? MACHINE_N { get; set; }
+        /// <summary>Information centre id.</summary>
         public string? INFO_CENTER_ID { get; set; }
+        /// <summary>ER / department-wise flag.</summary>
         public decimal? DEPT_WISE { get; set; }
+        /// <summary>Call flag.</summary>
         public decimal? CALL { get; set; }
+        /// <summary>Final-discount entry mode: 1 percent, 0 value.</summary>
         public decimal? DISC_T { get; set; }
+        /// <summary>Cash tendered by the patient.</summary>
         public decimal? CASH_PAYED { get; set; }
+        /// <summary>Company code; '0' is the cash company.</summary>
         public string? COMP_CODE { get; set; }
+        /// <summary>Sub-company code.</summary>
         public string? SUB_COMP_CODE { get; set; }
+        /// <summary>Insurance class code.</summary>
         public decimal? CLASS_CODE { get; set; }
+        /// <summary>Referring doctor id.</summary>
         public decimal? DOCID1 { get; set; }
+        /// <summary>Reservation sequence number.</summary>
         public decimal? SEQ_NO { get; set; }
+        /// <summary>Patient name.</summary>
         public string? PATIENTNAME { get; set; }
+        /// <summary>Invoice time.</summary>
         public string? INV_TIME { get; set; }
+        /// <summary>Cash discount card id.</summary>
         public decimal? CARD_ID { get; set; }
+        /// <summary>Price list id.</summary>
         public decimal? LIST_ID { get; set; }
+        /// <summary>Price plan code.</summary>
         public decimal? PLAN_CODE { get; set; }
+        /// <summary>User number of the last editor.</summary>
         public decimal? UPD_USER_NO { get; set; }
+        /// <summary>Row type.</summary>
         public decimal? ROW_TYPE { get; set; }
+        /// <summary>AM/PM flag.</summary>
         public string? PFLAG { get; set; }
+        /// <summary>Patient share.</summary>
         public decimal? PAT_PAY { get; set; }
+        /// <summary>Company (credit) share.</summary>
         public decimal? COMP_PAY { get; set; }
+        /// <summary>Patient VAT total.</summary>
         public decimal? VAT_TOTAL_PAT { get; set; }
+        /// <summary>Company VAT total.</summary>
         public decimal? VAT_TOTAL_CO { get; set; }
+        /// <summary>Total VAT.</summary>
         public decimal? VAT_TOTAL { get; set; }
+        /// <summary>Amount due from the patient.</summary>
         public decimal? CASH_COLLECTED { get; set; }
+        /// <summary>Refund to the patient.</summary>
         public decimal? REUND { get; set; }
+        /// <summary>Maximum deductible.</summary>
         public decimal? MAX_DEDUCTABLE { get; set; }
+        /// <summary>Reservation time.</summary>
         public decimal? RESERV_THE_TIME { get; set; }
+        /// <summary>Insurance number.</summary>
         public string? INS_NUMBER { get; set; }
+        /// <summary>Insurance card end date.</summary>
         public DateTime? CARD_END { get; set; }
+        /// <summary>Patient policy number.</summary>
         public string? PAT_POLICY_NO { get; set; }
+        /// <summary>Name of the creating user (USER_NO); null unless exactly one row matches.</summary>
         public string? USER_NAME_TO_SHOW { get; set; }
+        /// <summary>Arabic name of payment method 1; null unless exactly one row matches.</summary>
         public string? SUB_PAYTYPE_NAME { get; set; }
+        /// <summary>Arabic name of payment method 2; null unless exactly one row matches.</summary>
         public string? SUB_PAYTYPE2_NAME { get; set; }
+        /// <summary>Name of the last editor (UPD_USER_NO); null unless exactly one row matches.</summary>
         public string? EDIT_USER_NAME_TO_SHOW { get; set; }
+        /// <summary>Clinic name; null unless exactly one row matches.</summary>
         public string? CLINICNAME { get; set; }
+        /// <summary>Doctor name; null unless exactly one row matches.</summary>
         public string? DOC_NAME { get; set; }
+        /// <summary>Referring doctor name (DOCID1); null unless exactly one row matches.</summary>
         public string? DOC_NAME1 { get; set; }
+        /// <summary>Price plan name; null unless exactly one row matches.</summary>
         public string? PLAN_NAME { get; set; }
+        /// <summary>Price list name; null unless exactly one row matches.</summary>
         public string? LIST_NAME { get; set; }
+        /// <summary>Company name; null unless exactly one row matches.</summary>
         public string? COMP_NAME { get; set; }
+        /// <summary>Sub-company name; null unless exactly one row matches.</summary>
         public string? SUB_COMP_NAME { get; set; }
+        /// <summary>Insurance class name; null unless exactly one row matches.</summary>
         public string? CLASS_NAME { get; set; }
+        /// <summary>Name of the sub-company's group company (XGROUP); null unless exactly one row matches.</summary>
         public string? G_NAME { get; set; }
+        /// <summary>Cash discount card name; null unless exactly one row matches.</summary>
         public string? CARD_NAME { get; set; }
     }
 
     /// <summary>Row of <see cref="GetInvoiceLinesSql"/>.</summary>
     private sealed class InvoiceLineRow
     {
+        /// <summary>Line row id as text.</summary>
         public string? D_INV_ROW_ID { get; set; }
+        /// <summary>Service id.</summary>
         public string? SERVICEID { get; set; }
+        /// <summary>Service description.</summary>
         public string? SERVICEDESC { get; set; }
+        /// <summary>Service category id.</summary>
         public decimal? CATID { get; set; }
+        /// <summary>Service category name.</summary>
         public string? XCAT_NAMEX { get; set; }
+        /// <summary>Unit price.</summary>
         public decimal? PRICE { get; set; }
+        /// <summary>Quantity.</summary>
         public decimal? QTY { get; set; }
+        /// <summary>Line discount rate.</summary>
         public decimal? DISC { get; set; }
+        /// <summary>Line discount value.</summary>
         public decimal? MY_DISC { get; set; }
+        /// <summary>Fixed payer amount.</summary>
         public decimal? FIXPAY { get; set; }
+        /// <summary>Payer rate.</summary>
         public decimal? PAYRATE { get; set; }
+        /// <summary>Tooth number.</summary>
         public string? TEETH_NO { get; set; }
+        /// <summary>Tooth surface.</summary>
         public string? TOOTH_SURFACE { get; set; }
+        /// <summary>Second tooth number.</summary>
         public string? TEETH_NO2 { get; set; }
+        /// <summary>Linked PAT_SERV_REQ row id.</summary>
         public decimal? PAT_SERV_REQ_ROW_ID { get; set; }
+        /// <summary>Approval date.</summary>
         public DateTime? APPROV_DATE { get; set; }
+        /// <summary>Approval validity.</summary>
         public decimal? APPROV_VALIDITY { get; set; }
+        /// <summary>Approval reference number.</summary>
         public string? APPROV_REF_NO { get; set; }
+        /// <summary>Line claim number.</summary>
         public string? CLAIM_NO { get; set; }
+        /// <summary>Approval-needed flag.</summary>
         public decimal? REQ_NEED_A { get; set; }
+        /// <summary>Approval status.</summary>
         public decimal? REQ_A_STATUS { get; set; }
+        /// <summary>Price list id.</summary>
         public decimal? LIST_ID { get; set; }
+        /// <summary>Currency code.</summary>
         public string? CURR_CODE { get; set; }
+        /// <summary>Line gross.</summary>
         public decimal? MY_PRICE { get; set; }
+        /// <summary>Line net.</summary>
         public decimal? MY_NET { get; set; }
+        /// <summary>Patient share.</summary>
         public decimal? THE_PAY { get; set; }
+        /// <summary>Company share.</summary>
         public decimal? THE_COMP { get; set; }
+        /// <summary>Resolved payer fixed amount.</summary>
         public decimal? THE_FIX { get; set; }
+        /// <summary>Resolved payer rate.</summary>
         public decimal? THE_RATE { get; set; }
+        /// <summary>VAT rate.</summary>
         public decimal? VAT_RATE { get; set; }
+        /// <summary>Company VAT.</summary>
         public decimal? VAT_VAL_CO { get; set; }
+        /// <summary>Patient VAT.</summary>
         public decimal? VAT_VAL_PAT { get; set; }
+        /// <summary>Exempt patient VAT.</summary>
         public decimal? VAT_VAL_PAT_EX { get; set; }
+        /// <summary>Regular lenses type.</summary>
         public string? REGULAR_LENSES_TYPE { get; set; }
+        /// <summary>Lens specifications.</summary>
         public string? LENS_SPECIFICATIONS { get; set; }
+        /// <summary>Contact lenses type.</summary>
         public string? CONTACT_LENSES_TYPE { get; set; }
+        /// <summary>F L indicator.</summary>
         public string? F_L_INDICATOR { get; set; }
+        /// <summary>Number of pairs.</summary>
         public string? NUMBER_OF_PAIRS { get; set; }
+        /// <summary>Insurance employee number.</summary>
         public decimal? INS_EMP { get; set; }
+        /// <summary>Owning package service id.</summary>
         public string? PACKAGE_SERVICE_ID { get; set; }
+        /// <summary>Package instance id.</summary>
         public string? PACKAGE_INSTANCE_ID { get; set; }
+        /// <summary>Package line role.</summary>
         public string? PACKAGE_LINE_ROLE { get; set; }
+        /// <summary>Package component order.</summary>
         public decimal? PACKAGE_COMPONENT_ORDER { get; set; }
+        /// <summary>Package parent line id.</summary>
         public decimal? PACKAGE_PARENT_LINE_ID { get; set; }
+        /// <summary>Package pricing method.</summary>
         public string? PACKAGE_PRICING_METHOD { get; set; }
+        /// <summary>Offer id.</summary>
         public decimal? OFFER_ID { get; set; }
+        /// <summary>Offer detail id.</summary>
         public decimal? OFFER_DTL_ID { get; set; }
+        /// <summary>Offer type.</summary>
         public decimal? OFFER_TYPE { get; set; }
+        /// <summary>Offer instance id.</summary>
         public string? OFFER_INSTANCE_ID { get; set; }
+        /// <summary>Offer line role.</summary>
         public string? OFFER_LINE_ROLE { get; set; }
+        /// <summary>Offer parent line id.</summary>
         public decimal? OFFER_PARENT_LINE_ID { get; set; }
+        /// <summary>Offer price applied.</summary>
         public decimal? OFFER_PRICE_APPLIED { get; set; }
+        /// <summary>Offer discount applied.</summary>
         public decimal? OFFER_DIS_APPLIED { get; set; }
+        /// <summary>Offer name snapshot.</summary>
         public string? OFFER_NAME_SNAPSHOT { get; set; }
+        /// <summary>Offer object version number.</summary>
         public decimal? OFFER_OBJECT_VERSION_NUMBER { get; set; }
+        /// <summary>Offer detail object version number.</summary>
         public decimal? OFFER_DTL_OBJECT_VERSION_NUMBER { get; set; }
     }
 
     /// <summary>Row of <see cref="GetInvoiceTotalsSql"/>.</summary>
     private sealed class InvoiceTotalsRow
     {
+        /// <summary>Sum of MY_PRICE over the invoice's lines not flagged deleted; 0 when none.</summary>
         public decimal? TOTAL_GROSS { get; set; }
+        /// <summary>Sum of MY_DISC over the invoice's lines not flagged deleted; 0 when none.</summary>
         public decimal? TOTAL_DISCOUNT { get; set; }
+        /// <summary>Sum of MY_NET over the invoice's lines not flagged deleted; 0 when none.</summary>
         public decimal? TOTAL_NET { get; set; }
     }
 
     /// <summary>Row of <see cref="GetSelectedRequestRowsSql"/>.</summary>
     private sealed class RequestRow
     {
+        /// <summary>Request row id.</summary>
         public decimal? PAT_SERV_REQ_ROW_ID { get; set; }
+        /// <summary>Requested service id.</summary>
         public string? SERVICEID { get; set; }
+        /// <summary>Approval status.</summary>
         public decimal? REQ_A_STATUS { get; set; }
+        /// <summary>Approval-needed flag.</summary>
         public decimal? REQ_NEED_A { get; set; }
+        /// <summary>Approval reference number.</summary>
         public string? APPROV_REF_NO { get; set; }
     }
 
     /// <summary>Row of <see cref="GetClaimPreloadSql"/>.</summary>
     private sealed class ClaimPreloadRow
     {
+        /// <summary>Claim number of the claim's first invoice.</summary>
         public string? CLAIM_NO { get; set; }
+        /// <summary>Patient number of the claim's first invoice.</summary>
         public string? PATIENTNO { get; set; }
+        /// <summary>Clinic id of the claim's first invoice.</summary>
         public decimal? CLINICID { get; set; }
+        /// <summary>Company code of the claim's first invoice.</summary>
         public string? COMP_CODE { get; set; }
+        /// <summary>Sub-company code of the claim's first invoice.</summary>
         public string? SUB_COMP_CODE { get; set; }
+        /// <summary>Insurance class code of the claim's first invoice.</summary>
         public decimal? CLASS_CODE { get; set; }
+        /// <summary>Pay type of the claim's first invoice.</summary>
         public decimal? PAYTYPE { get; set; }
+        /// <summary>Price list id of the claim's first invoice.</summary>
         public decimal? LIST_ID { get; set; }
+        /// <summary>Maximum deductible of the claim's first invoice.</summary>
         public decimal? MAX_DEDUCTABLE { get; set; }
+        /// <summary>Cash discount card id of the claim's first invoice.</summary>
         public decimal? CARD_ID { get; set; }
+        /// <summary>Insurance number of the claim's first invoice.</summary>
         public string? INS_NUMBER { get; set; }
+        /// <summary>Insurance card end date of the claim's first invoice.</summary>
         public DateTime? CARD_END { get; set; }
+        /// <summary>Patient policy number of the claim's first invoice.</summary>
         public string? PAT_POLICY_NO { get; set; }
     }
 
     /// <summary>Row of <see cref="GetCreateRequestSql"/>.</summary>
     private sealed class CreateRequestRow
     {
+        /// <summary>Invoice number recorded for the request.</summary>
         public decimal? INV_NO { get; set; }
+        /// <summary>Patient number recorded for the request.</summary>
         public string? PATIENTNO { get; set; }
+        /// <summary>Completion time of the request, in the type the provider returns.</summary>
         public object? COMPLETED_AT { get; set; }
+        /// <summary>Date of the recorded invoice; null when no invoice row matches.</summary>
         public DateTime? INVDATE { get; set; }
+        /// <summary>Company code of the recorded invoice; null when no invoice row matches.</summary>
         public string? COMP_CODE { get; set; }
+        /// <summary>Sub-company code of the recorded invoice; null when no invoice row matches.</summary>
         public string? SUB_COMP_CODE { get; set; }
+        /// <summary>1 when the recorded invoice's clinic has AGE_MIN or AGE_MAX, else 0.</summary>
         public decimal? CLINIC_AGE_LIMIT { get; set; }
     }
 }

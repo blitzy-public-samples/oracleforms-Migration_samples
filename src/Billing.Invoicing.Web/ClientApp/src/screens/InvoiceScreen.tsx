@@ -320,7 +320,7 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
     }
   }
 
-  /** GET /api/patients/{patientNo}/coverage for the draft's patient number as entered; a blank number or a failed read stores no coverage; resolves false when Oracle is unavailable. */
+  /** Reads patient coverage; resolves false on an Oracle outage and stores no coverage for blank or failed reads. */
   async function readCoverage(draft: DraftDto, origin: RequestOrigin): Promise<boolean> {
     const patientNo = draft.header.patientNo;
     if (patientNo == null || patientNo.trim() === '') {
@@ -338,7 +338,7 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
     }
   }
 
-  /** POST /api/drafts/validate for one target, after the coverage GET for a PATIENTNO target (none when that GET finds Oracle unavailable), then the visit line or preview it leads to. */
+  /** Validates a target, reading coverage first for PATIENTNO, and queues its visit-line or preview follow-up. */
   async function validate(target: ValidateTarget, lineIndex: number | null): Promise<void> {
     const current = latest.current;
     const draft = current.draft;
@@ -443,7 +443,7 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
       return;
     }
     try {
-      const view = await getInvoice(invNo, window.location.search);
+      const view = await getInvoice(invNo);
       dispatch({ type: 'invoiceLoaded', invNo, response: view, origin });
     } catch (error) {
       handleError(error, 'SAVED', origin);
@@ -595,7 +595,7 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
     }
   }
 
-  /** SMS and document requests for the saved invoice on screen. */
+  /** SMS and document requests for the saved invoice on screen (D-122). */
   async function runSavedAction(action: SavedAction): Promise<void> {
     const invNo = savedInvoiceNo(latest.current);
     if (invNo === null) {
@@ -611,7 +611,6 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
       }
       dispatch({ type: 'connectivityRestored' });
     } catch (error) {
-      // Each saved action reports under its own source.
       handleError(error, `SAVED:${action}`, origin);
     }
   }
@@ -632,7 +631,7 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
       return;
     }
     try {
-      const view = await getInvoice(invNo, window.location.search);
+      const view = await getInvoice(invNo);
       dispatch({ type: 'invoiceLoaded', invNo, response: view });
     } catch (error) {
       handleError(error, 'SAVED');
@@ -661,7 +660,6 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
   const savedInvNo = savedInvoiceNo(state);
   const currentServiceId = draft?.lines[state.currentLineIndex]?.serviceId?.trim() ?? '';
 
-  // A saved or queried invoice shows no draft preview.
   const draftPreview = state.saved !== null ? null : state.preview;
   const paymentStatus = draftPreview?.totals?.paymentStatus ?? null;
 

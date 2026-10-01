@@ -6,6 +6,7 @@ using Billing.Invoicing.Api.Errors;
 using Billing.Invoicing.Api.Services;
 using Billing.Invoicing.Domain.Model;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Net.Http.Headers;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -38,11 +39,21 @@ builder.Services
 
 builder.Services.AddInvoicingData(builder.Configuration);
 builder.Services.AddSingleton<ProblemDetailsWriter>();
+builder.Services.AddExceptionHandler<ProblemDetailsExceptionHandler>();
 builder.Services.AddScoped<InvoiceWorkflowService>();
 
 var webOrigin = RequireWebOrigin(builder.Configuration["Cors:WebOrigin"]);
-builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
-    p.WithOrigins(webOrigin).AllowAnyHeader().AllowAnyMethod().WithExposedHeaders("Location")));
+builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
+    .WithOrigins(webOrigin)
+    .WithMethods(HttpMethods.Get, HttpMethods.Post)
+    .WithHeaders(
+        HeaderNames.Accept,
+        HeaderNames.ContentType,
+        "X-His-User-No",
+        "X-His-User-Name",
+        "X-His-Info-Center-Id",
+        "X-His-Machine",
+        "X-His-Session-Id")));
 
 var app = builder.Build();
 
@@ -54,8 +65,7 @@ app.MapControllers();
 
 app.Run();
 
-// Returns the Cors:WebOrigin value as a scheme://host:port origin; throws InvalidOperationException naming the key when it is
-// missing, blank, or not an absolute http or https URI without user info, path, query or fragment.
+// Returns the validated CORS origin or throws for invalid configuration.
 static string RequireWebOrigin(string? configured)
 {
     var value = configured?.Trim();
@@ -73,5 +83,4 @@ static string RequireWebOrigin(string? configured)
         "Cors:WebOrigin must be the absolute http or https origin of the Web host, such as http://localhost:5090.");
 }
 
-// Declares the top-level entry-point class internal (D-81).
 internal partial class Program;

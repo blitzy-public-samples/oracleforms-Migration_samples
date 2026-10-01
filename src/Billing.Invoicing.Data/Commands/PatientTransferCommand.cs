@@ -17,7 +17,7 @@ public sealed class PatientTransferCommand : IPatientTransferCommand
     /// <summary>Stores the data-layer settings; opens nothing.</summary>
     /// <param name="options">Command timeout applied to the update.</param>
     /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
-    /// <exception cref="ArgumentOutOfRangeException"><see cref="InvoicingDataOptions.CommandTimeoutSeconds"/> is below 1.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><see cref="InvoicingDataOptions.CommandTimeoutSeconds"/> is below 1 or above <see cref="InvoicingDataOptions.MaxCommandTimeoutSeconds"/>.</exception>
     public PatientTransferCommand(InvoicingDataOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);

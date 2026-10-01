@@ -44,7 +44,6 @@ const SAVED_HEADER_FIELDS: Readonly<Partial<Record<string, 'amount1' | 'amount2'
 export default function TotalsPanel({ state }: { state: InvoiceDraftState }) {
   const saved = state.saved;
   const view = saved?.view ?? null;
-  // A saved or queried invoice lists every row except the preview-only ones.
   const rows = saved === null ? ROWS : ROWS.filter((row) => row.previewOnly !== true);
 
   // A saved or queried invoice shows each row's saved display value, else its header amount; an unsaved draft shows its preview.

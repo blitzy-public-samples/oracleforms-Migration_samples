@@ -51,7 +51,8 @@
         ],
         "context": []
       },
-      "expected": { "error": { "package": "BIL_INVOICE_ENGINE", "number": -20904, "messagePrefix": "Invoice create failed: service ID is required on line " } }
+      "expected": { "error": { "package": "BIL_INVOICE_ENGINE", "number": -20904, "messagePrefix": "Invoice create failed: service ID is required on line " } },
+      "decision": "D-126"
     },
     {
       "name": "zero-quantity-rejected",

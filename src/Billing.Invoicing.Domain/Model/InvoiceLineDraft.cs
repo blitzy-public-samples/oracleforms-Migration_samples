@@ -114,7 +114,7 @@ public sealed record InvoiceLineDraft
     /// <summary>Displayed line price from an LOV, an import or a preview.</summary>
     public decimal? Price { get; init; }
 
-    /// <summary>Service category (CATID); display only (OI-33).</summary>
+    /// <summary>Service category (CATID); selectable in a draft and returned by preview, but omitted from package input (OI-33).</summary>
     public int? CatId { get; init; }
 
     /// <summary>Fixed payer amount (FIXPAY); display only (OI-33).</summary>

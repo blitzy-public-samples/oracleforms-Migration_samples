@@ -9,7 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Billing.Invoicing.Tests.Api;
 
-/// <summary><c>Invoicing:*</c> validation, <c>Invoicing:DraftSealKey</c> binding and Data registrations of <see cref="InvoicingDataRegistration.AddInvoicingData"/>, and the command-timeout check of the query classes it registers.</summary>
+/// <summary>Configuration validation and service registration of <see cref="InvoicingDataRegistration.AddInvoicingData"/>, and the command-timeout check of the query classes it registers.</summary>
 [Trait("Category", "Orchestration")]
 public sealed class InvoicingDataRegistrationTests
 {

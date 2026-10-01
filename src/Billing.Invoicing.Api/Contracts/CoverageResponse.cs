@@ -8,7 +8,7 @@ public sealed record CoverageResponse
     /// <summary>Patient coverage; <c>null</c> when the patient has none.</summary>
     public PatientCoverageSnapshot? Coverage { get; init; }
 
-    /// <summary>Pay type decided for the patient: 1 cash, 2 credit.</summary>
+    /// <summary>Pay type decided for the patient: 0 when undetermined; otherwise 1 cash or 2 credit.</summary>
     public int PayType { get; init; }
 
     /// <summary>Eligibility messages, blocking and warning.</summary>

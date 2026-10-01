@@ -17,6 +17,7 @@ public sealed class OracleFailureTranslatorTests
     private const string OracleErrorMessage = "The Oracle database returned an error.";
     private const string UnavailableMessage = "Oracle database is unavailable.";
     private const string ConfigurationFaultMessage = "The Oracle connection string is not configured or is not well-formed.";
+    private const string UnreadableText = "The Oracle error text could not be read.";
 
     private const string RequestUnavailableText =
         "One or more requested services were already invoiced or are no longer available.";
@@ -624,6 +625,67 @@ public sealed class OracleFailureTranslatorTests
         Assert.Equal(-20931, failure.Number);
         Assert.Equal(OracleErrorCatalog.EnginePackage, failure.Package);
         Assert.Equal(RequestUnavailableText, failure.Message);
+    }
+
+    [Fact]
+    public void Translate_DriverApplicationErrorWithoutOwnPrefix_Is422WithTheUnreadableText()
+    {
+        const string message = "User-Defined Exception\nat \"HIS.BIL_INVOICE_ENGINE\", line 619\nat \"HIS.BIL_INVOICE_API\", line 1476";
+        OracleException driver = Driver(20931, message);
+        driver.Data[OracleErrorParser.OperationKey] = "CreateFullInvoice";
+        Assert.StartsWith(message, driver.Message, StringComparison.Ordinal);
+
+        DataFailure? failure = translator.Translate(driver);
+
+        Assert.NotNull(failure);
+        Assert.Equal(422, failure.Status);
+        Assert.Equal(DataFailure.OracleBusinessErrorType, failure.Type);
+        Assert.Equal(-20931, failure.Number);
+        Assert.Equal(UnknownPackage, failure.Package);
+        Assert.Null(failure.Kind);
+        Assert.Null(failure.Field);
+        Assert.Null(failure.LegacyText);
+        Assert.Equal(UnreadableText, failure.Message);
+        Assert.DoesNotContain("HIS.", failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("\n", failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("https://", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Translate_DriverApplicationErrorWithOnlyFrames_Is500WithFixedMessage()
+    {
+        OracleException driver = Driver(20931, "User-Defined Exception\n" + EngineFrame + "\n" + ApiFrame);
+        driver.Data[OracleErrorParser.OperationKey] = "CreateFullInvoice";
+        Assert.Contains("ORA-06512", driver.Message, StringComparison.Ordinal);
+
+        DataFailure? failure = translator.Translate(driver);
+
+        Assert.NotNull(failure);
+        Assert.Equal(500, failure.Status);
+        Assert.Equal(DataFailure.OracleErrorType, failure.Type);
+        Assert.Equal(-20931, failure.Number);
+        Assert.Null(failure.Package);
+        Assert.Equal(OracleErrorMessage, failure.Message);
+        Assert.DoesNotContain("ORA-06512", failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("HIS.", failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("\n", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Translate_OwnCodeWithoutColonBeforeAFrame_Is422WithTheUnreadableText()
+    {
+        string message = "ORA-20931 x\n" + EngineFrame;
+
+        DataFailure failure = translator.Translate(OracleErrorParser.FromParts(20931, message, operation: "CreateFullInvoice"));
+
+        Assert.Equal(422, failure.Status);
+        Assert.Equal(DataFailure.OracleBusinessErrorType, failure.Type);
+        Assert.Equal(-20931, failure.Number);
+        Assert.Equal(OracleErrorCatalog.EnginePackage, failure.Package);
+        Assert.Null(failure.Kind);
+        Assert.Equal(UnreadableText, failure.Message);
+        Assert.DoesNotContain("HIS.", failure.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("line 619", failure.Message, StringComparison.Ordinal);
     }
 
     [Fact]

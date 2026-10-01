@@ -1,6 +1,7 @@
 using System.Data;
 using System.Text;
 using Billing.Invoicing.Data.Errors;
+using Dapper;
 using Oracle.ManagedDataAccess.Client;
 
 namespace Billing.Invoicing.Data.Plsql;
@@ -35,6 +36,15 @@ internal static class BoundedVarchar2
     /// <summary>Width of a Y/N flag.</summary>
     internal const int FlagBytes = 1;
 
+    /// <summary>Width of t_inv.claim_no (Form item T_INV.CLAIM_NO).</summary>
+    internal const int ClaimNoBytes = 40;
+
+    /// <summary>Width of t_inv.comp_code (Form item T_INV.COMP_CODE).</summary>
+    internal const int CompCodeBytes = 10;
+
+    /// <summary>Width of t_inv.sub_comp_code (Form item T_INV.SUB_COMP_CODE).</summary>
+    internal const int SubCompCodeBytes = 10;
+
     /// <summary>Rejects a value longer than <paramref name="maxBytes"/> in characters or UTF-8 bytes; a null value passes.</summary>
     /// <param name="bindName">Bind name the rejection text names.</param>
     /// <param name="value">Value to check.</param>
@@ -48,7 +58,7 @@ internal static class BoundedVarchar2
             return;
         }
 
-        // A value over the destination width in characters or UTF-8 bytes is rejected, never truncated to fit.
+        // A value over the destination width in characters or UTF-8 bytes is rejected, never truncated to fit (D-108).
         string? rejection = null;
         if (value.Length > maxBytes)
         {
@@ -84,4 +94,48 @@ internal static class BoundedVarchar2
             Value = (object?)value ?? DBNull.Value,
         };
     }
+
+    /// <summary>Adds a Dapper VARCHAR2 IN bind of size <paramref name="maxBytes"/> after <see cref="Validate"/>; a null value binds as null.</summary>
+    /// <param name="parameters">Dapper parameters receiving the bind.</param>
+    /// <param name="bindName">Bind name of the parameter.</param>
+    /// <param name="value">Value to bind.</param>
+    /// <param name="maxBytes">Destination width in bytes.</param>
+    /// <param name="paramName">Argument a rejection names.</param>
+    /// <exception cref="ArgumentException">The value exceeds <paramref name="maxBytes"/>; <see cref="Exception.Data"/> holds the text under <see cref="OracleFailureTranslator.BindingRejectionKey"/>.</exception>
+    internal static void AddInput(DynamicParameters parameters, string bindName, string? value, int maxBytes, string paramName)
+    {
+        ArgumentNullException.ThrowIfNull(parameters);
+
+        Validate(bindName, value, maxBytes, paramName);
+        parameters.Add(bindName, AnsiString(value, maxBytes));
+    }
+
+    /// <summary>Returns the elements of a Dapper <c>IN</c> list bind, each a VARCHAR2 of size <paramref name="maxBytes"/>, after <see cref="Validate"/> of every value.</summary>
+    /// <param name="bindName">Bind name of the list.</param>
+    /// <param name="values">Values to bind, in list order.</param>
+    /// <param name="maxBytes">Destination width in bytes of each element.</param>
+    /// <param name="paramName">Argument a rejection names.</param>
+    /// <returns>The sized elements in <paramref name="values"/> order.</returns>
+    /// <exception cref="ArgumentException">A value exceeds <paramref name="maxBytes"/>; <see cref="Exception.Data"/> holds the text under <see cref="OracleFailureTranslator.BindingRejectionKey"/>.</exception>
+    internal static DbString[] InputList(string bindName, IEnumerable<string> values, int maxBytes, string paramName)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+
+        var elements = new List<DbString>();
+        foreach (var value in values)
+        {
+            Validate(bindName, value, maxBytes, paramName);
+            elements.Add(AnsiString(value, maxBytes));
+        }
+
+        return elements.ToArray();
+    }
+
+    /// <summary>ANSI Dapper string bound at size <paramref name="maxBytes"/>.</summary>
+    private static DbString AnsiString(string? value, int maxBytes) => new()
+    {
+        Value = value,
+        IsAnsi = true,
+        Length = maxBytes,
+    };
 }

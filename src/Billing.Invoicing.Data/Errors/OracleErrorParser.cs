@@ -20,6 +20,10 @@ public static partial class OracleErrorParser
 
     private const int FrameMatchTimeoutMilliseconds = 1000;
 
+    private const string TextSeparator = ": ";
+
+    private const string UnreadableText = "The Oracle error text could not be read.";
+
     /// <summary>Copies number, message, open phase and failing operation from an ODP.NET exception and parses them.</summary>
     /// <param name="exception">The driver exception.</param>
     /// <returns>The parsed error.</returns>
@@ -79,13 +83,12 @@ public static partial class OracleErrorParser
     {
         ArgumentNullException.ThrowIfNull(message);
 
-        // int.MinValue has no positive int counterpart; it is rejected as an argument error.
+        // Rejects int.MinValue before normalizing the Oracle error number (D-116).
         ArgumentOutOfRangeException.ThrowIfEqual(number, int.MinValue);
 
         int signed = Normalise(number);
         int code = Math.Abs(signed);
 
-        // Cross-check: the first ORA code in the message, when present, must equal the number.
         Match oraCode = OraCodeRegex().Match(message);
         if (oraCode.Success)
         {
@@ -104,7 +107,7 @@ public static partial class OracleErrorParser
         {
             Number = signed,
             Message = message,
-            Text = ParseText(message),
+            Text = ParseText(message, oraCode),
             Frames = ParseFrames(message),
             DuringOpen = duringOpen,
             Operation = operation,
@@ -125,16 +128,21 @@ public static partial class OracleErrorParser
         return code is >= ApplicationErrorFirst and <= ApplicationErrorLast ? -code : code;
     }
 
-    /// <summary>Returns the text after the first "ORA-nnnnn: " prefix up to the end of its line, or the whole message when no prefix exists.</summary>
-    private static string ParseText(string message)
+    /// <summary>Returns the text after the first ORA code and its ": " up to the end of that line, or a fixed text when that code is missing or not followed by ": " (D-117).</summary>
+    private static string ParseText(string message, Match oraCode)
     {
-        Match prefix = OraPrefixRegex().Match(message);
-        if (!prefix.Success)
+        if (!oraCode.Success)
         {
-            return message;
+            return UnreadableText;
         }
 
-        ReadOnlySpan<char> rest = message.AsSpan(prefix.Index + prefix.Length);
+        ReadOnlySpan<char> rest = message.AsSpan(oraCode.Index + oraCode.Length);
+        if (!rest.StartsWith(TextSeparator, StringComparison.Ordinal))
+        {
+            return UnreadableText;
+        }
+
+        rest = rest[TextSeparator.Length..];
         int lineEnd = rest.IndexOfAny('\r', '\n');
         ReadOnlySpan<char> line = lineEnd < 0 ? rest : rest[..lineEnd];
         return line.TrimEnd().ToString();
@@ -149,7 +157,7 @@ public static partial class OracleErrorParser
             Match match = FrameRegex().Match(message);
             while (match.Success)
             {
-                // Frames whose line number does not fit an int are skipped.
+                // Frames whose line number does not fit an int are skipped (D-116).
                 if (int.TryParse(match.Groups["line"].ValueSpan, NumberStyles.None, CultureInfo.InvariantCulture, out int line))
                 {
                     Group schema = match.Groups["schema"];
@@ -161,7 +169,6 @@ public static partial class OracleErrorParser
         }
         catch (RegexMatchTimeoutException)
         {
-            // The frames matched before the timeout are returned.
             return frames.AsReadOnly();
         }
 
@@ -188,7 +195,6 @@ public static partial class OracleErrorParser
         }
         catch (RegexMatchTimeoutException)
         {
-            // The triggers matched before the timeout are returned.
             return triggers.AsReadOnly();
         }
 
@@ -198,10 +204,6 @@ public static partial class OracleErrorParser
     /// <summary>First "ORA-" followed by a five-digit code anywhere in the message.</summary>
     [GeneratedRegex("ORA-(?<code>[0-9]{5})", ParseOptions)]
     private static partial Regex OraCodeRegex();
-
-    /// <summary>First "ORA-nnnnn: " prefix in the message.</summary>
-    [GeneratedRegex("ORA-[0-9]{5}: ", ParseOptions)]
-    private static partial Regex OraPrefixRegex();
 
     /// <summary>An ORA-06512 frame with a quoted, optionally schema-qualified object name on one line, each name part at most 128 characters, and a line number.</summary>
     [GeneratedRegex(

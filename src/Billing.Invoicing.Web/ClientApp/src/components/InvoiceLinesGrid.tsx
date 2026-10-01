@@ -526,7 +526,7 @@ function LineRow({
         </td>
       </tr>
       {withMessages.length > 0 && (
-        // Messages of the line's cells, in column order, in a full-width row under the line.
+        // Messages of the line's cells, in column order, in a full-width row under the line (D-120).
         <tr className={rowClass} onClick={selectLine}>
           <td colSpan={COLUMN_CLASSES.length}>
             <div className="check-field">
@@ -549,7 +549,7 @@ function LineRow({
   );
 }
 
-/** Editable grid of the invoice lines with the package-returned shares, VAT and net. */
+/** Shows invoice lines, editable in a draft and read-only when saved, with package-returned amounts. */
 export default function InvoiceLinesGrid({ state, dispatch, onValidateLine, onRemoveLine }: InvoiceLinesGridProps) {
   const [pending, setPending] = useState<PendingValidation[]>([]);
   const [categoryTarget, setCategoryTarget] = useState<CatPickerTarget | null>(null);

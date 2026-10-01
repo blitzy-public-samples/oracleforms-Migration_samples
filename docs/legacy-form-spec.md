@@ -63,12 +63,12 @@ Locators give the start-tag line in `05_Complex/Inv_Small_Cash.xml`.
 | LOV [locator] · record group [locator] | Binds | Target |
 |---|---|---|
 | `COMPANY1_2` [05_Complex/Inv_Small_Cash.xml:871] · `COMPANY` [05_Complex/Inv_Small_Cash.xml:1021] | `:global.current_info_center_id` | `LovQueries.Company` |
-| `SUB_COMPANY` [05_Complex/Inv_Small_Cash.xml:880] · `SUB_COMP` [05_Complex/Inv_Small_Cash.xml:1026] | `:t_inv.comp_Code` | `LovQueries.SubCompany` |
-| `THE_CLASS` [05_Complex/Inv_Small_Cash.xml:876] · `THE_CLASS` [05_Complex/Inv_Small_Cash.xml:1017] | `:SUB_COMP_CODE` | `LovQueries.TheClass` |
-| `PAY_TYPE1` [05_Complex/Inv_Small_Cash.xml:921], `PAY_TYPE2` [05_Complex/Inv_Small_Cash.xml:925] · `PAY_TYPE` [05_Complex/Inv_Small_Cash.xml:994] | `:global.lang` (bound 'E') | `LovQueries.PayTypes`; fills `SubPayType` / `SubPayType2`, never `PayType` |
+| `SUB_COMPANY` [05_Complex/Inv_Small_Cash.xml:880] · `SUB_COMP` [05_Complex/Inv_Small_Cash.xml:1026] | `:t_inv.comp_Code` (at most 10 bytes, D-107); the information centre (D-106) | `LovQueries.SubCompany`; rows only for a company of the operator's centre's `COMPANY1_2` list (D-106) |
+| `THE_CLASS` [05_Complex/Inv_Small_Cash.xml:876] · `THE_CLASS` [05_Complex/Inv_Small_Cash.xml:1017] | `:SUB_COMP_CODE` (at most 10 bytes, D-107); the information centre (D-106) | `LovQueries.TheClass`; rows only for a sub-company of a company of the operator's centre's `COMPANY1_2` list (D-106) |
+| `PAY_TYPE1` [05_Complex/Inv_Small_Cash.xml:921], `PAY_TYPE2` [05_Complex/Inv_Small_Cash.xml:925] · `PAY_TYPE` [05_Complex/Inv_Small_Cash.xml:994] | `:global.lang` (bound 'E') | `LovQueries.PayTypes`, returning only `PAY_TYPE_ID` and `PAY_TYPE_NAME` (D-105); fills `SubPayType` / `SubPayType2`, never `PayType` |
 | `DOC` [05_Complex/Inv_Small_Cash.xml:888] · `DOC` [05_Complex/Inv_Small_Cash.xml:1063] | `:global.current_info_center_id` | `LovQueries.Doc` |
-| `RESERV_NO` [05_Complex/Inv_Small_Cash.xml:859] · `RESERV_NO` [05_Complex/Inv_Small_Cash.xml:1069] | `:invdate`, `:docidx`, `:PATIENTNO`, `:global.reserv_system_500` (bound 0) | `LovQueries.ReservNo`, view-only (OI-33) |
-| `OFFERS` [05_Complex/Inv_Small_Cash.xml:917] · `OFFERS` [05_Complex/Inv_Small_Cash.xml:1089] | `:PAYTYPE`, `:INVDATE`, `:global.current_info_center_id` | `LovQueries.Offers` |
+| `RESERV_NO` [05_Complex/Inv_Small_Cash.xml:859] · `RESERV_NO` [05_Complex/Inv_Small_Cash.xml:1069] | `:invdate`, `:docidx` (a positive whole number without sign, padding or leading zero, D-107), `:PATIENTNO`, `:global.reserv_system_500` (bound 0); the information centre (D-106) | `LovQueries.ReservNo`, view-only (OI-33), returning only `RESERV_NO`, `THE_TIME` and `PATAINTNO` (D-105), and rows only for an active doctor of the operator's centre's `DOC` list (D-106) |
+| `OFFERS` [05_Complex/Inv_Small_Cash.xml:917] · `OFFERS` [05_Complex/Inv_Small_Cash.xml:1089] | `:PAYTYPE` (1 or 2, D-107), `:INVDATE`, `:global.current_info_center_id` | `LovQueries.Offers` |
 | `CAT` [05_Complex/Inv_Small_Cash.xml:866] · `CAT` [05_Complex/Inv_Small_Cash.xml:1012] | none | `LovQueries.Cat` |
 | `SERVICES` [05_Complex/Inv_Small_Cash.xml:906] · `SERVICES` [05_Complex/Inv_Small_Cash.xml:1034] | `:d_inv.catid`, `:t_inv.list_id`, `:PLAN_CODE`, `:parameter.pkg_inv`, `:PARAMETER.claim_flag` | 501 OI-24 (not executed) |
 | `DOC1` [05_Complex/Inv_Small_Cash.xml:884] · `DOC1` [05_Complex/Inv_Small_Cash.xml:1030] | `:global.current_info_center_id` | 501 OI-33 (not executed) |
@@ -98,16 +98,16 @@ The bind policy of the served LOVs is D-49: `:global.lang` → `'E'`, `:global.r
 | `PAY_VAT` | 825 | T010, T023, `SMALL_CALC` | PR-05 | `InvoiceEntryParameters.PayVat`; VAT flags inside the package (UNVERIFIED) |
 | `ONE_VISIT_960` | 826 | T003, T066, `OKA` | OI-32 | `InvoiceEntryParameters.OneVisit960`; claim / revisit sub-rule blocked |
 | `DIRECT_CALL` | 827 | T003, `CHK_SEC_DETAIL` | N | UI mechanics: item toggling |
-| `X422_APPROV_CHECK` | 828 | T003, T074, T085 | DR-14, DR-18, PR-19 | `InvoiceEntryParameters.X422ApprovCheck` → `LineEntryRules.ValidateApproval`, `RequestImportRules.Notices`, `BilImportGateway.ApprovalCheckMode` (D-12) |
+| `X422_APPROV_CHECK` | 828 | T003, T074, T085 | DR-14, DR-18, PR-19 | `InvoiceEntryParameters.X422ApprovCheck`; the workflow uses the PREF 422 value instead, 1 when it holds no integer (D-73) → `LineEntryRules.ValidateApproval`, `RequestImportRules.Notices`, `BilImportGateway.ApprovalCheckMode` (D-12) |
 | `DEDUCT_RATE` | 829 | No reader outside comments | N | Unused |
 | `DEDUCT_FIXED` | 830 | No reader outside comments | N | Unused |
 | `DIRECT_COMP_SHARE` | 831 | Set by T026 from `COMPANYS`; read by T015, T023, T029, T054, T066, `MAKE_CASH`, `OKA`, `CHK_ADV_CLASS` | PR-04 | `InvoiceEntryParameters.DirectCompShare`; payer share inside the package (UNVERIFIED) |
-| `LOCAL_DOC_TYPE` | 832 | T012, T088, `DO_INTERFACE`, `CHG_PRMPT2` | OI-15.01, N | `InvoiceEntryParameters.LocalDocType` → `ROW_TYPE` filter of `InvoiceQueries.GetInvoice` (T012); UI uses not migrated |
+| `LOCAL_DOC_TYPE` | 832 | T012, T088, `DO_INTERFACE`, `CHG_PRMPT2` | OI-15.01, OI-30, N | `InvoiceEntryParameters.LocalDocType`, server-owned and fixed at 505 → `ROW_TYPE` filter of `InvoiceQueries.GetInvoice` and `InvoiceQueries.GetMoreDetails` (T012, D-111); UI uses not migrated |
 | `VISIT_UNIQUE` | 833 | T003, T015, T023, T085 | DR-20, PR-19 | `InvoiceEntryParameters.VisitUnique` → `InvoiceDefaultsRule.Apply`, `InvoiceQueries.GetSelectedRequestRows` |
 | `NEW_DOC` | 834 | T015 | DR-20 | `InvoiceEntryParameters.NewDoc` → doctor for claim parameter '1' |
 | `WILL_DO_IMP` | 835 | T003, `CHK_SEC_DETAIL` | N | UI mechanics: item toggling |
 | `INV_ADMIN` | 836 | T003, T011, T027 | OI-01 | `InvoiceEntryParameters.InvAdmin`; shift bypass not reproduced (D-25); T027 item toggling is UI mechanics |
-| `INV_DATE_ADMIN` | 837 | T023 | DR-03 | `InvoiceEntryParameters.InvDateAdmin` → `PatientEligibilityRules.Evaluate` |
+| `INV_DATE_ADMIN` | 837 | T023 | DR-03 | `InvoiceEntryParameters.InvDateAdmin` → `PatientEligibilityRules.Evaluate`; the workflow sets it to 2 (normal user) for every request (D-98) |
 | `OPEN_FROM_ACC` | 838 | No reader outside comments | N | Unused |
 | `PKG_INV` | 839 | T015, T066, `OKA` | OI-31 | `InvoiceEntryParameters.PkgInv`; package consumption blocked: `PackageConsumptionGateway.Begin` → 501 |
 | `CLAIM_NO` | 840 | T003, T015, T023, T029, T030 | DR-10, DR-20, DR-25 | `InvoiceEntryParameters.ClaimNo` → `ClaimNumberRule.Build`, `InvoiceDefaultsRule.Apply`, `VisitLineRule.Choose` |
@@ -138,7 +138,7 @@ Trigger ids follow XML order: the form-level triggers first, then per block the 
 | T009 | [05_Complex/Inv_Small_Cash.xml:1102] | FORM · PRE-COMMIT | 'Invoice without Details' when there are no lines | DR-02, PR-14 | `InvoiceDetailRules.RequireDetails`; engine -20903 re-checks (UNVERIFIED) |
 | T010 | [05_Complex/Inv_Small_Cash.xml:362] | T_INV · POST-QUERY | Display lookups; makes queried invoices non-updatable and non-deletable | DR-17, OI-15.01 | `InvoiceQueries.GetInvoice` (display lookups in `InvoiceViewResponse.Display`); read-only → `InvoiceStatePolicy.CanEdit` |
 | T011 | [05_Complex/Inv_Small_Cash.xml:363] | T_INV · PRE-INSERT | `GET_NEXT_INVOICE_NO` ×20; `OLD_OR_NEW`; shift re-check; `SEQ_NO` / `DOC_SEQ` queue number; PATIENT `NEW_INV_*` clear; `IS_STATE`; `THE_MONTH` / `THE_YEAR`; `machine_n` | PR-09, PR-10, PR-11, PR-12, DR-21, OI-09, OI-19, OI-33 | Numbering PR-09; `OLD_OR_NEW` PR-11; month/year PR-12; shift PR-10 (the re-check only warned); queue number → queue posting (D-14, OI-09, UNVERIFIED); `IS_STATE` not carried (OI-33); PATIENT clear DR-21 `ReceptionTransferRule.ShouldClear` + `PatientTransferCommand.ClearReceptionTransfer` (failure swallowed, D-44) |
-| T012 | [05_Complex/Inv_Small_Cash.xml:364] | T_INV · PRE-QUERY | `global.go_to_inv` preset; `LOCAL_DOC_TYPE` → `ROW_TYPE` | OI-15.01 | `ROW_TYPE` filter in `InvoiceQueries.GetInvoice` |
+| T012 | [05_Complex/Inv_Small_Cash.xml:364] | T_INV · PRE-QUERY | `global.go_to_inv` preset; `LOCAL_DOC_TYPE` → `ROW_TYPE` | OI-15.01 | `ROW_TYPE` filter in `InvoiceQueries.GetInvoice` and `InvoiceQueries.GetMoreDetails`, from the fixed `LOCAL_DOC_TYPE` 505 (D-111) |
 | T013 | [05_Complex/Inv_Small_Cash.xml:365] | T_INV · PRE-UPDATE | `UPD_USER_NO`, `PAT_VISIT_M` doctor update | OI-56 | Saved-invoice update blocked: `InvoicesController.Update` → 501 (D-36) |
 | T014 | [05_Complex/Inv_Small_Cash.xml:366] | T_INV · WHEN-VALIDATE-RECORD | Patient required; company required for credit; doctor required; payment type default | DR-01, DR-22, PR-13 | `HeaderRecordRules.ValidateRecord`, `HeaderRecordRules.ApplyPaymentTypeDefault`; engine header checks re-check (UNVERIFIED) |
 | T015 | [05_Complex/Inv_Small_Cash.xml:367] | T_INV · WHEN-CREATE-RECORD | Defaults: info centre, `INVDATE := sysdate`, `INV_TIME`, `PFLAG`, claim preload, `payed_before` via `GET_PAYID_VALUE`, home-care type 7, `SUB_PAYTYPE := 1` | DR-20, DR-24, PR-12, OI-23 | `InvoiceDefaultsRule.Apply` (claim preload `InvoiceQueries.GetClaimPreload`, visit doctor `LookupQueries.GetVisitDoctor`, draft date `LookupQueries.GetDatabaseTime`, D-39); pay type `PayTypeSelectionRule.Decide`; `PFLAG` PR-12; `payed_before` not built (OI-23) |
@@ -346,7 +346,7 @@ Every rule below is reached only through a retained PL/SQL call and is UNVERIFIE
 | PR-11 | `OLD_OR_NEW` from prior invoices [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1104-1118] | T011 | `CreateFullInvoice` | `PackageParityTests.PR11_OldOrNew` (SideEffects=Create) | `derivable` | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
 | PR-12 | `PFLAG` (hour ≥ 12 → PM), `THE_MONTH`, `THE_YEAR` [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:455-467, 2769-2771] | T015, T025, T011 | `CreateFullInvoice` | `PackageParityTests.PR12_PflagMonthYear` (SideEffects=Create) | `derivable` | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
 | PR-13 | Header validation (-20900, -20923, -20924, -20964, -20915) [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:493-540, 3135-3200] | T014 (re-check) | `CalculatePreview`, `CreateFullInvoice` | `PackageParityTests.PR13_HeaderValidation` | `derivable` | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
-| PR-14 | Line validation: a line (-20903); service id (-20904) only when the line's offer metadata make the parent exemption false (`offer_type` set and not 0, or `offer_line_role` set and not 'PARENT'), so an ordinary line with both null is not rejected (§10); positive whole quantity (-20905); ceiling `trunc(c_max_invoice_qty)` = 999999 (constant 999999.99), applied only to package parent and component quantities (-20947, -20966) [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:171-182, 542-614, 974, 1583, 1698, 2461] | T009, T068 (re-check); the mandatory service is the Form's DR-15 (T066), not this check | `CalculatePreview`, `CreateFullInvoice` | `PackageParityTests.PR14_LineValidation` | `derivable` | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
+| PR-14 | Line validation: a line (-20903); service id (-20904) only when the line's offer metadata make the parent exemption false (`offer_type` set and not 0, or `offer_line_role` set and not 'PARENT'), so an ordinary line with both null is not rejected (§10); positive whole quantity (-20905); ceiling `trunc(c_max_invoice_qty)` = 999999 (constant 999999.99), applied only to package parent and component quantities (-20947, -20966) [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:171-182, 542-614, 974, 1583, 1698, 2461] | T009, T068 (re-check); the mandatory service is the Form's DR-15 (T066), not this check | `CalculatePreview`, `CreateFullInvoice` | `PackageParityTests.PR14_LineValidation` | `derivable`; the -20904 case uses an offer-shaped line (D-126) | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
 | PR-15 | Currency from the price list; mixed currencies rejected (-20917, -20918) [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1390-1420] | PU10 (`CURR_CODE`) | `CalculatePreview`, `CreateFullInvoice` | `PackageParityTests.PR15_Currency` | `derivable` | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
 | PR-16 | Standard-offer eligibility and conflicts (-20971, -20972) [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1867-1884] | T066 standard-offer branch; T085 repeats it on imported request lines | `CalculatePreview`, `CreateFullInvoice` | `PackageParityTests.PR16_StandardOffers` | `derivable` (gate and validations); `pending-evidence` (offer applied, OI-07) | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
 | PR-17 | Bundled offer: cash only (-20871), required fields and quantities (-20979), row validity (-20978), component qty = bundle qty × detail qty [05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:264-779] | T093 | `BilInvoiceApiGateway.GetBundledOfferLines`; expansion in preview / create | `PackageParityTests.PR17_BundledOffer` | `derivable` (gate and validations); `pending-evidence` (offer applied, OI-07) | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
@@ -354,10 +354,10 @@ Every rule below is reached only through a retained PL/SQL call and is UNVERIFIE
 | PR-19 | Request import: session-scoped selection, rejected rows skipped, credit rows needing approval skipped in mode 1 and imported in mode 0 (-20764 when raising) [05_Complex/APEX_Reference/backend/BIL_IMPORT.sql:389-565, 494-509] | T085 | `BilImportGateway.ImportRequestLines` (D-12) | `PackageParityTests.PR19_RequestImport` | `derivable` | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
 | PR-20 | Request-line availability at create (-20931) and link to `PAT_SERV_REQ` (-20930) [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:745-772, 2952-2965] | T061, T055 | `CreateFullInvoice` | `PackageParityTests.PR20_RequestLineAvailability` (SideEffects=Create) | `derivable` | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
 | PR-21 | Visit consultation / review line from `DOCTOR_CONSULTATION` on the patient-context price list (-20752 … -20755) [05_Complex/APEX_Reference/backend/BIL_IMPORT.sql:120-130, 1213-1230]; the service '2000' branch is DR-25 | T029, T030 | `BilImportGateway.GetVisitLine` | `PackageParityTests.PR21_VisitLine` | `derivable` | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
-| PR-22 | Idempotent create by request id (-20847, -20848, -20849; a replay returns the existing invoice) [05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:1303-1373] | — (replaces the Form's single-session commit) | `CreateFullInvoice` (D-54) | `PackageParityTests.PR22_IdempotentCreate` (SideEffects=Create) | `derivable` | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
+| PR-22 | Idempotent create by request id (-20847, -20848, -20849; a replay returns the existing invoice) [05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:1303-1373] | — (replaces the Form's single-session commit) | `CreateFullInvoice` (D-54) | `PackageParityTests.PR22_IdempotentCreate` (SideEffects=Create) | `derivable`; no -20847 case, the gateway refuses such ids first (D-127) | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
 | PR-23 | Posting stages at create (payment, queue, stock) [05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:1385-1424]; print and SMS stages called with `'N'` (D-13, D-28) | T016, T061 | `CreateFullInvoice` | `PackageParityTests.PR23_PostingStages` (SideEffects=Create) | `pending-evidence` (OI-08 … OI-10) | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset; pending evidence (OI-08) |
 | PR-24 | Payer context (price list, VAT flags, cash flag) from `bil_patient_context.get_context` [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:3004-3018]; the engine's default pay type is not reached, because DR-24 always sends `paytype` [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:478-491] | T023, T027, PU16 `MAKE_CASH` | `CalculatePreview`, `CreateFullInvoice` | `PackageParityTests.PR24_PayerContext` | `pending-evidence` (OI-03) | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset; pending evidence (OI-03) |
-| PR-25 | Offer changed after calculation (-20970) [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1306-1322] | T066 standard-offer branch; the Form reads the offer at service validation and never re-checks it at commit | `CreateFullInvoice` | `PackageParityTests.PR25_OfferStale` (SideEffects=Create) | `derivable` | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
+| PR-25 | Offer changed after calculation (-20970) [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1306-1322] | T066 standard-offer branch; the Form reads the offer at service validation and never re-checks it at commit | `CreateFullInvoice` | `PackageParityTests.PR25_OfferStale` (SideEffects=Create) | `derivable`; the orphan-metadata case carries no offer instance id (D-128) | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
 
 `OracleBindingSmokeTests` (`Category=OracleIntegration`) exercises the binding mechanism of the six PL/SQL blocks; it is not parity and is not counted in the PR figure.
 
@@ -564,7 +564,7 @@ Reuse flags:
 
 - **Within a package** (numbers raised at more than one site): `BIL_IMPORT` -20692, -20694, -20758, -20759, -20771, -20772, -20773 (3 sites), -20774, -20778 (3), -20779 (3), -20782 (3); `BIL_INVOICE_API` -20848 (3), -20979; `BIL_INVOICE_ENGINE` -20916, -20944, -20945, -20946 (4), -20947, -20948 (3), -20949 (3), -20951, -20952, -20955, -20962 (3), -20966 (4). Unmarked numbers occur at two sites.
 - **Across packages:** no number is shared between two of the three packages. The engine's -20780 / -20781 sit inside `BIL_IMPORT`'s -207xx band, and the missing shared packages may reuse any number, so every match is on package, number and message prefix (D-24).
-- Every row with `Catalogued` = `No` is handled by the generic rule: HTTP 422 `oracle-business-error` carrying the number, the package and the text after `ORA-2nnnn: `.
+- Every row with `Catalogued` = `No` is handled by the generic rule: HTTP 422 `oracle-business-error` carrying the number, the package and the text after `ORA-2nnnn: `, or the fixed text 'The Oracle error text could not be read.' when the message lacks its own prefix (D-117).
 
 ## §9 Bidirectional traceability matrix
 
@@ -718,7 +718,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Item\|T_INV\|VAT_TOTAL_PAT\|-\|164 | — | PR-05, PR-07 | `PreviewTotals.VatTotalPat`; `InvoiceViewResponse.Display["VAT_TOTAL_PAT"]` |
 | Item\|T_INV\|VAT_TOTAL\|-\|165 | — | PR-05 | `FullInvoiceResultRow.VatTotal`; `InvoiceViewResponse.Display["VAT_TOTAL"]` |
 | Item\|T_INV\|IS_STATE\|-\|166 | — | OI-33 | Not carried by the package inputs and not written by .NET |
-| Item\|T_INV\|ROW_TYPE\|-\|167 | — | OI-15.01, OI-33 | `ROW_TYPE` filter of `InvoiceQueries.GetInvoice` and predicate of `.GetLastInvoiceNo`; not written by the package (UNVERIFIED) |
+| Item\|T_INV\|ROW_TYPE\|-\|167 | — | OI-15.01, OI-33 | `ROW_TYPE` filter of `InvoiceQueries.GetInvoice` and `.GetMoreDetails` (D-111) and predicate of `.GetLastInvoiceNo`; not written by the package (UNVERIFIED) |
 | Item\|T_INV\|CLAIM_FLAG\|-\|168 | — | DR-10, DR-20 | `InvoiceHeaderDraft.ClaimFlag` |
 | Item\|T_INV\|PRIORITY_VALUE\|-\|169 | — | OI-33 | Not carried by the package inputs and not written by .NET |
 | Item\|T_INV\|BANK_TRANS_NO\|-\|170 | — | OI-33 | Not carried by the package inputs and not written by .NET |
@@ -734,7 +734,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Relation\|T_INV\|T_INV_T_INV_TRANS_M\|-\|361 | — | N, OI-15.01, OI-15.03 | UI mechanics: master-detail coordination; join `IMP_FROM_T_INV_NO = INV_NO` in `InvoiceQueries.GetMoreDetails` |
 | Trigger\|T_INV\|T_INV\|POST-QUERY\|362 | T010 | DR-17, OI-15.01 | `InvoiceQueries.GetInvoice` (display lookups in `InvoiceViewResponse.Display`); read-only → `InvoiceStatePolicy.CanEdit` |
 | Trigger\|T_INV\|T_INV\|PRE-INSERT\|363 | T011 | PR-09, PR-10, PR-11, PR-12, DR-21, OI-09, OI-19, OI-33 | Numbering PR-09; `OLD_OR_NEW` PR-11; month/year PR-12; shift PR-10 (the re-check only warned); queue number → queue posting (D-14, OI-09, UNVERIFIED); `IS_STATE` not carried (OI-33); PATIENT clear DR-21 `ReceptionTransferRule.ShouldClear` + `PatientTransferCommand.ClearReceptionTransfer` (failure swallowed, D-44) |
-| Trigger\|T_INV\|T_INV\|PRE-QUERY\|364 | T012 | OI-15.01 | `ROW_TYPE` filter in `InvoiceQueries.GetInvoice` |
+| Trigger\|T_INV\|T_INV\|PRE-QUERY\|364 | T012 | OI-15.01 | `ROW_TYPE` filter in `InvoiceQueries.GetInvoice` and `InvoiceQueries.GetMoreDetails`, from the fixed `LOCAL_DOC_TYPE` 505 (D-111) |
 | Trigger\|T_INV\|T_INV\|PRE-UPDATE\|365 | T013 | OI-56 | Saved-invoice update blocked: `InvoicesController.Update` → 501 (D-36) |
 | Trigger\|T_INV\|T_INV\|WHEN-VALIDATE-RECORD\|366 | T014 | DR-01, DR-22, PR-13 | `HeaderRecordRules.ValidateRecord`, `HeaderRecordRules.ApplyPaymentTypeDefault`; engine header checks re-check (UNVERIFIED) |
 | Trigger\|T_INV\|T_INV\|WHEN-CREATE-RECORD\|367 | T015 | DR-20, DR-24, PR-12, OI-23 | `InvoiceDefaultsRule.Apply` (claim preload `InvoiceQueries.GetClaimPreload`, visit doctor `LookupQueries.GetVisitDoctor`, draft date `LookupQueries.GetDatabaseTime`, D-39); pay type `PayTypeSelectionRule.Decide`; `PFLAG` PR-12; `payed_before` not built (OI-23) |
@@ -906,16 +906,16 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | ModuleParameter\|FORM\|PAY_VAT\|-\|825 | — | PR-05 | `InvoiceEntryParameters.PayVat`; VAT flags inside the package (UNVERIFIED) |
 | ModuleParameter\|FORM\|ONE_VISIT_960\|-\|826 | — | OI-32 | `InvoiceEntryParameters.OneVisit960`; claim / revisit sub-rule blocked |
 | ModuleParameter\|FORM\|DIRECT_CALL\|-\|827 | — | N | UI mechanics: item toggling |
-| ModuleParameter\|FORM\|X422_APPROV_CHECK\|-\|828 | — | DR-14, DR-18, PR-19 | `InvoiceEntryParameters.X422ApprovCheck` → `LineEntryRules.ValidateApproval`, `RequestImportRules.Notices`, `BilImportGateway.ApprovalCheckMode` (D-12) |
+| ModuleParameter\|FORM\|X422_APPROV_CHECK\|-\|828 | — | DR-14, DR-18, PR-19 | `InvoiceEntryParameters.X422ApprovCheck`; the workflow uses the PREF 422 value instead, 1 when it holds no integer (D-73) → `LineEntryRules.ValidateApproval`, `RequestImportRules.Notices`, `BilImportGateway.ApprovalCheckMode` (D-12) |
 | ModuleParameter\|FORM\|DEDUCT_RATE\|-\|829 | — | N | Unused |
 | ModuleParameter\|FORM\|DEDUCT_FIXED\|-\|830 | — | N | Unused |
 | ModuleParameter\|FORM\|DIRECT_COMP_SHARE\|-\|831 | — | PR-04 | `InvoiceEntryParameters.DirectCompShare`; payer share inside the package (UNVERIFIED) |
-| ModuleParameter\|FORM\|LOCAL_DOC_TYPE\|-\|832 | — | OI-15.01, N | `InvoiceEntryParameters.LocalDocType` → `ROW_TYPE` filter of `InvoiceQueries.GetInvoice` (T012); UI uses not migrated |
+| ModuleParameter\|FORM\|LOCAL_DOC_TYPE\|-\|832 | — | OI-15.01, OI-30, N | `InvoiceEntryParameters.LocalDocType`, server-owned and fixed at 505 → `ROW_TYPE` filter of `InvoiceQueries.GetInvoice` and `InvoiceQueries.GetMoreDetails` (T012, D-111); UI uses not migrated |
 | ModuleParameter\|FORM\|VISIT_UNIQUE\|-\|833 | — | DR-20, PR-19 | `InvoiceEntryParameters.VisitUnique` → `InvoiceDefaultsRule.Apply`, `InvoiceQueries.GetSelectedRequestRows` |
 | ModuleParameter\|FORM\|NEW_DOC\|-\|834 | — | DR-20 | `InvoiceEntryParameters.NewDoc` → doctor for claim parameter '1' |
 | ModuleParameter\|FORM\|WILL_DO_IMP\|-\|835 | — | N | UI mechanics: item toggling |
 | ModuleParameter\|FORM\|INV_ADMIN\|-\|836 | — | OI-01 | `InvoiceEntryParameters.InvAdmin`; shift bypass not reproduced (D-25); T027 item toggling is UI mechanics |
-| ModuleParameter\|FORM\|INV_DATE_ADMIN\|-\|837 | — | DR-03 | `InvoiceEntryParameters.InvDateAdmin` → `PatientEligibilityRules.Evaluate` |
+| ModuleParameter\|FORM\|INV_DATE_ADMIN\|-\|837 | — | DR-03 | `InvoiceEntryParameters.InvDateAdmin` → `PatientEligibilityRules.Evaluate`; the workflow sets it to 2 (normal user) for every request (D-98) |
 | ModuleParameter\|FORM\|OPEN_FROM_ACC\|-\|838 | — | N | Unused |
 | ModuleParameter\|FORM\|PKG_INV\|-\|839 | — | OI-31 | `InvoiceEntryParameters.PkgInv`; package consumption blocked: `PackageConsumptionGateway.Begin` → 501 |
 | ModuleParameter\|FORM\|CLAIM_NO\|-\|840 | — | DR-10, DR-20, DR-25 | `InvoiceEntryParameters.ClaimNo` → `ClaimNumberRule.Build`, `InvoiceDefaultsRule.Apply`, `VisitLineRule.Choose` |
@@ -925,11 +925,11 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | ModuleParameter\|FORM\|LESS_PAYMENT_970\|-\|844 | — | N | Unused (legacy anomaly, §10) |
 | ModuleParameter\|FORM\|P_USER\|-\|845 | — | N | Unused |
 | LOV\|FORM\|APPROVED_SERV\|-\|846 | — | N | Unused by the blocks: attached to no item |
-| LOV\|FORM\|RESERV_NO\|-\|859 | — | OI-15.18, OI-33 | `LovQueries.ReservNo`, view-only: `SEQ_NO` is not saved |
+| LOV\|FORM\|RESERV_NO\|-\|859 | — | OI-15.18, OI-33 | `LovQueries.ReservNo`, view-only: `SEQ_NO` is not saved; lists `RESERV_NO`, `THE_TIME` and `PATAINTNO` only (D-105), for an active doctor of the operator's centre (D-106) |
 | LOV\|FORM\|CAT\|-\|866 | — | OI-15.11 | `LovQueries.Cat` |
 | LOV\|FORM\|COMPANY1_2\|-\|871 | — | OI-15.12 | `LovQueries.Company` |
-| LOV\|FORM\|THE_CLASS\|-\|876 | — | OI-15.14 | `LovQueries.TheClass` |
-| LOV\|FORM\|SUB_COMPANY\|-\|880 | — | OI-15.13 | `LovQueries.SubCompany` |
+| LOV\|FORM\|THE_CLASS\|-\|876 | — | OI-15.14 | `LovQueries.TheClass`; rows only for a sub-company of a company of the operator's centre (D-106) |
+| LOV\|FORM\|SUB_COMPANY\|-\|880 | — | OI-15.13 | `LovQueries.SubCompany`; rows only for a company of the operator's centre (D-106) |
 | LOV\|FORM\|DOC1\|-\|884 | — | OI-33 | Blocked: `GET /api/lov/DOC1` → 501, `DOCID1` is not saved (D-49) |
 | LOV\|FORM\|DOC\|-\|888 | — | OI-15.16, OI-15.17 | `LovQueries.Doc` |
 | LOV\|FORM\|CLINICS\|-\|894 | — | N | Unused by the blocks: attached to no item |
@@ -937,8 +937,8 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | LOV\|FORM\|PATIENT_TRANS\|-\|902 | — | N | Unused by the blocks: opened only by dead `IMP_RXXX` |
 | LOV\|FORM\|SERVICES\|-\|906 | — | OI-24 | Blocked: `GET /api/lov/SERVICES` → 501, `PLAN_CODE` / `LIST_ID` come only from the missing `GET_PRICE_PLAN` (D-49) |
 | LOV\|FORM\|OFFERS\|-\|917 | — | OI-15.19 | `LovQueries.Offers` |
-| LOV\|FORM\|PAY_TYPE1\|-\|921 | — | OI-15.15 | `LovQueries.PayTypes`; fills `SubPayType` only |
-| LOV\|FORM\|PAY_TYPE2\|-\|925 | — | OI-15.15 | `LovQueries.PayTypes`; fills `SubPayType2` |
+| LOV\|FORM\|PAY_TYPE1\|-\|921 | — | OI-15.15 | `LovQueries.PayTypes`, returning only `PAY_TYPE_ID` and `PAY_TYPE_NAME` (D-105); fills `SubPayType` only |
+| LOV\|FORM\|PAY_TYPE2\|-\|925 | — | OI-15.15 | `LovQueries.PayTypes`, returning only `PAY_TYPE_ID` and `PAY_TYPE_NAME` (D-105); fills `SubPayType2` |
 | ProgramUnit\|FORM\|CHK_SEC_DETAIL\|-\|960 | PU01 | N, OI-25 | UI mechanics: item toggling; permissions not built (OI-25) |
 | ProgramUnit\|FORM\|CHK_VOL\|-\|961 | PU02 | N | Dead code: never called (client-machine behaviour) |
 | ProgramUnit\|FORM\|DO_INTERFACE\|-\|962 | PU03 | N | UI mechanics: layout direction |
@@ -969,20 +969,20 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | ProgramUnit\|FORM\|DO_NEW_RECORD\|-\|987 | PU28 | N | Dead code: never called |
 | ProgramUnit\|FORM\|PRINT_URL\|-\|988 | PU29 | N | Dead code: never called |
 | ProgramUnit\|FORM\|REMAIN\|-\|989 | PU30 | DR-08 | `PaymentAllocationRules.Refund` |
-| RecordGroup\|FORM\|PAY_TYPE\|-\|994 | — | OI-15.15 | SQL of `LovQueries.PayTypes` (`:global.lang` bound as 'E', D-49) |
+| RecordGroup\|FORM\|PAY_TYPE\|-\|994 | — | OI-15.15 | SQL of `LovQueries.PayTypes` (`:global.lang` bound as 'E', D-49), projected to `PAY_TYPE_ID` and `PAY_TYPE_NAME` (D-105) |
 | RecordGroup\|FORM\|RECORD_GROUP1196\|-\|1001 | — | N | Not referenced by any LOV |
 | RecordGroup\|FORM\|PATIENT_TRANS\|-\|1008 | — | N | Behind an LOV unused by the blocks |
 | RecordGroup\|FORM\|CAT\|-\|1012 | — | OI-15.11 | SQL of `LovQueries.Cat` |
-| RecordGroup\|FORM\|THE_CLASS\|-\|1017 | — | OI-15.14 | SQL of `LovQueries.TheClass` |
+| RecordGroup\|FORM\|THE_CLASS\|-\|1017 | — | OI-15.14 | SQL of `LovQueries.TheClass`, limited to sub-companies of the operator's centre's companies (D-106) |
 | RecordGroup\|FORM\|COMPANY\|-\|1021 | — | OI-15.12 | SQL of `LovQueries.Company` |
-| RecordGroup\|FORM\|SUB_COMP\|-\|1026 | — | OI-15.13 | SQL of `LovQueries.SubCompany` |
+| RecordGroup\|FORM\|SUB_COMP\|-\|1026 | — | OI-15.13 | SQL of `LovQueries.SubCompany`, limited to companies of the operator's centre (D-106) |
 | RecordGroup\|FORM\|DOC1\|-\|1030 | — | OI-33 | Not executed: the `DOC1` LOV returns 501 (D-49) |
 | RecordGroup\|FORM\|SERVICES\|-\|1034 | — | OI-24, OI-15.09, OI-40.04 | Not executed: needs `PLAN_CODE` / `LIST_ID` from the missing `GET_PRICE_PLAN` (D-49) |
 | RecordGroup\|FORM\|SERVICES_BAK\|-\|1045 | — | N | Not referenced by any LOV |
 | RecordGroup\|FORM\|PATIENT\|-\|1055 | — | N | Behind an LOV unused by the blocks |
 | RecordGroup\|FORM\|CLINICS\|-\|1059 | — | N | Behind an LOV unused by the blocks |
 | RecordGroup\|FORM\|DOC\|-\|1063 | — | OI-15.16, OI-15.17 | SQL of `LovQueries.Doc` |
-| RecordGroup\|FORM\|RESERV_NO\|-\|1069 | — | OI-15.18 | SQL of `LovQueries.ReservNo` (`:global.reserv_system_500` bound as 0, D-49) |
+| RecordGroup\|FORM\|RESERV_NO\|-\|1069 | — | OI-15.18 | SQL of `LovQueries.ReservNo` (`:global.reserv_system_500` bound as 0, D-49), projected to `RESERV_NO`, `THE_TIME` and `PATAINTNO` (D-105) and limited to active doctors of the operator's centre (D-106) |
 | RecordGroup\|FORM\|APPROVED_SERV\|-\|1076 | — | N, OI-41.20 | Behind an LOV unused by the blocks |
 | RecordGroup\|FORM\|OFFERS\|-\|1089 | — | OI-15.19 | SQL of `LovQueries.Offers` |
 | Report\|FORM\|XX\|-\|1093 | — | OI-27 | Not built: `nat.rdf` is absent and no trigger runs the report object |
@@ -1026,7 +1026,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Billing.Invoicing.Api.Contracts.LookupItem | T004 list items from `INVOICES_TYPE`, `CURRENCIES` (OI-15.20, OI-15.21) |
 | Billing.Invoicing.Api.Contracts.LovResponse | The 11 used LOV record groups (9 served; `SERVICES` OI-24, `DOC1` OI-33; D-49) |
 | Billing.Invoicing.Api.Contracts.MessageDto | PU08 `MESSAG` texts and severities, alert `ERR_ALERT` (DR-01 … DR-25) |
-| Billing.Invoicing.Api.Contracts.MoreDetailsResponse | Canvas `MORE`, T056, T075 (OI-15.03, OI-15.27) |
+| Billing.Invoicing.Api.Contracts.MoreDetailsResponse | Canvas `MORE`, T012, T056, T075 (OI-15.03, OI-15.27, D-111) |
 | Billing.Invoicing.Api.Contracts.NewDraftResponse | T015, T022, T003 (DR-20, DR-24) |
 | Billing.Invoicing.Api.Contracts.PackageImportRequest | T089 (PR-18, D-38) |
 | Billing.Invoicing.Api.Contracts.PreviewResponse | PU10 `SMALL_CALC` and `t_preview_totals` (PR-01 … PR-08; DR-08, DR-09) |
@@ -1046,7 +1046,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Billing.Invoicing.Api.Controllers.InvoicesController.Documents | T079 print, T080, T094, T095, PU25 (OI-11, OI-47, OI-48) |
 | Billing.Invoicing.Api.Controllers.InvoicesController.Get | T010, T012 (DR-17) |
 | Billing.Invoicing.Api.Controllers.InvoicesController.Last | T082 (OI-15.01) |
-| Billing.Invoicing.Api.Controllers.InvoicesController.More | Canvas `MORE`, T056, T075 (OI-15.03) |
+| Billing.Invoicing.Api.Controllers.InvoicesController.More | Canvas `MORE`, T012, T056, T075 (OI-15.03, D-111) |
 | Billing.Invoicing.Api.Controllers.InvoicesController.Preview | PU10 `SMALL_CALC` (PR-01 … PR-08) |
 | Billing.Invoicing.Api.Controllers.InvoicesController.Sms | T081 (OI-12, OI-45) |
 | Billing.Invoicing.Api.Controllers.InvoicesController.StockTransfer | T091 (OI-10, OI-44) |
@@ -1059,6 +1059,8 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Billing.Invoicing.Api.Controllers.PatientsController.Coverage | T023, T026 (DR-03, DR-24) |
 | Billing.Invoicing.Api.Errors.ModelStateFieldMap | PU08 `MESSAG` / `FORM_TRIGGER_FAILURE`: field of a malformed request value in the error contract |
 | Billing.Invoicing.Api.Errors.ModelStateFieldMap.FieldOf | PU08 `MESSAG`: model-state key → the `T_INV` / `D_INV` item or module parameter named by a 422 `field-validation` message |
+| Billing.Invoicing.Api.Errors.ProblemDetailsExceptionHandler | PU08 `MESSAG` / `FORM_TRIGGER_FAILURE`, alert `ERR_ALERT`: exceptions answered with the error contract, logged as redacted metadata only (D-102) |
+| Billing.Invoicing.Api.Errors.ProblemDetailsExceptionHandler.TryHandleAsync | PU08 `MESSAG` / `FORM_TRIGGER_FAILURE`: exception → `ProblemDetailsWriter` body; logs status, type, Oracle number, package, kind, open item, exception types and route template, never message text (D-102) |
 | Billing.Invoicing.Api.Errors.ProblemDetailsWriter | PU08 `MESSAG` / `FORM_TRIGGER_FAILURE`, alert `ERR_ALERT` (error contract) |
 | Billing.Invoicing.Api.Errors.ProblemDetailsWriter.WriteAsync | PU08 `MESSAG` / `FORM_TRIGGER_FAILURE`: `DataFailure`, `NotImplementedException` and blocking results → HTTP |
 | Billing.Invoicing.Api.Errors.ProblemDetailsWriter.WriteNotFoundAsync | PU08 `MESSAG` (error contract): an unknown invoice (T010), last invoice (T082) or LOV → 404 `not-found` |
@@ -1072,7 +1074,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Billing.Invoicing.Api.Services.InvoiceWorkflowService.GetInvoiceTypes | T004 (OI-15.20) |
 | Billing.Invoicing.Api.Services.InvoiceWorkflowService.GetLastInvoiceNo | T082 (OI-15.01) |
 | Billing.Invoicing.Api.Services.InvoiceWorkflowService.GetLov | The 11 used LOVs (D-49; OI-24, OI-33) |
-| Billing.Invoicing.Api.Services.InvoiceWorkflowService.GetMoreDetails | Canvas `MORE`, T056, T075 (OI-15.03) |
+| Billing.Invoicing.Api.Services.InvoiceWorkflowService.GetMoreDetails | Canvas `MORE`, T012, T056, T075 (OI-15.03, D-111) |
 | Billing.Invoicing.Api.Services.InvoiceWorkflowService.ImportBundledOffer | T093 (PR-17) |
 | Billing.Invoicing.Api.Services.InvoiceWorkflowService.ImportPackage | T089 (PR-18, DR-19, DR-23; OI-24) |
 | Billing.Invoicing.Api.Services.InvoiceWorkflowService.ImportRequests | T085 (DR-18, PR-19) |
@@ -1108,7 +1110,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Billing.Invoicing.Data.Oracle.InvoicingDataOptions | Infrastructure: data-layer settings (D-48) |
 | Billing.Invoicing.Data.Oracle.OracleSession | Infrastructure: unit of work replacing the Forms commit transaction (D-10) |
 | Billing.Invoicing.Data.Oracle.OracleSession.Commit | Infrastructure: the single .NET-owned commit (D-10) |
-| Billing.Invoicing.Data.Oracle.OracleSession.DisposeAsync | Infrastructure: rollback of an uncommitted session (D-10) |
+| Billing.Invoicing.Data.Oracle.OracleSession.DisposeAsync | Infrastructure: attempted rollback of an uncommitted session, whose outcome can remain uncertain (D-10, D-89) |
 | Billing.Invoicing.Data.Oracle.OracleSession.Rollback | Infrastructure: rollback, or rollback to savepoint `dr21` (D-44) |
 | Billing.Invoicing.Data.Oracle.OracleSession.Save | Infrastructure: savepoint `dr21` (D-44) |
 | Billing.Invoicing.Data.Oracle.OracleSessionFactory | Infrastructure: connection and transaction owner, since the packages never commit (D-10) |
@@ -1157,7 +1159,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Billing.Invoicing.Data.Queries.InvoiceQueries.GetCreateRequest | The `CREATE_FULL_INVOICE` request-id read (PR-22, OI-15.28, D-54) |
 | Billing.Invoicing.Data.Queries.InvoiceQueries.GetInvoice | T010, T012 (DR-17, OI-15.01) |
 | Billing.Invoicing.Data.Queries.InvoiceQueries.GetLastInvoiceNo | T082 (OI-15.01) |
-| Billing.Invoicing.Data.Queries.InvoiceQueries.GetMoreDetails | T056, T075, canvas `MORE` (OI-15.03, OI-15.27) |
+| Billing.Invoicing.Data.Queries.InvoiceQueries.GetMoreDetails | T012, T056, T075, canvas `MORE` (OI-15.01, OI-15.03, OI-15.27, D-111) |
 | Billing.Invoicing.Data.Queries.InvoiceQueries.GetSelectedRequestRows | T085 cursor (DR-18, OI-15.08, D-26) |
 | Billing.Invoicing.Data.Queries.LookupQueries | T003, T004, T015, T023, T026, T027, T031, T039, T041, T052, T066, T068, PU23 `CHK_ADV_CLASS` |
 | Billing.Invoicing.Data.Queries.LookupQueries.GetClassAdvancedMode | PU23 `CHK_ADV_CLASS` `DISC_CLASSES.USE_ADVANCED` (OI-23, D-51) |
@@ -1177,15 +1179,21 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Billing.Invoicing.Data.Queries.LookupQueries.GetServiceQueueFlags | T029, T066 `SERVICES.ADD_TO_QUE` (DR-23) |
 | Billing.Invoicing.Data.Queries.LookupQueries.GetUserMaxDiscount | T039, T041 `USERS_TABLE.MAX_DISC` (DR-06) |
 | Billing.Invoicing.Data.Queries.LookupQueries.GetVisitDoctor | T015, T023 `PAT_VISIT_M` (DR-10, DR-11, DR-20) |
+| Billing.Invoicing.Data.Queries.LookupQueries.LockClaimPreload | T015 claim preload `T_INV` first invoice `MAX_DEDUCTABLE` and `CARD_ID` locked in the create transaction (OI-23, OI-32, D-52, D-112) |
+| Billing.Invoicing.Data.Queries.LookupQueries.LockClassAdvancedMode | PU23 `CHK_ADV_CLASS` `DISC_CLASSES.USE_ADVANCED` locked in the create transaction (OI-23, D-51, D-112) |
+| Billing.Invoicing.Data.Queries.LookupQueries.LockPackageComponentFlags | T066, PU19 `OKA` `PACKAGE_DTL` locked in the create transaction (DR-23, OI-32, D-112) |
+| Billing.Invoicing.Data.Queries.LookupQueries.LockPatientCardId | T027 `PATIENT.CARD_ID` locked in the create transaction (OI-32, D-52, D-112) |
+| Billing.Invoicing.Data.Queries.LookupQueries.LockPatientMaxDeductable | T023 `V_PAT_DATA.MAX_DEDUCTABLE` base-table rows locked in the create transaction (OI-23, D-51, D-112) |
+| Billing.Invoicing.Data.Queries.LookupQueries.LockServiceProfiles | T029, T066 `SERVICES` locked in the create transaction (DR-23, OI-32, D-112) |
 | Billing.Invoicing.Data.Queries.LovQueries | LOVs `COMPANY1_2`, `SUB_COMPANY`, `THE_CLASS`, `PAY_TYPE1`, `PAY_TYPE2`, `DOC`, `RESERV_NO`, `OFFERS`, `CAT` and their record groups (OI-15.11 … OI-15.19) |
 | Billing.Invoicing.Data.Queries.LovQueries.Cat | LOV `CAT`, record group `CAT` (OI-15.11) |
 | Billing.Invoicing.Data.Queries.LovQueries.Company | LOV `COMPANY1_2`, record group `COMPANY` (OI-15.12) |
 | Billing.Invoicing.Data.Queries.LovQueries.Doc | LOV `DOC`, record group `DOC` (OI-15.16, OI-15.17) |
 | Billing.Invoicing.Data.Queries.LovQueries.Offers | LOV `OFFERS`, record group `OFFERS` (OI-15.19) |
-| Billing.Invoicing.Data.Queries.LovQueries.PayTypes | LOVs `PAY_TYPE1`, `PAY_TYPE2`, record group `PAY_TYPE` (OI-15.15); T044 payment-type name display |
-| Billing.Invoicing.Data.Queries.LovQueries.ReservNo | LOV `RESERV_NO` (T049), record group `RESERV_NO` (OI-15.18) |
-| Billing.Invoicing.Data.Queries.LovQueries.SubCompany | LOV `SUB_COMPANY`, record group `SUB_COMP` (OI-15.13) |
-| Billing.Invoicing.Data.Queries.LovQueries.TheClass | LOV `THE_CLASS`, record group `THE_CLASS` (OI-15.14) |
+| Billing.Invoicing.Data.Queries.LovQueries.PayTypes | LOVs `PAY_TYPE1`, `PAY_TYPE2`, record group `PAY_TYPE` (OI-15.15), projected to the LOV-mapped `PAY_TYPE_ID` and `PAY_TYPE_NAME` (D-105); T044 payment-type name display |
+| Billing.Invoicing.Data.Queries.LovQueries.ReservNo | LOV `RESERV_NO` (T049), record group `RESERV_NO` (OI-15.18), projected to `RESERV_NO`, `THE_TIME` and `PATAINTNO` (D-105); the doctor checked with the predicates of record group `DOC` (OI-15.16, OI-15.17, D-106) |
+| Billing.Invoicing.Data.Queries.LovQueries.SubCompany | LOV `SUB_COMPANY`, record group `SUB_COMP` (OI-15.13); the company checked against record group `COMPANY` (OI-15.12, D-106) |
+| Billing.Invoicing.Data.Queries.LovQueries.TheClass | LOV `THE_CLASS`, record group `THE_CLASS` (OI-15.14); the sub-company checked against record groups `SUB_COMP` and `COMPANY` (OI-15.13, OI-15.12, D-106) |
 | Billing.Invoicing.Domain.Model.ClinicProfile | T031 `CLINICS` / `PATIENT`; T032, T033 `SYS_CAT_TYPE` (DR-04, DR-05) |
 | Billing.Invoicing.Domain.Model.DiscountLimitChoice | Alert `DISC_ALERT` buttons (DR-06) |
 | Billing.Invoicing.Domain.Model.InvoiceEntryParameters | The 32 module parameters (OI-30) |
@@ -1255,7 +1263,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Billing.Invoicing.Domain.Workflow.OpenItemGate | OI-32 conditions of PU19 `OKA`, T066, PU23 `CHK_ADV_CLASS`; OI-31; the OI-23 deductible condition (D-51) |
 | Billing.Invoicing.Domain.Workflow.OpenItemGate.Evaluate | OI-32, OI-31 and OI-23 conditions (PU19 `OKA`, T066, PU23 `CHK_ADV_CLASS`, T061; D-51, D-52) |
 | Web/Program.cs | Infrastructure: static hosting of the React build (D-19) |
-| api/client | Infrastructure: HTTP access and 422 / 501 / 503 normalisation of the error contract |
+| api/client | Infrastructure: HTTP access, 422 / 501 / 503 normalisation of the error contract, success-body contract checks (D-118) and severity normalisation of their message lists (D-119) |
 | api/types | Infrastructure: TypeScript shapes of `Api.Contracts` |
 | components/ConnectivityBanner | Infrastructure: 503 `oracle-unavailable` presentation of the error contract |
 | components/FieldMessage | PU08 `MESSAG`, alert `ERR_ALERT` |
@@ -1284,4 +1292,4 @@ Recorded, not fixed; the Form export and the packages stay unchanged.
 - **PFLAG at noon:** T015 / T025 yield AM at 12:00:00 – 12:00:59; the engine yields PM [05_Complex/Inv_Small_Cash.xml:24, 367], [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:455-467] (D-06, UNVERIFIED).
 - **Final-discount percent base:** T039 uses `PAT_PAYX`; the engine uses total net [05_Complex/Inv_Small_Cash.xml:74], [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1234-1262] (D-07, UNVERIFIED).
 - **Tendered cash:** the engine stores `cash_payed = cash_collected` [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2766] (UNVERIFIED); the Form's tendered `CASH_PAYED` and `REUND` are not persisted (OI-33).
-- **-20904 skipped on ordinary lines:** `assert_lines_valid` raises -20904 only when `trim_to_null(serviceid) is null and not (offer_type = 0 and upper_trim_to_null(offer_line_role) = 'PARENT')` [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:557-563] (UNVERIFIED). On an ordinary line `offer_type` and `offer_line_role` are both null, so the parenthesised test is NULL, `not` NULL is NULL and the line is not rejected (UNVERIFIED). It continues into `calculate_lines` and the missing `bil_service_context` (OI-04), so its outcome is UNVERIFIED. -20904 is reachable only when `offer_type` is set and not 0, or `offer_line_role` is set and not 'PARENT', as in the PR-14 fixture's service-missing case (`offerType` 1, `offerLineRole` 'SERVICE') (UNVERIFIED). The package stays unchanged; the target's guard is DR-15 'You Must Select Value' (T066, `LineEntryRules.RequireService`), run on line validation and in the create pre-flight (D-04).
+- **-20904 skipped on ordinary lines:** `assert_lines_valid` raises -20904 only when `trim_to_null(serviceid) is null and not (offer_type = 0 and upper_trim_to_null(offer_line_role) = 'PARENT')` [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:557-563] (UNVERIFIED). On an ordinary line `offer_type` and `offer_line_role` are both null, so the parenthesised test is NULL, `not` NULL is NULL and the line is not rejected (UNVERIFIED). It continues into `calculate_lines` and the missing `bil_service_context` (OI-04), so its outcome is UNVERIFIED. -20904 is reachable only when `offer_type` is set and not 0, or `offer_line_role` is set and not 'PARENT', as in the PR-14 fixture's service-missing case (`offerType` 1, `offerLineRole` 'SERVICE'; D-126) (UNVERIFIED). The package stays unchanged; the target's guard is DR-15 'You Must Select Value' (T066, `LineEntryRules.RequireService`), run on line validation and in the create pre-flight (D-04).

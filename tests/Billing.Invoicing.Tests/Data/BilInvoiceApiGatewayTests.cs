@@ -6,7 +6,7 @@ using Billing.Invoicing.Domain.Model;
 
 namespace Billing.Invoicing.Tests.Data;
 
-/// <summary>Entry rejections of <see cref="BilInvoiceApiGateway"/> for destination widths, preview capacity and create capacity, and the session type check that follows them.</summary>
+/// <summary>Entry rejections of <see cref="BilInvoiceApiGateway"/> for empty or whitespace request ids, destination widths, preview capacity and create capacity, and the session type check that follows them.</summary>
 [Trait("Category", "DataUnit")]
 public sealed class BilInvoiceApiGatewayTests
 {
@@ -58,6 +58,21 @@ public sealed class BilInvoiceApiGatewayTests
         ArgumentException error = await Assert.ThrowsAsync<ArgumentException>(() => Invoke(boundaryCase));
 
         Assert.Equal("session", error.ParamName);
+        Assert.False(error.Data.Contains(OracleFailureTranslator.BindingRejectionKey));
+    }
+
+    [Theory]
+    [Trait("Decision", "D-127")]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task CreateFullInvoice_EmptyOrWhitespaceRequestId_IsRefusedBeforeAnySessionUse(string requestId)
+    {
+        var gateway = new BilInvoiceApiGateway(new InvoicingDataOptions { MaxOutputLines = MaxOutputLines });
+
+        ArgumentException error = await Assert.ThrowsAsync<ArgumentException>(
+            () => gateway.CreateFullInvoice(new FakeSession(), Header(), [], Operator(), requestId));
+
+        Assert.Equal("requestId", error.ParamName);
         Assert.False(error.Data.Contains(OracleFailureTranslator.BindingRejectionKey));
     }
 
