@@ -17,14 +17,14 @@
       "input": {
         "operation": "BilInvoiceApiGateway.CalculatePreview",
         "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0, "amount1": 0, "amount2": 0 },
-        "lines": [ { "clientId": "PR08-L1", "serviceId": "1001", "qty": 1, "discountType": "N" } ],
+        "lines": [ { "clientId": "PR08-L1", "serviceId": "10801", "qty": 1, "discountType": "N" } ],
         "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "5E2B8C4D7A1F4E3B9C6D0A2F8E4B1C08" },
         "amount1Auto": true
       },
       "requires": {
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
-          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001" } }
+          { "table": "SERVICES", "key": { "SERVICEID": "10801" }, "columns": { "SERVICEID": "10801" } }
         ],
         "context": [
           { "output": "bil_price_rule.resolve_price.billing_price", "field": "price", "value": 310.5 },
@@ -46,14 +46,14 @@
       "input": {
         "operation": "BilInvoiceApiGateway.CalculatePreview",
         "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0, "amount1": 0, "amount2": 100 },
-        "lines": [ { "clientId": "PR08-L1", "serviceId": "1001", "qty": 1, "discountType": "N" } ],
+        "lines": [ { "clientId": "PR08-L1", "serviceId": "10801", "qty": 1, "discountType": "N" } ],
         "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "5E2B8C4D7A1F4E3B9C6D0A2F8E4B1C08" },
         "amount1Auto": true
       },
       "requires": {
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
-          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001" } }
+          { "table": "SERVICES", "key": { "SERVICEID": "10801" }, "columns": { "SERVICEID": "10801" } }
         ],
         "context": [
           { "output": "bil_price_rule.resolve_price.billing_price", "field": "price", "value": 310.5 },
@@ -75,14 +75,14 @@
       "input": {
         "operation": "BilInvoiceApiGateway.CalculatePreview",
         "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0, "amount1": 0, "amount2": 400 },
-        "lines": [ { "clientId": "PR08-L1", "serviceId": "1001", "qty": 1, "discountType": "N" } ],
+        "lines": [ { "clientId": "PR08-L1", "serviceId": "10801", "qty": 1, "discountType": "N" } ],
         "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "5E2B8C4D7A1F4E3B9C6D0A2F8E4B1C08" },
         "amount1Auto": true
       },
       "requires": {
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
-          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001" } }
+          { "table": "SERVICES", "key": { "SERVICEID": "10801" }, "columns": { "SERVICEID": "10801" } }
         ],
         "context": [
           { "output": "bil_price_rule.resolve_price.billing_price", "field": "price", "value": 310.5 },
@@ -104,14 +104,14 @@
       "input": {
         "operation": "BilInvoiceApiGateway.CalculatePreview",
         "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0, "amount1": 100, "amount2": 0 },
-        "lines": [ { "clientId": "PR08-L1", "serviceId": "1001", "qty": 1, "discountType": "N" } ],
+        "lines": [ { "clientId": "PR08-L1", "serviceId": "10801", "qty": 1, "discountType": "N" } ],
         "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "5E2B8C4D7A1F4E3B9C6D0A2F8E4B1C08" },
         "amount1Auto": false
       },
       "requires": {
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
-          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001" } }
+          { "table": "SERVICES", "key": { "SERVICEID": "10801" }, "columns": { "SERVICEID": "10801" } }
         ],
         "context": [
           { "output": "bil_price_rule.resolve_price.billing_price", "field": "price", "value": 310.5 },
@@ -133,14 +133,14 @@
       "input": {
         "operation": "BilInvoiceApiGateway.CalculatePreview",
         "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0, "amount1": 0, "amount2": 0 },
-        "lines": [ { "clientId": "PR08-L1", "serviceId": "1001", "qty": 1, "discountType": "N" } ],
+        "lines": [ { "clientId": "PR08-L1", "serviceId": "10801", "qty": 1, "discountType": "N" } ],
         "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "5E2B8C4D7A1F4E3B9C6D0A2F8E4B1C08" },
         "amount1Auto": false
       },
       "requires": {
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
-          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001" } }
+          { "table": "SERVICES", "key": { "SERVICEID": "10801" }, "columns": { "SERVICEID": "10801" } }
         ],
         "context": [
           { "output": "bil_price_rule.resolve_price.billing_price", "field": "price", "value": 310.5 },
@@ -162,14 +162,14 @@
       "input": {
         "operation": "BilInvoiceApiGateway.CalculatePreview",
         "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0, "amount1": 400, "amount2": 0 },
-        "lines": [ { "clientId": "PR08-L1", "serviceId": "1001", "qty": 1, "discountType": "N" } ],
+        "lines": [ { "clientId": "PR08-L1", "serviceId": "10801", "qty": 1, "discountType": "N" } ],
         "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "5E2B8C4D7A1F4E3B9C6D0A2F8E4B1C08" },
         "amount1Auto": false
       },
       "requires": {
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
-          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001" } }
+          { "table": "SERVICES", "key": { "SERVICEID": "10801" }, "columns": { "SERVICEID": "10801" } }
         ],
         "context": [
           { "output": "bil_price_rule.resolve_price.billing_price", "field": "price", "value": 310.5 },
@@ -191,14 +191,14 @@
       "input": {
         "operation": "BilInvoiceApiGateway.CalculatePreview",
         "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 2, "discT": 0, "amount1": 0, "amount2": 0 },
-        "lines": [ { "clientId": "PR08-L1", "serviceId": "1001", "qty": 1, "discountType": "N" } ],
+        "lines": [ { "clientId": "PR08-L1", "serviceId": "10801", "qty": 1, "discountType": "N" } ],
         "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "5E2B8C4D7A1F4E3B9C6D0A2F8E4B1C08" },
         "amount1Auto": true
       },
       "requires": {
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
-          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001" } }
+          { "table": "SERVICES", "key": { "SERVICEID": "10801" }, "columns": { "SERVICEID": "10801" } }
         ],
         "context": [
           { "output": "bil_price_rule.resolve_price.billing_price", "field": "price", "value": 310.5 },

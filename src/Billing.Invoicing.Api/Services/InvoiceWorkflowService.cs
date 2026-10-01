@@ -18,8 +18,6 @@ public sealed class InvoiceWorkflowService
     private const int CashPayType = 1;
     private const int CreditPayType = 2;
     private const int ApprovalPreference = 422;
-    private const int ApprovalCheckEnforced = 1;
-    private const int NormalDateUser = 2;
     private const int DirectCompany = 1;
     private const int BundledOfferType = 0;
     private const string PriceNotFixed = "N";
@@ -60,11 +58,13 @@ public sealed class InvoiceWorkflowService
     private const string TargetField = "TARGET";
     private const string LineField = "LINE";
     private const string KindField = "KIND";
+    private const string LocalDocTypeItem = "LOCAL_DOC_TYPE";
 
     private const string LineIndexText = "LineIndex must address a line of the draft.";
     private const string NullLineText = "Draft lines must not contain null entries.";
     private const string PackageServiceRequiredText = "Package service id is required.";
     private const string DocumentKindText = "Document kind must be invoice, patient-card, barcode-sms or iqama-check.";
+    private const string LocalDocTypeText = "LOCAL_DOC_TYPE must be 505, 532 or 783.";
     private const string VisitUniqueRequiredText = "Request import failed: visit unique is required.";
     private const string SelectedRequestRowUnreadableText = "Request import failed: a selected request line could not be read.";
 
@@ -247,8 +247,6 @@ public sealed class InvoiceWorkflowService
     {
         ArgumentNullException.ThrowIfNull(parameters);
         ArgumentNullException.ThrowIfNull(operatorContext);
-
-        parameters = WithoutDateAdmin(parameters);
 
         if (IsBlank(patientNo))
         {
@@ -553,23 +551,31 @@ public sealed class InvoiceWorkflowService
             header = ApplySubPayType(header, findings.Add(HeaderRecordRules.ApplyPaymentTypeDefault(header)));
         }
 
-        return Saved(await CreateNew(
-            draft.RequestId, header, lines, profiles.Lists, parameters, clinic, findings, operatorContext, cancellationToken));
+        return Saved(await CreateNew(draft.RequestId, header, lines, clinic, findings, operatorContext, cancellationToken));
     }
 
-    /// <summary>Returns a saved invoice as a read-only view, restricted to the ROW_TYPE of the server-owned LOCAL_DOC_TYPE, or null when it is not found.</summary>
+    /// <summary>Returns a saved invoice as a read-only view, restricted to the ROW_TYPE of the request's LOCAL_DOC_TYPE, or null when it is not found.</summary>
     /// <param name="invNo">Invoice number.</param>
+    /// <param name="parameters">Entry parameters of the request; LOCAL_DOC_TYPE is read.</param>
     /// <param name="operatorContext">Operator identity of the request.</param>
     /// <param name="cancellationToken">Cancels the read.</param>
     /// <returns>The invoice header, lines and display values, or null.</returns>
+    /// <exception cref="ArgumentException">LOCAL_DOC_TYPE is not 505, 532 or 783; nothing is read.</exception>
     public async Task<InvoiceViewResponse?> GetInvoice(
         long invNo,
+        InvoiceEntryParameters parameters,
         OperatorContext operatorContext,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(parameters);
         ArgumentNullException.ThrowIfNull(operatorContext);
 
-        if (await _invoices.GetInvoice(invNo, new InvoiceEntryParameters().LocalDocType, cancellationToken) is not { } invoice)
+        if (parameters.LocalDocType is not (505 or 532 or 783))
+        {
+            throw InvalidLocalDocType(parameters.LocalDocType);
+        }
+
+        if (await _invoices.GetInvoice(invNo, parameters.LocalDocType, cancellationToken) is not { } invoice)
         {
             return null;
         }
@@ -607,19 +613,28 @@ public sealed class InvoiceWorkflowService
         return await _invoices.GetLastInvoiceNo(operatorContext.InfoCenterId, cancellationToken);
     }
 
-    /// <summary>Returns the persisted insurance, line and transfer details of a saved invoice, restricted to the ROW_TYPE of the server-owned LOCAL_DOC_TYPE, or null when it is not found.</summary>
+    /// <summary>Returns the persisted insurance, line and transfer details of a saved invoice, restricted to the ROW_TYPE of the request's LOCAL_DOC_TYPE, or null when it is not found.</summary>
     /// <param name="invNo">Invoice number.</param>
+    /// <param name="parameters">Entry parameters of the request; LOCAL_DOC_TYPE is read.</param>
     /// <param name="operatorContext">Operator identity of the request.</param>
     /// <param name="cancellationToken">Cancels the read.</param>
     /// <returns>The details, or null.</returns>
+    /// <exception cref="ArgumentException">LOCAL_DOC_TYPE is not 505, 532 or 783; nothing is read.</exception>
     public async Task<MoreDetailsResponse?> GetMoreDetails(
         long invNo,
+        InvoiceEntryParameters parameters,
         OperatorContext operatorContext,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(parameters);
         ArgumentNullException.ThrowIfNull(operatorContext);
 
-        if (await _invoices.GetMoreDetails(invNo, new InvoiceEntryParameters().LocalDocType, cancellationToken) is not { } details)
+        if (parameters.LocalDocType is not (505 or 532 or 783))
+        {
+            throw InvalidLocalDocType(parameters.LocalDocType);
+        }
+
+        if (await _invoices.GetMoreDetails(invNo, parameters.LocalDocType, cancellationToken) is not { } details)
         {
             return null;
         }
@@ -1177,8 +1192,6 @@ public sealed class InvoiceWorkflowService
         string requestId,
         InvoiceHeaderDraft header,
         IReadOnlyList<InvoiceLineDraft> lines,
-        IReadOnlyList<decimal?> lists,
-        InvoiceEntryParameters parameters,
         ClinicProfile? clinic,
         Findings findings,
         OperatorContext operatorContext,
@@ -1191,15 +1204,6 @@ public sealed class InvoiceWorkflowService
         {
             try
             {
-                var locked = await LockGateInputs(session, header, lines, lists, parameters, cancellationToken);
-                var lockedGateIds = OpenItemGate.Evaluate(
-                    header, locked.Profiles.TopLevel, locked.Gate.CardId, locked.Gate.MaxDeductable, locked.Gate.UseAdvanced, parameters);
-                if (lockedGateIds.Count > 0)
-                {
-                    await ThrowGate(lockedGateIds, findings.Warnings, header, cancellationToken);
-                }
-
-                header = header with { AddToList = AddToListRule.Derive(locked.Profiles.TopLevel) };
                 result = await _invoiceApi.CreateFullInvoice(
                     session, header, lines, operatorContext, requestId, cancellationToken);
 
@@ -1256,7 +1260,7 @@ public sealed class InvoiceWorkflowService
             return true;
         }
 
-        session.Save(ReceptionTransferSavepoint);
+        await session.Save(ReceptionTransferSavepoint, cancellationToken);
         try
         {
             await _patientTransfer.ClearReceptionTransfer(session, patientNo!, cancellationToken);
@@ -1264,7 +1268,7 @@ public sealed class InvoiceWorkflowService
         }
         catch (Exception failure) when (failure is not OperationCanceledException)
         {
-            session.Rollback(ReceptionTransferSavepoint);
+            await session.Rollback(ReceptionTransferSavepoint, cancellationToken);
             return false;
         }
     }
@@ -1654,26 +1658,72 @@ public sealed class InvoiceWorkflowService
             && (choice is not { } chosen || FinalDiscountLimitRule.ApplyChoice(header, chosen, maxDisc).IsBlocking);
     }
 
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<IReadOnlyList<EditablePreviewLine>, ReqNeedAIndex> ReqNeedAIndexes = new();
+
     private static int? ServerReqNeedA(InvoiceLineDraft line, ServiceProfile? profile, PreviewResult? preview)
     {
-        var previewLines = preview?.Lines ?? Array.Empty<EditablePreviewLine>();
-        var candidates = IsBlank(line.ClientId)
-            ? Array.Empty<EditablePreviewLine>()
-            : previewLines.Where(previewLine => string.Equals(previewLine.ClientId, line.ClientId, StringComparison.Ordinal)).ToArray();
-        if (candidates.Length == 0 && Trimmed(line.ServiceId) is { } serviceId)
-        {
-            candidates = previewLines
-                .Where(previewLine => string.Equals(Trimmed(previewLine.ServiceId), serviceId, StringComparison.OrdinalIgnoreCase))
-                .ToArray();
-        }
-
-        var values = candidates.Select(candidate => candidate.ReqNeedA).Where(value => value is not null).ToArray();
-        if (values.Length == 0)
+        if (preview?.Lines is not { Count: > 0 } previewLines)
         {
             return profile?.ReqNeedA;
         }
 
-        return values.FirstOrDefault(value => value is not 0) ?? 0;
+        return ReqNeedAIndexes.GetValue(previewLines, ReqNeedAIndex.Of).Find(line) ?? profile?.ReqNeedA;
+    }
+
+    /// <summary>REQ_NEED_A of the preview lines by client id and by trimmed service id: per key, the first non-zero value in preview order, else 0, else null.</summary>
+    private sealed class ReqNeedAIndex
+    {
+        private readonly Dictionary<string, int?> _byClientId = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, int?> _byServiceId = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>Builds the index of the preview lines in one pass.</summary>
+        /// <param name="previewLines">Preview lines in package order.</param>
+        /// <returns>The index.</returns>
+        public static ReqNeedAIndex Of(IReadOnlyList<EditablePreviewLine> previewLines)
+        {
+            var index = new ReqNeedAIndex();
+            foreach (var previewLine in previewLines)
+            {
+                if (previewLine.ClientId is { } clientId)
+                {
+                    Fold(index._byClientId, clientId, previewLine.ReqNeedA);
+                }
+
+                if (Trimmed(previewLine.ServiceId) is { } serviceId)
+                {
+                    Fold(index._byServiceId, serviceId, previewLine.ReqNeedA);
+                }
+            }
+
+            return index;
+        }
+
+        /// <summary>Returns the value of the line's client id; of its service id when no preview line has that client id; null when neither matches or the match has no value.</summary>
+        /// <param name="line">Draft line.</param>
+        public int? Find(InvoiceLineDraft line)
+        {
+            if (!IsBlank(line.ClientId) && _byClientId.TryGetValue(line.ClientId!, out var byClientId))
+            {
+                return byClientId;
+            }
+
+            return Trimmed(line.ServiceId) is { } serviceId && _byServiceId.TryGetValue(serviceId, out var byServiceId)
+                ? byServiceId
+                : null;
+        }
+
+        /// <summary>Records the key with its first value, then replaces a null with any value and a 0 with a non-zero value.</summary>
+        private static void Fold(Dictionary<string, int?> values, string key, int? value)
+        {
+            if (!values.TryGetValue(key, out var current))
+            {
+                values.Add(key, value);
+            }
+            else if (value is not null && (current is null || (current == 0 && value != 0)))
+            {
+                values[key] = value;
+            }
+        }
     }
 
     private async Task AddPriceOverrideRules(
@@ -2036,64 +2086,25 @@ public sealed class InvoiceWorkflowService
         return new GateInputs(maxDeductable, useAdvanced, cardId);
     }
 
-    /// <summary>Re-reads the gate inputs and line profiles inside the session's transaction, locking the claim's first T_INV invoice row, the PATIENT, DISC_CLASSES, SERVICES and PACKAGE_DTL rows, and the base-table rows of a credit header's V_PAT_DATA deductible.</summary>
-    private async Task<(GateInputs Gate, ProfileSet Profiles)> LockGateInputs(
-        IOracleSession session,
-        InvoiceHeaderDraft header,
-        IReadOnlyList<InvoiceLineDraft> lines,
-        IReadOnlyList<decimal?> lists,
-        InvoiceEntryParameters parameters,
-        CancellationToken cancellationToken)
-    {
-        var preload = await LockPatientClaimPreload(session, parameters, header.PatientNo, cancellationToken);
-
-        int? cardId = IsBlank(header.PatientNo)
-            ? null
-            : await _lookups.LockPatientCardId(session, header.PatientNo!, cancellationToken);
-        cardId ??= preload?.CardId;
-
-        int? useAdvanced = !IsBlank(header.SubCompCode) && header.ClassCode is int classCode
-            ? await _lookups.LockClassAdvancedMode(session, header.SubCompCode!, ClassText(classCode)!, cancellationToken)
-            : null;
-
-        var profiles = await BuildProfiles(lines, lists, new ProfileReads(_lookups, session), cancellationToken);
-
-        decimal? coverageDeductable = header.PayType == CreditPayType && !IsBlank(header.PatientNo)
-            ? await _lookups.LockPatientMaxDeductable(session, header.PatientNo!, cancellationToken)
-            : null;
-
-        return (new GateInputs(Greater(coverageDeductable, preload?.MaxDeductable), useAdvanced, cardId), profiles);
-    }
-
-    /// <summary>Returns the deductible and card id of the claim's first invoice when it preloads the patient's header, locking that T_INV row until the session's transaction ends; null when no claim preload applies.</summary>
-    private async Task<(decimal? MaxDeductable, int? CardId)?> LockPatientClaimPreload(
-        IOracleSession session,
-        InvoiceEntryParameters parameters,
-        string? patientNo,
-        CancellationToken cancellationToken)
-    {
-        if (PreloadClaimNo(parameters) is not { } claimNo || Trimmed(patientNo) is not { } patient)
-        {
-            return null;
-        }
-
-        return await _lookups.LockClaimPreload(session, claimNo, cancellationToken) is { } preload
-            && string.Equals(Trimmed(preload.PatientNo), patient, StringComparison.Ordinal)
-                ? (preload.MaxDeductable, preload.CardId)
-                : null;
-    }
-
-    /// <summary>Returns the PREF 422 approval-check setting when it holds an integer, otherwise 1 (enforced); the entry parameter's X422_APPROV_CHECK is not read (D-73).</summary>
-    /// <param name="parameters">Entry parameters of the draft; not read.</param>
+    /// <summary>Returns X422_APPROV_CHECK: the PREF 422 value when it is an integer, null when it is null, otherwise the entry parameter (D-73).</summary>
+    /// <param name="parameters">Entry parameters of the draft; X422_APPROV_CHECK is read.</param>
     /// <param name="cancellationToken">Cancels the preference read.</param>
     private async Task<int?> ReadX422(InvoiceEntryParameters parameters, CancellationToken cancellationToken)
     {
         var preferences = await _lookups.GetPreferences(cancellationToken);
-        return preferences.TryGetValue(ApprovalPreference, out var value)
-            && value is not null
-            && int.TryParse(value.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var mode)
-                ? mode
-                : ApprovalCheckEnforced;
+        if (!preferences.TryGetValue(ApprovalPreference, out var value))
+        {
+            return parameters.X422ApprovCheck;
+        }
+
+        if (value is null)
+        {
+            return null;
+        }
+
+        return int.TryParse(value.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var mode)
+            ? mode
+            : parameters.X422ApprovCheck;
     }
 
     /// <summary>Returns the rolled-back package preview of the service lines not in the excluded indexes, or null when none remains.</summary>
@@ -2515,13 +2526,13 @@ public sealed class InvoiceWorkflowService
         }
 
         var queueFlags = new Dictionary<decimal, Dictionary<string, int>>();
-        foreach (var listId in profileReads.Locks ? listOrder.Order() : listOrder.AsEnumerable())
+        foreach (var listId in listOrder)
         {
             var serviceIds = serviceIdsByList[listId];
             await profileReads.Load(serviceIds.Select(serviceId => ((decimal?)listId, (string?)serviceId)), cancellationToken);
 
             var listFlags = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            foreach (var (serviceId, flag) in await profileReads.QueueFlags(serviceIds, listId, cancellationToken))
+            foreach (var (serviceId, flag) in await _lookups.GetServiceQueueFlags(serviceIds, listId, cancellationToken))
             {
                 listFlags[serviceId.Trim()] = flag;
             }
@@ -2607,7 +2618,7 @@ public sealed class InvoiceWorkflowService
             {
                 if (!packageComponents.TryGetValue((packageListId, packageId), out var components))
                 {
-                    components = await profileReads.PackageComponents(packageId, packageListId, cancellationToken);
+                    components = await _lookups.GetPackageComponentFlags(packageId, packageListId, cancellationToken);
                     packageComponents[(packageListId, packageId)] = components;
                 }
 
@@ -2709,13 +2720,9 @@ public sealed class InvoiceWorkflowService
         {
             Header = header,
             Lines = lines.Select(line => line with { FixPay = null, PayRate = null }).ToArray(),
-            Parameters = WithoutDateAdmin(draft.Parameters ?? new InvoiceEntryParameters()),
+            Parameters = draft.Parameters ?? new InvoiceEntryParameters(),
         };
     }
-
-    /// <summary>Returns the parameters with INV_DATE_ADMIN set to 2 (normal user), whatever the request carried (D-98).</summary>
-    private static InvoiceEntryParameters WithoutDateAdmin(InvoiceEntryParameters parameters) =>
-        parameters with { InvDateAdmin = NormalDateUser };
 
     private static InvoiceHeaderDraft WithOperator(InvoiceHeaderDraft header, OperatorContext operatorContext) => header with
     {
@@ -2998,6 +3005,15 @@ public sealed class InvoiceWorkflowService
         return failure;
     }
 
+    /// <summary>Returns the 422 field-validation failure for a LOCAL_DOC_TYPE other than 505, 532 or 783.</summary>
+    private static ArgumentException InvalidLocalDocType(int localDocType)
+    {
+        var failure = new ArgumentException(
+            string.Create(CultureInfo.InvariantCulture, $"Unknown LOCAL_DOC_TYPE {localDocType}."), nameof(localDocType));
+        failure.Data[ProblemDetailsWriter.MessagesDataKey] = new[] { Blocking(LocalDocTypeItem, LocalDocTypeText) };
+        return failure;
+    }
+
     private static string? BindText(IReadOnlyDictionary<string, string?> values, string item) =>
         values.TryGetValue(item, out var value) ? Trimmed(value) : null;
 
@@ -3277,21 +3293,12 @@ public sealed class InvoiceWorkflowService
     private sealed class ProfileReads
     {
         private readonly ILookupQueries _lookups;
-        private readonly IOracleSession? _lockSession;
         private readonly Dictionary<(decimal ListId, string ServiceId), ServiceProfile?> _read = new();
         private readonly Dictionary<string, Lazy<Task<int?>>> _isDirect = new(StringComparer.Ordinal);
 
         /// <summary>Creates an empty set of reads over the lookups.</summary>
         /// <param name="lookups">Lookups the profiles are read through.</param>
-        /// <param name="lockSession">Session whose transaction the service, queue and package-component reads lock their rows in; null reads without locks.</param>
-        public ProfileReads(ILookupQueries lookups, IOracleSession? lockSession = null)
-        {
-            _lookups = lookups;
-            _lockSession = lockSession;
-        }
-
-        /// <summary>True when the reads lock their rows in a session.</summary>
-        public bool Locks => _lockSession is not null;
+        public ProfileReads(ILookupQueries lookups) => _lookups = lookups;
 
         /// <summary>Reads the profiles of the keys with a list and a service that are not read yet, once per list; a service not on its list, or a blank one, reads as null.</summary>
         public async Task Load(IEnumerable<(decimal? ListId, string? ServiceId)> keys, CancellationToken cancellationToken)
@@ -3322,15 +3329,7 @@ public sealed class InvoiceWorkflowService
             foreach (var list in listOrder)
             {
                 var serviceIds = unreadByList[list];
-                if (_lockSession is not null)
-                {
-                    var locked = await _lookups.LockServiceProfiles(_lockSession, serviceIds, list, cancellationToken);
-                    foreach (var serviceId in serviceIds)
-                    {
-                        _read[(list, serviceId)] = locked.GetValueOrDefault(serviceId);
-                    }
-                }
-                else if (serviceIds.Count == 1)
+                if (serviceIds.Count == 1)
                 {
                     var serviceId = serviceIds[0];
                     _read[(list, serviceId)] = IsBlank(serviceId)
@@ -3352,39 +3351,6 @@ public sealed class InvoiceWorkflowService
         /// <exception cref="KeyNotFoundException">The service was not loaded on the list.</exception>
         public ServiceProfile? Get(decimal? listId, string? serviceId) =>
             listId is { } list && serviceId is { } service ? _read[(list, service)] : null;
-
-        /// <summary>Returns the ADD_TO_QUE flags of services on a list: read through GetServiceQueueFlags, or in a lock session taken from their loaded profiles; services without a row are absent.</summary>
-        /// <exception cref="KeyNotFoundException">In a lock session, a service was not loaded on the list.</exception>
-        public async Task<IReadOnlyDictionary<string, int>> QueueFlags(
-            IReadOnlyCollection<string> serviceIds,
-            decimal listId,
-            CancellationToken cancellationToken)
-        {
-            if (_lockSession is null)
-            {
-                return await _lookups.GetServiceQueueFlags(serviceIds, listId, cancellationToken);
-            }
-
-            var flags = new Dictionary<string, int>(StringComparer.Ordinal);
-            foreach (var serviceId in serviceIds)
-            {
-                if (_read[(listId, serviceId)] is { } profile)
-                {
-                    flags[serviceId] = profile.AddToQue ?? 0;
-                }
-            }
-
-            return flags;
-        }
-
-        /// <summary>Returns the component flags of a package on a list, read through GetPackageComponentFlags, or LockPackageComponentFlags in a lock session.</summary>
-        public Task<IReadOnlyList<ServiceProfile>> PackageComponents(
-            string packageServiceId,
-            decimal listId,
-            CancellationToken cancellationToken) =>
-            _lockSession is null
-                ? _lookups.GetPackageComponentFlags(packageServiceId, listId, cancellationToken)
-                : _lookups.LockPackageComponentFlags(_lockSession, packageServiceId, listId, cancellationToken);
 
         /// <summary>Returns the deferred COMPANYS.IS_DIRECT read of the header's company, the same one for every call with that company code; a blank company reads as null without a read.</summary>
         public Lazy<Task<int?>> CompanyIsDirect(InvoiceHeaderDraft header, CancellationToken cancellationToken)

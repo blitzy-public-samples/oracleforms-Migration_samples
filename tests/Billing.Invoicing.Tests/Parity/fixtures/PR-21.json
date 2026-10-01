@@ -80,15 +80,15 @@
       "status": "derivable",
       "input": {
         "operation": "BilImportGateway.GetVisitLine",
-        "header": { "patientNo": "990000001", "docId": 10, "payType": 1, "clinicId": 14, "draftDate": "2026-09-28T10:00:00" },
+        "header": { "patientNo": "990000001", "docId": 21003, "payType": 1, "clinicId": 14, "draftDate": "2026-09-28T10:00:00" },
         "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000021" },
         "visitKind": "Consultation"
       },
       "requires": {
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
-          { "table": "DOCTORS", "key": { "DOCID": 10 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 1 } },
-          { "table": "DOCTOR_CONSULTATION", "key": { "LIST_ID": 1, "DOCID": 10 }, "count": 0 }
+          { "table": "DOCTORS", "key": { "DOCID": 21003 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 1 } },
+          { "table": "DOCTOR_CONSULTATION", "key": { "LIST_ID": 1, "DOCID": 21003 }, "count": 0 }
         ],
         "context": []
       },
@@ -101,15 +101,15 @@
       "status": "derivable",
       "input": {
         "operation": "BilImportGateway.GetVisitLine",
-        "header": { "patientNo": "990000001", "docId": 10, "payType": 1, "clinicId": 14, "draftDate": "2026-09-28T10:00:00" },
+        "header": { "patientNo": "990000001", "docId": 21004, "payType": 1, "clinicId": 14, "draftDate": "2026-09-28T10:00:00" },
         "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000021" },
         "visitKind": "Consultation"
       },
       "requires": {
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
-          { "table": "DOCTORS", "key": { "DOCID": 10 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 1 } },
-          { "table": "DOCTOR_CONSULTATION", "key": { "LIST_ID": 1, "DOCID": 10 }, "count": 2, "columns": { "CONS_SERVID": "3001", "REVIEW_SERVID": "3002" } }
+          { "table": "DOCTORS", "key": { "DOCID": 21004 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 1 } },
+          { "table": "DOCTOR_CONSULTATION", "key": { "LIST_ID": 1, "DOCID": 21004 }, "count": 2, "columns": { "CONS_SERVID": "3001", "REVIEW_SERVID": "3002" } }
         ],
         "context": []
       },
@@ -122,15 +122,15 @@
       "status": "derivable",
       "input": {
         "operation": "BilImportGateway.GetVisitLine",
-        "header": { "patientNo": "990000001", "docId": 10, "payType": 1, "clinicId": 14, "draftDate": "2026-09-28T10:00:00" },
+        "header": { "patientNo": "990000001", "docId": 21005, "payType": 1, "clinicId": 14, "draftDate": "2026-09-28T10:00:00" },
         "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000021" },
         "visitKind": "Consultation"
       },
       "requires": {
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
-          { "table": "DOCTORS", "key": { "DOCID": 10 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 1 } },
-          { "table": "DOCTOR_CONSULTATION", "key": { "LIST_ID": 1, "DOCID": 10 }, "count": 1, "columns": { "CONS_SERVID": null, "REVIEW_SERVID": "3002" } }
+          { "table": "DOCTORS", "key": { "DOCID": 21005 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 1 } },
+          { "table": "DOCTOR_CONSULTATION", "key": { "LIST_ID": 1, "DOCID": 21005 }, "count": 1, "columns": { "CONS_SERVID": null, "REVIEW_SERVID": "3002" } }
         ],
         "context": []
       },
@@ -143,15 +143,15 @@
       "status": "derivable",
       "input": {
         "operation": "BilImportGateway.GetVisitLine",
-        "header": { "patientNo": "990000001", "docId": 10, "payType": 1, "clinicId": 14, "draftDate": "2026-09-28T10:00:00" },
+        "header": { "patientNo": "990000001", "docId": 21006, "payType": 1, "clinicId": 14, "draftDate": "2026-09-28T10:00:00" },
         "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000021" },
         "visitKind": "Review"
       },
       "requires": {
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
-          { "table": "DOCTORS", "key": { "DOCID": 10 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 1 } },
-          { "table": "DOCTOR_CONSULTATION", "key": { "LIST_ID": 1, "DOCID": 10 }, "count": 1, "columns": { "CONS_SERVID": "3001", "REVIEW_SERVID": null } }
+          { "table": "DOCTORS", "key": { "DOCID": 21006 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 1 } },
+          { "table": "DOCTOR_CONSULTATION", "key": { "LIST_ID": 1, "DOCID": 21006 }, "count": 1, "columns": { "CONS_SERVID": "3001", "REVIEW_SERVID": null } }
         ],
         "context": []
       },

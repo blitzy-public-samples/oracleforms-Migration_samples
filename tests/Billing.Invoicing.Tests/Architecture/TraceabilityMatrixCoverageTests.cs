@@ -627,7 +627,6 @@ public sealed class TraceabilityMatrixCoverageTests
     private static ForwardKey NewKey(string kind, string owner, string name, string triggerEvent, XElement element) =>
         new(kind, owner, name, triggerEvent, ((IXmlLineInfo)element).LineNumber);
 
-
     /// <summary>Reads the forward and reverse table rows of §9 in docs/legacy-form-spec.md.</summary>
     /// <returns>The data rows of both halves.</returns>
     private static MatrixSection ReadSection9()

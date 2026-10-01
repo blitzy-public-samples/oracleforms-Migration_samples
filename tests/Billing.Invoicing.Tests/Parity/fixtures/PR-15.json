@@ -25,7 +25,7 @@
       },
       "requires": {
         "rows": [
-          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
           { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": {} },
           { "table": "SERVICES", "key": { "SERVICEID": "1002" }, "columns": {} }
         ],
@@ -48,7 +48,7 @@
         "operation": "BilInvoiceApiGateway.CalculatePreview",
         "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
         "lines": [
-          { "serviceId": "1001", "qty": 1 },
+          { "serviceId": "11501", "qty": 1 },
           { "serviceId": "1002", "qty": 1 }
         ],
         "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000015" },
@@ -56,13 +56,13 @@
       },
       "requires": {
         "rows": [
-          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
-          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": {} },
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "11501" }, "columns": {} },
           { "table": "SERVICES", "key": { "SERVICEID": "1002" }, "columns": {} }
         ],
         "context": [
-          { "name": "bil_service_context.curr_code[1001]", "value": "sar" },
-          { "name": "bil_price_rule.billing_price[1001]", "value": 100.00 },
+          { "name": "bil_service_context.curr_code[11501]", "value": "sar" },
+          { "name": "bil_price_rule.billing_price[11501]", "value": 100.00 },
           { "name": "bil_service_context.curr_code[1002]", "value": "SAR" },
           { "name": "bil_price_rule.billing_price[1002]", "value": 50.00 }
         ]
@@ -80,16 +80,16 @@
         "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
         "lines": [
           { "serviceId": "1001", "qty": 1 },
-          { "serviceId": "1002", "qty": 1 }
+          { "serviceId": "11502", "qty": 1 }
         ],
         "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000015" },
         "amount1Auto": true
       },
       "requires": {
         "rows": [
-          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
           { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": {} },
-          { "table": "SERVICES", "key": { "SERVICEID": "1002" }, "columns": {} }
+          { "table": "SERVICES", "key": { "SERVICEID": "11502" }, "columns": {} }
         ],
         "context": []
       },
@@ -105,16 +105,16 @@
         "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
         "lines": [
           { "serviceId": "1001", "qty": 1 },
-          { "serviceId": "1002", "qty": 1 }
+          { "serviceId": "11503", "qty": 1 }
         ],
         "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000015" },
         "amount1Auto": true
       },
       "requires": {
         "rows": [
-          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
           { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": {} },
-          { "table": "SERVICES", "key": { "SERVICEID": "1002" }, "columns": {} }
+          { "table": "SERVICES", "key": { "SERVICEID": "11503" }, "columns": {} }
         ],
         "context": []
       },

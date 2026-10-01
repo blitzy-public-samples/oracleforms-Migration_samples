@@ -17,13 +17,13 @@
       "input": {
         "operation": "BilInvoiceApiGateway.CalculatePreview",
         "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
-        "lines": [{ "serviceId": "1001", "qty": 2, "discountType": "N", "disc": 0, "myDisc": 0 }],
+        "lines": [{ "serviceId": "10301", "qty": 2, "discountType": "N", "disc": 0, "myDisc": 0 }],
         "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000003" }
       },
       "requires": {
         "rows": [
-          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
-          { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "10301", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
         ],
         "context": [
           { "name": "bil_price_rule.billing_price", "value": 100 },
@@ -49,13 +49,13 @@
       "input": {
         "operation": "BilInvoiceApiGateway.CalculatePreview",
         "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
-        "lines": [{ "serviceId": "1001", "qty": 2, "discountType": "N", "disc": 0, "myDisc": 0 }],
+        "lines": [{ "serviceId": "10302", "qty": 2, "discountType": "N", "disc": 0, "myDisc": 0 }],
         "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000003" }
       },
       "requires": {
         "rows": [
-          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
-          { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "10302", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
         ],
         "context": []
       },
@@ -69,13 +69,13 @@
       "input": {
         "operation": "BilInvoiceApiGateway.CalculatePreview",
         "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
-        "lines": [{ "serviceId": "1001", "qty": 2, "discountType": "R", "disc": 5, "myDisc": 0 }],
+        "lines": [{ "serviceId": "10303", "qty": 2, "discountType": "R", "disc": 5, "myDisc": 0 }],
         "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000003" }
       },
       "requires": {
         "rows": [
-          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
-          { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "10303", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
         ],
         "context": []
       },
@@ -89,13 +89,13 @@
       "input": {
         "operation": "BilInvoiceApiGateway.CalculatePreview",
         "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
-        "lines": [{ "serviceId": "1001", "qty": 2, "discountType": "R", "disc": 50, "myDisc": 0 }],
+        "lines": [{ "serviceId": "10301", "qty": 2, "discountType": "R", "disc": 50, "myDisc": 0 }],
         "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000003" }
       },
       "requires": {
         "rows": [
-          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
-          { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "10301", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
         ],
         "context": []
       },
@@ -109,13 +109,13 @@
       "input": {
         "operation": "BilInvoiceApiGateway.CalculatePreview",
         "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
-        "lines": [{ "serviceId": "1001", "qty": 2, "discountType": "R", "disc": 10, "myDisc": 0 }],
+        "lines": [{ "serviceId": "10301", "qty": 2, "discountType": "R", "disc": 10, "myDisc": 0 }],
         "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000003" }
       },
       "requires": {
         "rows": [
-          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
-          { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "10301", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
         ],
         "context": [
           { "name": "bil_price_rule.billing_price", "value": 100 },

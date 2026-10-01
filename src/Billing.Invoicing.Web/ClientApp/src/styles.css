@@ -247,9 +247,14 @@ body {
   align-items: center;
 }
 
-.field > label:first-child {
+.field > label:first-child,
+.field > .field-caption:first-child {
   text-align: end;
   overflow-wrap: break-word;
+}
+
+.field > .field-caption:first-child {
+  cursor: default;
 }
 
 .field > :nth-child(n + 3) {

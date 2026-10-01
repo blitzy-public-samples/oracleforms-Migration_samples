@@ -41,6 +41,7 @@ const problemTypes: Record<ProblemType, true> = {
   'open-item': true,
   'oracle-unavailable': true,
   'oracle-error': true,
+  'not-found': true,
 };
 
 /** Development operator identity sent as X-His-* headers. */
@@ -506,9 +507,10 @@ export async function createInvoice(req: CreateInvoiceRequest): Promise<CreateIn
   return request('POST', '/api/invoices', messagesBody<CreateInvoiceResponse>, body);
 }
 
-/** GET /api/invoices/{invNo}: read-only view of a saved invoice. */
-export async function getInvoice(invNo: number): Promise<InvoiceViewResponse> {
-  return request('GET', `/api/invoices/${segment(invNo)}`, objectBody<InvoiceViewResponse>);
+/** GET /api/invoices/{invNo} with the entry parameters of a query string such as window.location.search; the Api reads LOCAL_DOC_TYPE. */
+export async function getInvoice(invNo: number, search: string): Promise<InvoiceViewResponse> {
+  const query = search === '' || search.startsWith('?') ? search : `?${search}`;
+  return request('GET', `/api/invoices/${segment(invNo)}${query}`, objectBody<InvoiceViewResponse>);
 }
 
 /** GET /api/invoices/last: highest invoice number of the operator's information centre. */
@@ -516,9 +518,10 @@ export async function getLastInvoiceNo(): Promise<LastInvoiceNoResponse> {
   return request('GET', '/api/invoices/last', objectBody<LastInvoiceNoResponse>);
 }
 
-/** GET /api/invoices/{invNo}/more: persisted MORE-canvas fields of a saved invoice. */
-export async function getMoreDetails(invNo: number): Promise<MoreDetailsResponse> {
-  return request('GET', `/api/invoices/${segment(invNo)}/more`, objectBody<MoreDetailsResponse>);
+/** GET /api/invoices/{invNo}/more with the entry parameters of a query string such as window.location.search; the Api reads LOCAL_DOC_TYPE. */
+export async function getMoreDetails(invNo: number, search: string): Promise<MoreDetailsResponse> {
+  const query = search === '' || search.startsWith('?') ? search : `?${search}`;
+  return request('GET', `/api/invoices/${segment(invNo)}/more${query}`, objectBody<MoreDetailsResponse>);
 }
 
 /** POST /api/invoices/{invNo}/sms. */

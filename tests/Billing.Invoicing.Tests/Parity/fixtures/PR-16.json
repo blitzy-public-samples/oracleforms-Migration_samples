@@ -22,7 +22,7 @@
         "operation": "BilInvoiceApiGateway.CalculatePreview",
         "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
         "lines": [
-          { "serviceId": "1001", "qty": 1, "priceOverride": 50, "usePriceOverride": "Y" }
+          { "serviceId": "11601", "qty": 1, "priceOverride": 50, "usePriceOverride": "Y" }
         ],
         "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000016" },
         "amount1Auto": true
@@ -30,7 +30,7 @@
       "requires": {
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
-          { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
+          { "table": "SERVICES", "key": { "SERVICEID": "11601", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
         ],
         "context": []
       },
@@ -45,7 +45,7 @@
         "operation": "BilInvoiceApiGateway.CalculatePreview",
         "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
         "lines": [
-          { "serviceId": "1001", "qty": 1, "discountType": "R", "disc": 5 }
+          { "serviceId": "11601", "qty": 1, "discountType": "R", "disc": 5 }
         ],
         "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000016" },
         "amount1Auto": true
@@ -53,7 +53,7 @@
       "requires": {
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
-          { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
+          { "table": "SERVICES", "key": { "SERVICEID": "11601", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
         ],
         "context": []
       },
@@ -68,7 +68,7 @@
         "operation": "BilInvoiceApiGateway.CalculatePreview",
         "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 2, "discT": 0 },
         "lines": [
-          { "serviceId": "1001", "qty": 1, "priceOverride": 50, "usePriceOverride": "Y" }
+          { "serviceId": "11601", "qty": 1, "priceOverride": 50, "usePriceOverride": "Y" }
         ],
         "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000016" },
         "amount1Auto": true
@@ -76,7 +76,7 @@
       "requires": {
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
-          { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
+          { "table": "SERVICES", "key": { "SERVICEID": "11601", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
         ],
         "context": [
           { "key": "bil_price_rule.allow_manual_price", "value": "Y" },

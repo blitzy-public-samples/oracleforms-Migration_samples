@@ -5,7 +5,6 @@ using Billing.Invoicing.Data.Plsql;
 using Billing.Invoicing.Data.Ports;
 using Billing.Invoicing.Domain.Model;
 using Dapper;
-using Oracle.ManagedDataAccess.Client;
 
 namespace Billing.Invoicing.Data.Queries;
 
@@ -91,25 +90,6 @@ public sealed class LookupQueries : ILookupQueries
     /// <summary>SELECT of DISC_CLASSES.USE_ADVANCED read by CHK_ADV_CLASS.</summary>
     public const string GetClassAdvancedModeSql =
         "SELECT USE_ADVANCED FROM DISC_CLASSES WHERE COMP_CODE = :subCompCode AND CLASS_CODE = :classCode";
-
-    /// <summary>SELECT of PATIENT.CARD_ID locked FOR UPDATE inside the create transaction, read by T027.</summary>
-    public const string LockPatientCardIdSql = GetPatientCardIdSql + " FOR UPDATE";
-
-    /// <summary>SELECT of DISC_CLASSES.USE_ADVANCED locked FOR UPDATE inside the create transaction, read by CHK_ADV_CLASS.</summary>
-    public const string LockClassAdvancedModeSql = GetClassAdvancedModeSql + " FOR UPDATE";
-
-    /// <summary>SELECT of the SERVICES flags of one service locked FOR UPDATE inside the create transaction, read by T029 and T066.</summary>
-    public const string LockServiceProfileSql = GetServiceProfileSql + " FOR UPDATE";
-
-    /// <summary>SELECT of a package's PACKAGE_DTL rows and its components' SERVICES flags locked FOR UPDATE inside the create transaction, read by T066 and OKA.</summary>
-    public const string LockPackageComponentFlagsSql = GetPackageComponentFlagsSql + " FOR UPDATE";
-
-    /// <summary>SELECT of V_PAT_DATA.MAX_DEDUCTABLE locking the base-table rows of that column FOR UPDATE inside the create transaction, read by T023.</summary>
-    public const string LockPatientMaxDeductableSql =
-        "SELECT MAX_DEDUCTABLE FROM V_PAT_DATA WHERE PATIENTNO = :patientNo FOR UPDATE OF MAX_DEDUCTABLE";
-
-    /// <summary>SELECT of a claim's first invoice locked FOR UPDATE inside the create transaction, read by T015.</summary>
-    public const string LockClaimPreloadSql = InvoiceQueries.GetClaimPreloadSql + " FOR UPDATE";
 
     private const int MaxInListIds = 1000;
 
@@ -483,156 +463,6 @@ public sealed class LookupQueries : ILookupQueries
         return ScalarInt32(GetClassAdvancedModeSql, parameters, "USE_ADVANCED", cancellationToken);
     }
 
-    /// <summary>PATIENT.CARD_ID of the patient, locking its PATIENT row until the session's transaction ends; null when there is no row or value.</summary>
-    /// <param name="session">Open session whose connection and transaction the query runs on.</param>
-    /// <param name="patientNo">Patient number.</param>
-    /// <param name="cancellationToken">Cancels the query.</param>
-    /// <exception cref="ArgumentException"><paramref name="patientNo"/> is blank, or longer than 12 characters or UTF-8 bytes, or <paramref name="session"/> is not an Oracle session of this layer.</exception>
-    public Task<int?> LockPatientCardId(IOracleSession session, string patientNo, CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(patientNo);
-
-        var parameters = new DynamicParameters();
-        BoundedVarchar2.AddInput(parameters, "patientNo", patientNo, BoundedVarchar2.PatientNoBytes, nameof(patientNo));
-        var oracleSession = SessionOf(session);
-
-        return SessionScalarInt32(oracleSession, LockPatientCardIdSql, parameters, "CARD_ID", cancellationToken);
-    }
-
-    /// <summary>DISC_CLASSES.USE_ADVANCED of a sub-company's class, locking its DISC_CLASSES row until the session's transaction ends; null when there is no row or value.</summary>
-    /// <param name="session">Open session whose connection and transaction the query runs on.</param>
-    /// <param name="subCompCode">Sub-company code.</param>
-    /// <param name="classCode">Class code.</param>
-    /// <param name="cancellationToken">Cancels the query.</param>
-    /// <exception cref="ArgumentException"><paramref name="subCompCode"/> or <paramref name="classCode"/> is blank, <paramref name="subCompCode"/> is longer than 10 characters or UTF-8 bytes, or <paramref name="session"/> is not an Oracle session of this layer.</exception>
-    public Task<int?> LockClassAdvancedMode(IOracleSession session, string subCompCode, string classCode, CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(subCompCode);
-        ArgumentException.ThrowIfNullOrWhiteSpace(classCode);
-
-        var parameters = new DynamicParameters();
-        BoundedVarchar2.AddInput(parameters, "subCompCode", subCompCode, BoundedVarchar2.SubCompCodeBytes, nameof(subCompCode));
-        parameters.Add("classCode", classCode, DbType.AnsiString);
-        var oracleSession = SessionOf(session);
-
-        return SessionScalarInt32(oracleSession, LockClassAdvancedModeSql, parameters, "USE_ADVANCED", cancellationToken);
-    }
-
-    /// <summary>SERVICES flags by service id on a price list, locking each service's row until the session's transaction ends, one row per statement in ordinal service-id order; ids without a row are absent, and an empty input runs nothing.</summary>
-    /// <param name="session">Open session whose connection and transaction the queries run on.</param>
-    /// <param name="serviceIds">Service ids; duplicates, null and blank entries are ignored.</param>
-    /// <param name="listId">Price list id.</param>
-    /// <param name="cancellationToken">Cancels the queries.</param>
-    /// <exception cref="ArgumentException">A service id is longer than 20 characters or UTF-8 bytes, or <paramref name="session"/> is not an Oracle session of this layer.</exception>
-    public async Task<IReadOnlyDictionary<string, ServiceProfile>> LockServiceProfiles(IOracleSession session, IReadOnlyCollection<string> serviceIds, decimal listId, CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(session);
-
-        var profiles = new Dictionary<string, ServiceProfile>(StringComparer.Ordinal);
-        if (serviceIds is null || serviceIds.Count == 0)
-        {
-            return profiles;
-        }
-
-        var orderedIds = serviceIds
-            .Where(serviceId => !string.IsNullOrWhiteSpace(serviceId))
-            .Distinct(StringComparer.Ordinal)
-            .Order(StringComparer.Ordinal)
-            .ToArray();
-        if (orderedIds.Length == 0)
-        {
-            return profiles;
-        }
-
-        var boundIds = BoundedVarchar2.InputList("serviceId", orderedIds, BoundedVarchar2.ServiceIdBytes, nameof(serviceIds));
-        var oracleSession = SessionOf(session);
-        foreach (var (serviceId, boundId) in orderedIds.Zip(boundIds))
-        {
-            var parameters = new DynamicParameters();
-            parameters.Add("serviceId", boundId);
-            parameters.Add("listId", listId, DbType.Decimal);
-
-            var profile = await InSession(oracleSession, async () =>
-            {
-                var row = await oracleSession.Connection.QueryFirstOrDefaultAsync<ServiceRow>(
-                    SessionCommand(oracleSession, LockServiceProfileSql, parameters, cancellationToken)).ConfigureAwait(false);
-                return row is null ? null : ToServiceProfile(row);
-            }).ConfigureAwait(false);
-
-            if (profile is not null)
-            {
-                profiles[serviceId] = profile;
-            }
-        }
-
-        return profiles;
-    }
-
-    /// <summary>SERVICES flags of every PACKAGE_DTL component of a package on a price list, locking the PACKAGE_DTL and component SERVICES rows until the session's transaction ends; empty when it has none.</summary>
-    /// <param name="session">Open session whose connection and transaction the query runs on.</param>
-    /// <param name="packageServiceId">Service id of the package.</param>
-    /// <param name="listId">Price list id of the package and its components.</param>
-    /// <param name="cancellationToken">Cancels the query.</param>
-    /// <exception cref="ArgumentException"><paramref name="packageServiceId"/> is blank, or longer than 20 characters or UTF-8 bytes, or <paramref name="session"/> is not an Oracle session of this layer.</exception>
-    public Task<IReadOnlyList<ServiceProfile>> LockPackageComponentFlags(IOracleSession session, string packageServiceId, decimal listId, CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(packageServiceId);
-
-        var parameters = new DynamicParameters();
-        BoundedVarchar2.AddInput(parameters, "packageServiceId", packageServiceId, BoundedVarchar2.ServiceIdBytes, nameof(packageServiceId));
-        parameters.Add("listId", listId, DbType.Decimal);
-        var oracleSession = SessionOf(session);
-
-        return InSession<IReadOnlyList<ServiceProfile>>(oracleSession, async () =>
-        {
-            var rows = await oracleSession.Connection.QueryAsync<ServiceRow>(
-                SessionCommand(oracleSession, LockPackageComponentFlagsSql, parameters, cancellationToken)).ConfigureAwait(false);
-            return rows.Select(ToServiceProfile).ToArray();
-        });
-    }
-
-    /// <summary>V_PAT_DATA.MAX_DEDUCTABLE of the patient, locking the base-table rows of that column until the session's transaction ends; null when there is no row or value.</summary>
-    /// <param name="session">Open session whose connection and transaction the query runs on.</param>
-    /// <param name="patientNo">Patient number.</param>
-    /// <param name="cancellationToken">Cancels the query.</param>
-    /// <exception cref="ArgumentException"><paramref name="patientNo"/> is blank, or longer than 12 characters or UTF-8 bytes, or <paramref name="session"/> is not an Oracle session of this layer.</exception>
-    public Task<decimal?> LockPatientMaxDeductable(IOracleSession session, string patientNo, CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(patientNo);
-
-        var parameters = new DynamicParameters();
-        BoundedVarchar2.AddInput(parameters, "patientNo", patientNo, BoundedVarchar2.PatientNoBytes, nameof(patientNo));
-        var oracleSession = SessionOf(session);
-
-        return InSession(oracleSession, async () =>
-        {
-            var value = await oracleSession.Connection.ExecuteScalarAsync<object?>(
-                SessionCommand(oracleSession, LockPatientMaxDeductableSql, parameters, cancellationToken)).ConfigureAwait(false);
-            return ToDecimal(value, "MAX_DEDUCTABLE");
-        });
-    }
-
-    /// <summary>Patient, MAX_DEDUCTABLE and CARD_ID of a claim's first invoice, locking its T_INV row until the session's transaction ends; null when the claim has no invoice.</summary>
-    /// <param name="session">Open session whose connection and transaction the query runs on.</param>
-    /// <param name="claimNo">Claim number.</param>
-    /// <param name="cancellationToken">Cancels the query.</param>
-    /// <exception cref="ArgumentException"><paramref name="claimNo"/> is blank, or longer than 40 characters or UTF-8 bytes, or <paramref name="session"/> is not an Oracle session of this layer.</exception>
-    public Task<(string? PatientNo, decimal? MaxDeductable, int? CardId)?> LockClaimPreload(IOracleSession session, string claimNo, CancellationToken cancellationToken = default)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(claimNo);
-
-        var parameters = new DynamicParameters();
-        BoundedVarchar2.AddInput(parameters, "claimNo", claimNo, BoundedVarchar2.ClaimNoBytes, nameof(claimNo));
-        var oracleSession = SessionOf(session);
-
-        return InSession<(string? PatientNo, decimal? MaxDeductable, int? CardId)?>(oracleSession, async () =>
-        {
-            var row = await oracleSession.Connection.QueryFirstOrDefaultAsync<ClaimGateRow>(
-                SessionCommand(oracleSession, LockClaimPreloadSql, parameters, cancellationToken)).ConfigureAwait(false);
-            return row is null ? null : (row.PATIENTNO, row.MAX_DEDUCTABLE, ToInt32(row.CARD_ID, "CARD_ID"));
-        });
-    }
-
     /// <summary>First column of the first row of a query as a whole number, or null when there is no row or value.</summary>
     private async Task<int?> ScalarInt32(string sql, DynamicParameters parameters, string column, CancellationToken cancellationToken)
     {
@@ -645,54 +475,6 @@ public sealed class LookupQueries : ILookupQueries
     /// <summary>Command for a query with the configured timeout.</summary>
     private CommandDefinition Command(string sql, DynamicParameters? parameters, CancellationToken cancellationToken) =>
         new(sql, parameters, commandTimeout: _options.CommandTimeoutSeconds, cancellationToken: cancellationToken);
-
-    /// <summary>First column of the first row of a query in the session as a whole number, or null when there is no row or value.</summary>
-    private Task<int?> SessionScalarInt32(OracleSession session, string sql, DynamicParameters parameters, string column, CancellationToken cancellationToken) =>
-        InSession(session, async () =>
-        {
-            var value = await session.Connection.ExecuteScalarAsync<object?>(
-                SessionCommand(session, sql, parameters, cancellationToken)).ConfigureAwait(false);
-            return ToInt32(ToDecimal(value, column), column);
-        });
-
-    /// <summary>Command for a query in the session's transaction with the configured timeout.</summary>
-    private CommandDefinition SessionCommand(OracleSession session, string sql, DynamicParameters parameters, CancellationToken cancellationToken) =>
-        new(sql, parameters, transaction: session.Transaction, commandTimeout: _options.CommandTimeoutSeconds, cancellationToken: cancellationToken);
-
-    /// <summary>Returns the data layer's Oracle session behind a session port.</summary>
-    /// <exception cref="ArgumentNullException"><paramref name="session"/> is null.</exception>
-    /// <exception cref="ArgumentException"><paramref name="session"/> is not an <see cref="OracleSession"/>.</exception>
-    private static OracleSession SessionOf(IOracleSession session)
-    {
-        ArgumentNullException.ThrowIfNull(session);
-
-        return session as OracleSession
-            ?? throw new ArgumentException(
-                $"The session must be a {nameof(OracleSession)} opened by the data layer, not {session.GetType().Name}.",
-                nameof(session));
-    }
-
-    /// <summary>Runs a query as a call of the session, recording a driver failure on the session.</summary>
-    /// <exception cref="ObjectDisposedException">The session is disposed.</exception>
-    /// <exception cref="InvalidOperationException">The session is already committed or rolled back, or an earlier call on it did not complete within its deadline.</exception>
-    private static async Task<T> InSession<T>(OracleSession session, Func<Task<T>> query)
-    {
-        session.BeginCall();
-
-        T result;
-        try
-        {
-            result = await query().ConfigureAwait(false);
-        }
-        catch (OracleException exception)
-        {
-            session.RecordFailure(exception);
-            throw;
-        }
-
-        session.EndCall();
-        return result;
-    }
 
     /// <summary>Service profile of a SERVICES row with no components and no REQ_NEED_A.</summary>
     private static ServiceProfile ToServiceProfile(ServiceRow row) =>
@@ -772,15 +554,6 @@ public sealed class LookupQueries : ILookupQueries
 
         /// <summary>Preference value.</summary>
         public object? PREF_VALUE { get; set; }
-    }
-
-    private sealed class ClaimGateRow
-    {
-        public string? PATIENTNO { get; set; }
-
-        public decimal? MAX_DEDUCTABLE { get; set; }
-
-        public decimal? CARD_ID { get; set; }
     }
 
     private sealed class CoverageRow

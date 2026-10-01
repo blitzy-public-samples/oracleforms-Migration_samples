@@ -12,7 +12,7 @@
       "status": "derivable",
       "input": {
         "operation": "BilInvoiceApiGateway.CreateFullInvoice",
-        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "subPayType": 1, "discT": 0 },
+        "header": { "patientNo": "990000011", "draftDate": "2026-09-28T10:00:00", "payType": 1, "subPayType": 1, "discT": 0 },
         "lines": [
           { "serviceId": "1001", "qty": 1 }
         ],
@@ -21,12 +21,12 @@
       },
       "requires": {
         "rows": [
-          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000011" }, "columns": { "PHONE_H": null } },
           { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } },
-          { "table": "T_INV", "key": { "PATIENTNO": "990000001" }, "absent": true }
+          { "table": "T_INV", "key": { "PATIENTNO": "990000011" }, "absent": true }
         ],
         "context": [
-          { "package": "BIL_PATIENT_CONTEXT", "field": "patientno", "value": "990000001" },
+          { "package": "BIL_PATIENT_CONTEXT", "field": "patientno", "value": "990000011" },
           { "package": "BIL_SERVICE_CONTEXT", "field": "list_id", "value": 1 },
           { "package": "BIL_SERVICE_CONTEXT", "field": "curr_code", "value": "SAR" },
           { "package": "BIL_PRICE_RULE", "field": "price", "value": 100.00 },

@@ -411,7 +411,7 @@ export default function InvoiceHeaderForm({
   const notSavedDisabled = savedView === null;
 
   const renderPickerButton = (name: HeaderLov, label: string) => (
-    <button type="button" aria-label={label} disabled={locked} onClick={() => setLov(name)}>
+    <button type="button" aria-label={label} aria-haspopup="dialog" disabled={locked} onClick={() => setLov(name)}>
       …
     </button>
   );
@@ -696,7 +696,7 @@ export default function InvoiceHeaderForm({
                 className="read-only"
                 value={shown(header?.seqNo)}
               />
-              <button type="button" disabled={locked} onClick={onShowReservations}>
+              <button type="button" disabled={locked} aria-haspopup="dialog" onClick={onShowReservations}>
                 Show reservations
               </button>
             </div>

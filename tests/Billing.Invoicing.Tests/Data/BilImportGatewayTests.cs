@@ -147,9 +147,9 @@ public sealed class BilImportGatewayTests
 
         public Task Rollback(CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
-        public void Rollback(string savepointName) => throw new NotSupportedException();
+        public Task Rollback(string savepointName, CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
-        public void Save(string savepointName) => throw new NotSupportedException();
+        public Task Save(string savepointName, CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
         public ValueTask DisposeAsync() => default;
     }

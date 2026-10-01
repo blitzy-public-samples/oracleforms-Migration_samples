@@ -13,7 +13,10 @@ import type {
   MessageDto,
   MoreDetailsResponse,
   NewDraftResponse,
+  PatientCoverageSnapshot,
   PreviewResponse,
+  RequestOmittedHeaderMember,
+  RequestOmittedLineMember,
   ValidateDraftResponse,
   ValidateTarget,
 } from '../api/types';
@@ -43,6 +46,15 @@ export interface InvoiceDraftState {
   entryErrors: Record<string, string>;
   /** Server judgement of PRICE editability by line client id, with the service, patient and company it was judged on. */
   priceEditable: Record<string, PriceJudgement>;
+  /** Patient, sub-company and class the claim's first invoice preloaded into the draft header; null when none was preloaded. */
+  claimPreload: ClaimPreload | null;
+}
+
+/** Trimmed patient number, sub-company and class of a claim preload. */
+export interface ClaimPreload {
+  patientNo: string;
+  subCompCode: string | null;
+  classCode: number | null;
 }
 
 /** Server judgement of PRICE editability on one line, and the service, patient and company it was judged on. */
@@ -59,7 +71,13 @@ export interface RequestOrigin {
   patientNo?: string | null;
 }
 
-/** Actions the screens dispatch after their API calls and operator edits; `origin` names the request a response belongs to. */
+/** Header and line a line validation was sent with. */
+export interface JudgedLine {
+  header: InvoiceHeaderDraft;
+  line: InvoiceLineDraft;
+}
+
+/** Actions the screens dispatch after their API calls and operator edits; `origin` names the request a response belongs to; `judged` the inputs a line verdict was sent with. */
 export type InvoiceDraftAction =
   | { type: 'draftLoaded'; response: NewDraftResponse }
   | { type: 'headerFieldChanged'; field: keyof InvoiceHeaderDraft; value: InvoiceHeaderDraft[keyof InvoiceHeaderDraft] }
@@ -70,8 +88,8 @@ export type InvoiceDraftAction =
   | { type: 'displaySet'; values: Record<string, string | null>; lineClientId?: string }
   | { type: 'linesImported'; source: string; response: ImportResponse; origin?: RequestOrigin }
   | { type: 'linesReplaced'; lines: InvoiceLineDraft[]; origin?: RequestOrigin }
-  | { type: 'validationApplied'; target: string; lineIndex: number | null; lineClientId?: string | null; response: ValidateDraftResponse; origin?: RequestOrigin }
-  | { type: 'validationFailed'; target: string; lineIndex: number | null; lineClientId?: string | null; error: ApiError; origin?: RequestOrigin }
+  | { type: 'validationApplied'; target: string; lineIndex: number | null; lineClientId?: string | null; response: ValidateDraftResponse; origin?: RequestOrigin; judged?: JudgedLine }
+  | { type: 'validationFailed'; target: string; lineIndex: number | null; lineClientId?: string | null; error: ApiError; origin?: RequestOrigin; judged?: JudgedLine }
   | { type: 'discountChoiceMade'; choice: DiscountLimitChoice }
   | { type: 'coverageApplied'; response: CoverageResponse | null; origin: RequestOrigin }
   | { type: 'patientContextCleared'; origin: RequestOrigin }
@@ -80,7 +98,7 @@ export type InvoiceDraftAction =
   | { type: 'saved'; response: CreateInvoiceResponse; origin: RequestOrigin }
   | { type: 'invoiceLoaded'; invNo: number; response: InvoiceViewResponse; origin?: RequestOrigin }
   | { type: 'moreDetailsLoaded'; response: MoreDetailsResponse }
-  | { type: 'errorReceived'; source: string; lineClientId?: string | null; error: ApiError; origin?: RequestOrigin }
+  | { type: 'errorReceived'; source: string; lineClientId?: string | null; error: ApiError; origin?: RequestOrigin; judged?: JudgedLine }
   | { type: 'connectivityLost' }
   | { type: 'connectivityRestored' }
   | { type: 'formErrorCleared' }
@@ -110,6 +128,7 @@ export const initialInvoiceDraftState: InvoiceDraftState = {
   fieldErrors: {},
   entryErrors: {},
   priceEditable: {},
+  claimPreload: null,
 };
 
 /** Operator decimal entry: empty, the trimmed text as entered, or the reason it is rejected. */
@@ -194,6 +213,38 @@ const LINE_ITEMS: ReadonlySet<string> = new Set([
   'PAYRATE',
 ]);
 
+/** Validation targets whose verdict covers the whole line. */
+const LINE_VERDICT_TARGETS: ReadonlySet<string> = new Set(['LINE', 'SERVICEID', 'QTY', 'LDISCT', 'APPROV_REF_NO', 'PRICE', 'DISC', 'MY_DISC']);
+
+/** Header members a whole-line verdict is judged under: the patient and the payer. */
+const LINE_VERDICT_HEADER_MEMBERS: readonly (keyof InvoiceHeaderDraft)[] = ['patientNo', 'payType', 'compCode', 'subCompCode', 'classCode'];
+
+/** Header members a request body leaves out. */
+const OMITTED_HEADER_MEMBERS: Readonly<Record<RequestOmittedHeaderMember, true>> = {
+  preAuthorization: true,
+  oferId: true,
+  docId1: true,
+  seqNo: true,
+};
+
+/** Line members a request body leaves out. */
+const OMITTED_LINE_MEMBERS: Readonly<Record<RequestOmittedLineMember, true>> = {
+  catId: true,
+  fixPay: true,
+  payRate: true,
+  regularLensesType: true,
+  lensSpecifications: true,
+  contactLensesType: true,
+  flIndicator: true,
+  numberOfPairs: true,
+  insEmp: true,
+};
+
+/** Entry CLAIM_NO values that preload no claim: blank, '0', '1' and '2'. */
+const NON_PRELOAD_CLAIM_NOS: ReadonlySet<string> = new Set(['', '0', '1', '2']);
+
+const CREDIT_PAY_TYPE = 2;
+
 type DiscountPromptTarget = 'FINALDISC_PERC' | 'FINALDISC';
 type Lists<T> = Record<string, T[]>;
 
@@ -216,11 +267,11 @@ function withClientId(line: InvoiceLineDraft): InvoiceLineDraft {
   return line.clientId == null || line.clientId === '' ? { ...line, clientId: newClientId() } : line;
 }
 
-/** A blank draft line with rate discount type and a fresh client id. */
+/** A blank draft line with quantity 1, rate discount type and a fresh client id. */
 function emptyLine(): InvoiceLineDraft {
   return {
     serviceId: null,
-    qty: null,
+    qty: 1,
     priceOverride: null,
     usePriceOverride: null,
     discountType: 'R',
@@ -390,6 +441,72 @@ function withoutLineKeys<T>(record: Record<string, T>): Record<string, T> {
   return next;
 }
 
+/** For a `LINE:<i>:<TARGET>` source of a whole-line target, the state without line i's messages and open items on every such target and, given `lineClientId`, its field errors on them; otherwise the state. */
+function withoutLineVerdicts(state: InvoiceDraftState, source: string, lineClientId: string | null = null): InvoiceDraftState {
+  const line = LINE_KEY.exec(source);
+  if (line === null || !LINE_VERDICT_TARGETS.has(line[2])) {
+    return state;
+  }
+  const lineIndex = Number(line[1]);
+  const messages = { ...state.messages };
+  const openItems = { ...state.openItems };
+  const fieldErrors = { ...state.fieldErrors };
+  for (const target of LINE_VERDICT_TARGETS) {
+    delete messages[messageKey(target, lineIndex)];
+    delete openItems[messageKey(target, lineIndex)];
+    if (lineClientId !== null) {
+      delete fieldErrors[errorKey(target, lineClientId)];
+    }
+  }
+  return { ...state, messages, openItems, fieldErrors };
+}
+
+/** True when `a` and `b` hold the same value, a missing one as null, in every member outside `omitted`. */
+function sameMembers<T extends object>(a: T, b: T, omitted: Readonly<Record<string, true>>): boolean {
+  const left = a as Record<string, unknown>;
+  const right = b as Record<string, unknown>;
+  for (const member of new Set([...Object.keys(left), ...Object.keys(right)])) {
+    if (!Object.hasOwn(omitted, member) && !Object.is(left[member] ?? null, right[member] ?? null)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** True when the state's line `lineIndex` and the header members its verdict is judged under still hold the inputs `judged` was sent with. */
+function judgesCurrentLine(state: InvoiceDraftState, lineIndex: number | null, judged: JudgedLine | undefined): boolean {
+  const draft = state.draft;
+  const line = draft === null || lineIndex === null ? undefined : draft.lines[lineIndex];
+  if (draft === null || line === undefined || judged === undefined) {
+    return false;
+  }
+  return (
+    sameMembers(judged.line, line, OMITTED_LINE_MEMBERS) &&
+    LINE_VERDICT_HEADER_MEMBERS.every((member) => Object.is(judged.header[member] ?? null, draft.header[member] ?? null))
+  );
+}
+
+/** True when a failed line validation is still the server's verdict on the line: a `field-validation` 422, an open item, or a package refusal other than an idempotency conflict. */
+function isLineVerdictFailure(error: ApiError): boolean {
+  return (
+    error.type === 'field-validation' ||
+    error.status === 501 ||
+    error.type === 'open-item' ||
+    (error.type === 'oracle-business-error' && error.kind !== 'IdempotencyConflict')
+  );
+}
+
+/** True when two drafts send the same request: the same draft, header, lines in order and discount-limit choice. */
+export function sameDraftInputs(a: DraftDto, b: DraftDto): boolean {
+  return (
+    a.requestId === b.requestId &&
+    a.discountLimitChoice === b.discountLimitChoice &&
+    sameMembers(a.header, b.header, OMITTED_HEADER_MEMBERS) &&
+    a.lines.length === b.lines.length &&
+    a.lines.every((line, index) => sameMembers(line, b.lines[index], OMITTED_LINE_MEMBERS))
+  );
+}
+
 /** Error key of a field: the upper-case field on the header, `CLIENT:<clientId>:<FIELD>` on a line. */
 function errorKey(field: string, lineClientId?: string): string {
   const upper = field.toUpperCase();
@@ -481,6 +598,43 @@ function applyDetachedError(state: InvoiceDraftState, source: string, error: Api
 /** Patient number without surrounding blanks; null and undefined are empty. */
 function trimmedPatientNo(patientNo: string | null | undefined): string {
   return patientNo == null ? '' : String(patientNo).trim();
+}
+
+/** Claim preload of a new draft: its header's trimmed patient, sub-company and class when the entry CLAIM_NO names a claim and the header has a patient; else null. */
+function claimPreloadOf(draft: DraftDto): ClaimPreload | null {
+  const claimNo = String(draft.parameters?.claimNo ?? '').trim();
+  const patientNo = trimmedPatientNo(draft.header.patientNo);
+  if (NON_PRELOAD_CLAIM_NOS.has(claimNo) || patientNo === '') {
+    return null;
+  }
+  return { patientNo, subCompCode: draft.header.subCompCode ?? null, classCode: draft.header.classCode ?? null };
+}
+
+/** Sub-company and class with their names that coverage of `patientNo` puts on the header: none unless `payType` is credit, the claim preload's when it is for that patient and has a sub-company, else the coverage's. */
+function coverageSubCompanyAndClass(
+  coverage: PatientCoverageSnapshot,
+  payType: number | null | undefined,
+  patientNo: string,
+  preload: ClaimPreload | null,
+): { subCompCode: string | null; subCompName: string | null; classCode: number | null; className: string | null } {
+  if (payType !== CREDIT_PAY_TYPE) {
+    return { subCompCode: null, subCompName: null, classCode: null, className: null };
+  }
+  if (preload !== null && preload.patientNo === patientNo && preload.subCompCode != null && preload.subCompCode.trim() !== '') {
+    const sameSubCompany = preload.subCompCode === coverage.subCompCode;
+    return {
+      subCompCode: preload.subCompCode,
+      subCompName: sameSubCompany ? (coverage.subCompName ?? null) : null,
+      classCode: preload.classCode,
+      className: sameSubCompany && preload.classCode === coverage.classCode ? (coverage.className ?? null) : null,
+    };
+  }
+  return {
+    subCompCode: coverage.subCompCode ?? null,
+    subCompName: coverage.subCompName ?? null,
+    classCode: coverage.classCode ?? null,
+    className: coverage.className ?? null,
+  };
 }
 
 /** True for a 503 or `oracle-unavailable` failure. */
@@ -599,6 +753,7 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
         draft: { ...loaded, lines: (loaded.lines ?? []).map(withClientId) },
         messages: replaceSource({}, 'NEW', action.response.messages),
         openItems: replaceSource({}, 'NEW', action.response.openItems),
+        claimPreload: claimPreloadOf(loaded),
       };
     }
 
@@ -748,7 +903,8 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
       }
       const key = messageKey(action.target, lineIndex);
       const response = action.response;
-      const fieldErrors = { ...state.fieldErrors };
+      const cleared = judgesCurrentLine(state, lineIndex, action.judged) ? withoutLineVerdicts(state, key, lineClientId) : state;
+      const fieldErrors = { ...cleared.fieldErrors };
       if (lineClientId === null) {
         delete fieldErrors[action.target];
       } else {
@@ -757,8 +913,8 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
       let next: InvoiceDraftState = {
         ...state,
         connectivityDown: false,
-        messages: replaceSource(state.messages, key, response.messages),
-        openItems: replaceSource(state.openItems, key, response.openItems),
+        messages: replaceSource(cleared.messages, key, response.messages),
+        openItems: replaceSource(cleared.openItems, key, response.openItems),
         fieldErrors,
       };
       if (state.draft !== null && !state.readOnly) {
@@ -790,10 +946,12 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
         return error.type === 'field-validation' ? state : applyDetachedError(state, messageKey(action.target, action.lineIndex), error);
       }
       const key = messageKey(action.target, lineIndex);
+      const cleared =
+        isLineVerdictFailure(error) && judgesCurrentLine(state, lineIndex, action.judged) ? withoutLineVerdicts(state, key) : state;
       let next: InvoiceDraftState = {
         ...state,
-        messages: setSource(state.messages, key, error.messages ?? []),
-        openItems: error.openItems != null ? setSource(state.openItems, key, error.openItems) : state.openItems,
+        messages: setSource(cleared.messages, key, error.messages ?? []),
+        openItems: error.openItems != null ? setSource(cleared.openItems, key, error.openItems) : cleared.openItems,
       };
       if (state.draft !== null && !state.readOnly) {
         const merged = applyAdjusted(state.draft, state.display, error.adjusted, lineIndex);
@@ -839,17 +997,36 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
           draft: { ...state.draft, header: withField(state.draft.header, 'payType', response.payType) },
         };
       }
+      const snapshot = response.coverage;
+      const covered = next.draft;
+      if (covered !== null && !state.readOnly && snapshot != null) {
+        const party = coverageSubCompanyAndClass(snapshot, response.payType, coveragePatientNo, state.claimPreload);
+        next = {
+          ...next,
+          draft: {
+            ...covered,
+            header: {
+              ...covered.header,
+              compCode: snapshot.compCode ?? null,
+              subCompCode: party.subCompCode,
+              classCode: party.classCode,
+            },
+          },
+          display: { ...next.display, COMP_NAME: snapshot.compName ?? null, SUB_COMP_NAME: party.subCompName, CLASS_NAME: party.className },
+        };
+      }
       return next;
     }
 
     case 'patientContextCleared': {
-      // Drops the previous patient's coverage, pay type and PATIENTNO / COVERAGE messages and open items.
+      // Drops the previous patient's coverage, pay type, company, sub-company and class with their names, and PATIENTNO / COVERAGE messages and open items.
       if (state.draft === null || state.readOnly) {
         return state;
       }
       return {
         ...state,
-        draft: { ...state.draft, header: withField(state.draft.header, 'payType', null) },
+        draft: { ...state.draft, header: { ...state.draft.header, payType: null, compCode: null, subCompCode: null, classCode: null } },
+        display: { ...state.display, COMP_NAME: null, SUB_COMP_NAME: null, CLASS_NAME: null },
         coverage: null,
         coveragePatientNo: null,
         messages: replaceSource(replaceSource(state.messages, 'COVERAGE', null), 'PATIENTNO', null),
@@ -1012,7 +1189,10 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
       if (lineIndex === null) {
         return applyDetachedError(state, action.source, action.error);
       }
-      return applyError(state, messageKey(line[2], lineIndex), action.error, lineClientId);
+      const key = messageKey(line[2], lineIndex);
+      const cleared =
+        isLineVerdictFailure(action.error) && judgesCurrentLine(state, lineIndex, action.judged) ? withoutLineVerdicts(state, key) : state;
+      return applyError(cleared, key, action.error, lineClientId);
     }
 
     case 'connectivityLost':

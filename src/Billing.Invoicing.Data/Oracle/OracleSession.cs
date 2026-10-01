@@ -25,7 +25,7 @@ public sealed class OracleSession : IOracleSession
     /// <summary>Wraps an open connection and the transaction begun on it; opens nothing itself.</summary>
     /// <param name="connection">The open connection the session owns.</param>
     /// <param name="transaction">The local transaction begun on <paramref name="connection"/>.</param>
-    /// <param name="callDeadline">Deadline of each commit and rollback.</param>
+    /// <param name="callDeadline">Deadline of each commit, rollback and savepoint call.</param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="callDeadline"/> is not above zero or exceeds <see cref="MaxDeadline"/>.</exception>
     internal OracleSession(OracleConnection connection, OracleTransaction transaction, TimeSpan callDeadline)
     {
@@ -100,15 +100,27 @@ public sealed class OracleSession : IOracleSession
         _completed = true;
     }
 
-    /// <summary>Rolls back to a named savepoint; the transaction stays open.</summary>
-    /// <param name="savepointName">Name of a savepoint set earlier with <see cref="Save"/>.</param>
-    public void Rollback(string savepointName)
+    /// <summary>Rolls back to a named savepoint within the session's call deadline; the transaction stays open.</summary>
+    /// <param name="savepointName">Name of a savepoint set earlier with <see cref="Save(string, CancellationToken)"/>.</param>
+    /// <param name="cancellationToken">Cancels the savepoint rollback.</param>
+    /// <exception cref="ArgumentException"><paramref name="savepointName"/> is null, empty or white space.</exception>
+    /// <exception cref="ObjectDisposedException">The session is disposed.</exception>
+    /// <exception cref="InvalidOperationException">The session is already committed or rolled back, or an earlier call on it did not complete within its deadline.</exception>
+    /// <exception cref="TimeoutException">The savepoint rollback did not complete within the call deadline; the session stays uncompleted.</exception>
+    /// <exception cref="OperationCanceledException">The caller cancelled while the savepoint rollback was still running; the session stays uncompleted.</exception>
+    /// <exception cref="Exception">The savepoint rollback failed; its failure propagates unchanged and the session stays uncompleted.</exception>
+    public async Task Rollback(string savepointName, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(savepointName);
         EnsureActive();
         try
         {
-            Transaction.Rollback(savepointName);
+            await RunWithinDeadline(
+                "savepoint rollback",
+                _callDeadline,
+                token => Transaction.RollbackAsync(savepointName, token),
+                abandoned => _abandonedCall = abandoned,
+                cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
@@ -117,15 +129,27 @@ public sealed class OracleSession : IOracleSession
         }
     }
 
-    /// <summary>Sets a named savepoint in the transaction.</summary>
+    /// <summary>Sets a named savepoint in the transaction within the session's call deadline.</summary>
     /// <param name="savepointName">Name of the savepoint.</param>
-    public void Save(string savepointName)
+    /// <param name="cancellationToken">Cancels the savepoint request.</param>
+    /// <exception cref="ArgumentException"><paramref name="savepointName"/> is null, empty or white space.</exception>
+    /// <exception cref="ObjectDisposedException">The session is disposed.</exception>
+    /// <exception cref="InvalidOperationException">The session is already committed or rolled back, or an earlier call on it did not complete within its deadline.</exception>
+    /// <exception cref="TimeoutException">The savepoint did not complete within the call deadline; the session stays uncompleted.</exception>
+    /// <exception cref="OperationCanceledException">The caller cancelled while the savepoint was still running; the session stays uncompleted.</exception>
+    /// <exception cref="Exception">The savepoint failed; its failure propagates unchanged and the session stays uncompleted.</exception>
+    public async Task Save(string savepointName, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(savepointName);
         EnsureActive();
         try
         {
-            Transaction.Save(savepointName);
+            await RunWithinDeadline(
+                "savepoint",
+                _callDeadline,
+                token => Transaction.SaveAsync(savepointName, token),
+                abandoned => _abandonedCall = abandoned,
+                cancellationToken).ConfigureAwait(false);
         }
         catch (Exception exception)
         {

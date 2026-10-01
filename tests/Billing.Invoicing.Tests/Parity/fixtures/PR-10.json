@@ -21,7 +21,7 @@
       },
       "requires": {
         "rows": [
-          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
           { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "IS_PACKAGE": 0 } },
           { "table": "CASHIER_SHIFT", "key": { "USER_NO": 990001, "SHIFT_STATUS": 2 }, "columns": { "INFO_CENTER_ID": "1" } }
         ],
@@ -45,7 +45,7 @@
       },
       "requires": {
         "rows": [
-          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
           { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "IS_PACKAGE": 0 } },
           { "table": "CASHIER_SHIFT", "key": { "USER_NO": 990002, "SHIFT_STATUS": 2 }, "columns": {}, "exists": false }
         ],
@@ -69,7 +69,7 @@
       },
       "requires": {
         "rows": [
-          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
           { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "IS_PACKAGE": 0 } },
           { "table": "CASHIER_SHIFT", "key": { "USER_NO": 990003, "SHIFT_STATUS": 2 }, "columns": {}, "exists": false }
         ],

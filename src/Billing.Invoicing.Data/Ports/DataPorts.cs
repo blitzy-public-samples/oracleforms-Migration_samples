@@ -13,12 +13,14 @@ public interface IOracleSession : IAsyncDisposable
     Task Rollback(CancellationToken cancellationToken = default);
 
     /// <summary>Rolls back to a named savepoint; the transaction stays open.</summary>
-    /// <param name="savepointName">Name of a savepoint set earlier with <see cref="Save"/>.</param>
-    void Rollback(string savepointName);
+    /// <param name="savepointName">Name of a savepoint set earlier with <see cref="Save(string, CancellationToken)"/>.</param>
+    /// <param name="cancellationToken">Cancels the savepoint rollback.</param>
+    Task Rollback(string savepointName, CancellationToken cancellationToken = default);
 
     /// <summary>Sets a named savepoint in the transaction.</summary>
     /// <param name="savepointName">Name of the savepoint.</param>
-    void Save(string savepointName);
+    /// <param name="cancellationToken">Cancels the savepoint request.</param>
+    Task Save(string savepointName, CancellationToken cancellationToken = default);
 }
 
 /// <summary>Opens Oracle sessions.</summary>
@@ -109,30 +111,6 @@ public interface ILookupQueries
 
     /// <summary>DISC_CLASSES.USE_ADVANCED of a class, or null.</summary>
     Task<int?> GetClassAdvancedMode(string subCompCode, string classCode, CancellationToken cancellationToken = default);
-
-    /// <summary>Locks the patient's PATIENT row until the session's transaction ends.</summary>
-    /// <returns>The patient's CARD_ID, or null.</returns>
-    Task<int?> LockPatientCardId(IOracleSession session, string patientNo, CancellationToken cancellationToken = default);
-
-    /// <summary>Locks the class's DISC_CLASSES row until the session's transaction ends.</summary>
-    /// <returns>The class's USE_ADVANCED, or null.</returns>
-    Task<int?> LockClassAdvancedMode(IOracleSession session, string subCompCode, string classCode, CancellationToken cancellationToken = default);
-
-    /// <summary>Locks each service's SERVICES row on a price list until the session's transaction ends, one row per statement in ordinal service-id order.</summary>
-    /// <returns>Service flags by service id; ids without a row are absent.</returns>
-    Task<IReadOnlyDictionary<string, ServiceProfile>> LockServiceProfiles(IOracleSession session, IReadOnlyCollection<string> serviceIds, decimal listId, CancellationToken cancellationToken = default);
-
-    /// <summary>Locks a package's PACKAGE_DTL rows on a price list and its components' SERVICES rows until the session's transaction ends.</summary>
-    /// <returns>Service flags of every component.</returns>
-    Task<IReadOnlyList<ServiceProfile>> LockPackageComponentFlags(IOracleSession session, string packageServiceId, decimal listId, CancellationToken cancellationToken = default);
-
-    /// <summary>Locks the base-table rows of the patient's V_PAT_DATA.MAX_DEDUCTABLE until the session's transaction ends.</summary>
-    /// <returns>The deductible, or null when the patient has no row or no value.</returns>
-    Task<decimal?> LockPatientMaxDeductable(IOracleSession session, string patientNo, CancellationToken cancellationToken = default);
-
-    /// <summary>Locks the T_INV row of a claim's first invoice until the session's transaction ends.</summary>
-    /// <returns>The invoice's patient, deductible and card id, or null when the claim has no invoice.</returns>
-    Task<(string? PatientNo, decimal? MaxDeductable, int? CardId)?> LockClaimPreload(IOracleSession session, string claimNo, CancellationToken cancellationToken = default);
 }
 
 /// <summary>Read-only queries over saved invoices, request rows, claim preloads and create requests.</summary>
@@ -140,15 +118,16 @@ public interface IInvoiceQueries
 {
     /// <summary>Saved invoice header, lines and display values keyed by column name, or null when not found.</summary>
     /// <param name="invNo">Invoice number.</param>
-    /// <param name="localDocType">LOCAL_DOC_TYPE resolved by the server, mapped to the required ROW_TYPE filter: 532 or 505 filters ROW_TYPE 1, 783 filters ROW_TYPE 2, any other value is rejected.</param>
+    /// <param name="localDocType">LOCAL_DOC_TYPE of the request, mapped to the required ROW_TYPE filter: 532 or 505 filters ROW_TYPE 1, 783 filters ROW_TYPE 2, any other value is rejected.</param>
     /// <param name="cancellationToken">Cancels the connection open and the reads.</param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="localDocType"/> is not 505, 532 or 783.</exception>
     /// <exception cref="InvalidCastException">The saved invoice has no INVDATE, or a whole-number column holds a fractional number.</exception>
+    /// <exception cref="OverflowException">A whole-number column holds a number outside the Int32 or Int64 range.</exception>
     Task<(InvoiceHeaderDraft Header, IReadOnlyList<InvoiceLineDraft> Lines, IReadOnlyDictionary<string, object?> Display)?> GetInvoice(long invNo, int localDocType, CancellationToken cancellationToken = default);
 
     /// <summary>More-details header, line and transfer rows of a saved invoice keyed by column name, or null when not found.</summary>
     /// <param name="invNo">Invoice number.</param>
-    /// <param name="localDocType">LOCAL_DOC_TYPE resolved by the server, mapped to the required ROW_TYPE filter: 532 or 505 filters ROW_TYPE 1, 783 filters ROW_TYPE 2, any other value is rejected.</param>
+    /// <param name="localDocType">LOCAL_DOC_TYPE of the request, mapped to the required ROW_TYPE filter: 532 or 505 filters ROW_TYPE 1, 783 filters ROW_TYPE 2, any other value is rejected.</param>
     /// <param name="cancellationToken">Cancels the connection open and the reads.</param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="localDocType"/> is not 505, 532 or 783.</exception>
     Task<(IReadOnlyDictionary<string, object?> Header, IReadOnlyList<IReadOnlyDictionary<string, object?>> Lines, IReadOnlyList<IReadOnlyDictionary<string, object?>> Transfers)?> GetMoreDetails(long invNo, int localDocType, CancellationToken cancellationToken = default);

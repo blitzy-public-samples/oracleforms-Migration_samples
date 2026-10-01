@@ -26,7 +26,7 @@ import type {
   ValidateTarget,
 } from '../api/types';
 import { canSave, ENTRY_NOT_A_NUMBER, isSuperseded, parseDecimalEntry, requestOrigin } from '../state/invoiceDraft';
-import type { InvoiceDraftAction, InvoiceDraftState, RequestOrigin } from '../state/invoiceDraft';
+import type { InvoiceDraftAction, InvoiceDraftState, JudgedLine, RequestOrigin } from '../state/invoiceDraft';
 import FieldMessage from '../components/FieldMessage';
 import InvoiceHeaderForm from '../components/InvoiceHeaderForm';
 import InvoiceLinesGrid from '../components/InvoiceLinesGrid';
@@ -247,6 +247,7 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
   const [importSummary, setImportSummary] = useState<ImportSummary | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
+  const formErrorRef = useRef<HTMLDivElement>(null);
 
   const enqueue = useCallback((...steps: Step[]) => {
     setQueue((current) => [...current, ...steps]);
@@ -277,8 +278,8 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
     [dispatch],
   );
 
-  /** Routes a failed call to the reducer and starts the recovery a stale-data error asks for, unless `origin` is superseded; `lineClientId` names the line of a line source. */
-  function handleError(error: unknown, source: string, origin?: RequestOrigin, lineClientId?: string | null): void {
+  /** Routes a failed call to the reducer and starts the recovery a stale-data error asks for, unless `origin` is superseded; `lineClientId` and `judged` name the line of a line source and the inputs it was sent with. */
+  function handleError(error: unknown, source: string, origin?: RequestOrigin, lineClientId?: string | null, judged?: JudgedLine): void {
     if (!(error instanceof ApiError)) {
       throw error;
     }
@@ -286,7 +287,7 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
       dispatch({ type: 'validationFailed', target: source, lineIndex: null, error, origin });
       return;
     }
-    dispatch({ type: 'errorReceived', source, lineClientId, error, origin });
+    dispatch({ type: 'errorReceived', source, lineClientId, error, origin, judged });
     if (error.type !== 'oracle-business-error' || (origin !== undefined && isSuperseded(latest.current, origin))) {
       return;
     }
@@ -346,6 +347,8 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
       return;
     }
     const lineClientId = lineIndex === null ? null : (draft.lines[lineIndex]?.clientId ?? null);
+    const sentLine = lineIndex === null ? undefined : draft.lines[lineIndex];
+    const judged = sentLine === undefined ? undefined : { header: draft.header, line: sentLine };
     const origin = requestOrigin(draft, target === 'PATIENTNO');
     if (target === 'PATIENTNO') {
       const reachable = await readCoverage(draft, origin);
@@ -355,7 +358,7 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
     }
     try {
       const response = await validateDraft({ draft, target, lineIndex });
-      dispatch({ type: 'validationApplied', target, lineIndex, lineClientId, response, origin });
+      dispatch({ type: 'validationApplied', target, lineIndex, lineClientId, response, origin, judged });
       if (isSuperseded(latest.current, origin)) {
         return;
       }
@@ -371,10 +374,10 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
       }
     } catch (error) {
       if (isFieldValidation(error)) {
-        dispatch({ type: 'validationFailed', target, lineIndex, lineClientId, error, origin });
+        dispatch({ type: 'validationFailed', target, lineIndex, lineClientId, error, origin, judged });
         return;
       }
-      handleError(error, messageKey(target, lineIndex), origin, lineClientId);
+      handleError(error, messageKey(target, lineIndex), origin, lineClientId, judged);
     }
   }
 
@@ -443,7 +446,7 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
       return;
     }
     try {
-      const view = await getInvoice(invNo);
+      const view = await getInvoice(invNo, window.location.search);
       dispatch({ type: 'invoiceLoaded', invNo, response: view, origin });
     } catch (error) {
       handleError(error, 'SAVED', origin);
@@ -631,7 +634,7 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
       return;
     }
     try {
-      const view = await getInvoice(invNo);
+      const view = await getInvoice(invNo, window.location.search);
       dispatch({ type: 'invoiceLoaded', invNo, response: view });
     } catch (error) {
       handleError(error, 'SAVED');
@@ -706,6 +709,25 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
     }, 0);
   };
 
+  /** Clears the form error and, when focus falls to the body, focuses the first control after it that is still enabled. */
+  const dismissFormError = (): void => {
+    const block = formErrorRef.current;
+    const following =
+      block === null || formRef.current === null
+        ? []
+        : Array.from(formRef.current.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+            (element) =>
+              !block.contains(element) && (block.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+          );
+    dispatch({ type: 'formErrorCleared' });
+    window.setTimeout(() => {
+      const active = document.activeElement;
+      if (active === null || active === document.body) {
+        following.find((element) => element.isConnected && element.matches(FOCUSABLE))?.focus();
+      }
+    }, 0);
+  };
+
   /** Saves on form submission without navigating. */
   const onSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
@@ -763,7 +785,7 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
       )}
 
       {state.formError !== null && (
-        <div className="form-error" role="alert">
+        <div ref={formErrorRef} className="form-error" role="alert">
           <span>{state.formError.text}</span>
           {state.formError.oracleErrorNumber !== null && (
             <span className="oracle-number">{oraText(state.formError.oracleErrorNumber)}</span>
@@ -772,7 +794,7 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
             type="button"
             className="msg-dismiss"
             aria-label="Dismiss error"
-            onClick={() => dispatch({ type: 'formErrorCleared' })}
+            onClick={dismissFormError}
           >
             ×
           </button>

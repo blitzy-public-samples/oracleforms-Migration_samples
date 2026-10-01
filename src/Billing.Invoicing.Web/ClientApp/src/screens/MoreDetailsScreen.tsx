@@ -1,8 +1,8 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { ChangeEvent, Dispatch, FocusEvent } from 'react';
-import { ApiError, getMoreDetails, transferStock, validateDraft } from '../api/client';
+import { ApiError, getMoreDetails, previewInvoice, transferStock, validateDraft } from '../api/client';
 import type { InvoiceLineDraft, MessageDto, MoreDetailsLineKey, MoreDetailsResponse } from '../api/types';
-import { currentCoverage, fieldErrorFor } from '../state/invoiceDraft';
+import { currentCoverage, fieldErrorFor, requestOrigin, sameDraftInputs } from '../state/invoiceDraft';
 import type { InvoiceDraftAction, InvoiceDraftState } from '../state/invoiceDraft';
 import FieldMessage from '../components/FieldMessage';
 import OpenItemNotice from '../components/OpenItemNotice';
@@ -209,6 +209,8 @@ export default function MoreDetailsScreen({
   const [entryText, setEntryText] = useState<{ key: string; text: string } | null>(null);
   const [entryError, setEntryError] = useState<{ key: string; text: string } | null>(null);
   const refNoOnFocus = useRef('');
+  const actionsRef = useRef<HTMLDivElement>(null);
+  const [previewRequests, setPreviewRequests] = useState(0);
   const baseId = useId();
 
   const invNo = state.saved?.invNo;
@@ -243,7 +245,7 @@ export default function MoreDetailsScreen({
       dispatch({ type: 'errorReceived', source: 'SAVED', error });
     };
 
-    getMoreDetails(forInvNo).then(
+    getMoreDetails(forInvNo, window.location.search).then(
       (response: unknown) => {
         if (!settle()) {
           return;
@@ -291,6 +293,13 @@ export default function MoreDetailsScreen({
     }
     load(invNo, false);
   }, [invNo, loadedInvNo, dispatch]);
+
+  // Previews the committed draft after each clean approval-reference validation.
+  useEffect(() => {
+    if (previewRequests > 0) {
+      previewCurrentDraft();
+    }
+  }, [previewRequests]);
 
   const header = isSaved ? details : (currentCoverage(state)?.coverage ?? null);
   const draftLine = isSaved ? undefined : itemAt(state.draft?.lines, index);
@@ -351,15 +360,51 @@ export default function MoreDetailsScreen({
       return;
     }
     const lineIndex = index;
-    const lineClientId = draft.lines[lineIndex]?.clientId ?? null;
+    const sentLine = draft.lines[lineIndex];
+    const lineClientId = sentLine?.clientId ?? null;
+    const judged = sentLine === undefined ? undefined : { header: draft.header, line: sentLine };
+    const origin = requestOrigin(draft);
     validateDraft({ draft, target: APPROV_REF_NO, lineIndex }).then(
-      (response) => dispatch({ type: 'validationApplied', target: APPROV_REF_NO, lineIndex, lineClientId, response }),
+      (response) => {
+        const onScreen = latest.current.draft;
+        const unchanged = onScreen !== null && sameDraftInputs(draft, onScreen);
+        dispatch({ type: 'validationApplied', target: APPROV_REF_NO, lineIndex, lineClientId, response, origin, judged });
+        if (unchanged) {
+          setPreviewRequests((count) => count + 1);
+        }
+      },
       (error: unknown) => {
         const apiError = toApiError(error);
         if (apiError.status === 422 && apiError.type === 'field-validation') {
-          dispatch({ type: 'validationFailed', target: APPROV_REF_NO, lineIndex, lineClientId, error: apiError });
+          dispatch({ type: 'validationFailed', target: APPROV_REF_NO, lineIndex, lineClientId, error: apiError, origin, judged });
         } else {
-          dispatch({ type: 'errorReceived', source: lineKey(lineIndex, APPROV_REF_NO), lineClientId, error: apiError });
+          dispatch({ type: 'errorReceived', source: lineKey(lineIndex, APPROV_REF_NO), lineClientId, error: apiError, origin, judged });
+        }
+      },
+    );
+  }
+
+  /** POST /api/invoices/preview for the editable draft on screen; the result is applied only while the draft still sends the same request. */
+  function previewCurrentDraft() {
+    const current = latest.current;
+    const draft = current.draft;
+    if (draft === null || draft.lines.length === 0 || current.saved !== null || current.readOnly) {
+      return;
+    }
+    const origin = requestOrigin(draft);
+    previewInvoice(draft).then(
+      (response) => {
+        const now = latest.current.draft;
+        if (now !== null && sameDraftInputs(draft, now)) {
+          dispatch({ type: 'previewApplied', response, sent: draft.lines, origin });
+        }
+      },
+      (error: unknown) => {
+        const apiError = toApiError(error);
+        if (apiError.type === 'field-validation') {
+          dispatch({ type: 'validationFailed', target: 'PREVIEW', lineIndex: null, error: apiError, origin });
+        } else {
+          dispatch({ type: 'errorReceived', source: 'PREVIEW', error: apiError, origin });
         }
       },
     );
@@ -374,6 +419,17 @@ export default function MoreDetailsScreen({
       () => dispatch({ type: 'connectivityRestored' }),
       (error: unknown) => dispatch({ type: 'errorReceived', source: 'SAVED', error: toApiError(error) }),
     );
+  }
+
+  /** Clears the form error and, when focus falls to the body, focuses the first action after it. */
+  function dismissFormError() {
+    dispatch({ type: 'formErrorCleared' });
+    window.setTimeout(() => {
+      const active = document.activeElement;
+      if (active === null || active === document.body) {
+        actionsRef.current?.querySelector<HTMLElement>('button:not(:disabled)')?.focus();
+      }
+    }, 0);
   }
 
   /** One editable line item with its messages. */
@@ -515,14 +571,14 @@ export default function MoreDetailsScreen({
             type="button"
             className="msg-dismiss"
             aria-label="Dismiss error"
-            onClick={() => dispatch({ type: 'formErrorCleared' })}
+            onClick={dismissFormError}
           >
             ×
           </button>
         </div>
       )}
 
-      <div className="action-bar">
+      <div ref={actionsRef} className="action-bar">
         {isSaved && (
           <button type="button" onClick={addStoreTrans}>
             Add Store Trans

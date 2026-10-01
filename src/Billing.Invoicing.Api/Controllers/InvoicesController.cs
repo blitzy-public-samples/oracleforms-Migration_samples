@@ -90,16 +90,17 @@ public sealed class InvoicesController : ControllerBase
         return Created($"/api/invoices/{invoice.InvNo}", invoice);
     }
 
-    /// <summary>Returns a saved invoice of the server-owned document type, read-only.</summary>
+    /// <summary>Returns a saved invoice of the requested document type, read-only.</summary>
     /// <param name="invNo">Invoice number, a positive whole number.</param>
-    /// <returns>200 with the invoice; 404 <c>not-found</c> when it is not found; 422 for a missing operator header or an invalid invoice number.</returns>
+    /// <param name="parameters">Entry parameters of the query string; LOCAL_DOC_TYPE selects the ROW_TYPE.</param>
+    /// <returns>200 with the invoice; 404 <c>not-found</c> when it is not found; 422 for a missing operator header, an invalid invoice number or a LOCAL_DOC_TYPE other than 505, 532 or 783.</returns>
     [HttpGet("{invNo}")]
     [ProducesResponseType<InvoiceViewResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound, ProblemJson)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity, ProblemJson)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable, ProblemJson)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status500InternalServerError, ProblemJson)]
-    public async Task<ActionResult<InvoiceViewResponse>> Get(string invNo)
+    public async Task<ActionResult<InvoiceViewResponse>> Get(string invNo, [FromQuery] InvoiceEntryParameters parameters)
     {
         if (CurrentOperator() is not { } operatorContext)
         {
@@ -111,7 +112,8 @@ public sealed class InvoicesController : ControllerBase
             return await InvalidInvoiceNumber();
         }
 
-        var response = await _workflow.GetInvoice(number, operatorContext, HttpContext.RequestAborted);
+        var response = await _workflow.GetInvoice(
+            number, parameters ?? new InvoiceEntryParameters(), operatorContext, HttpContext.RequestAborted);
         return response is null ? await InvoiceNotFound(number) : Ok(response);
     }
 
@@ -134,16 +136,17 @@ public sealed class InvoicesController : ControllerBase
         return invNo is { } value ? Ok(new LastInvoiceNoResponse { InvNo = value }) : await NotFoundProblem(NoLastInvoiceText);
     }
 
-    /// <summary>Returns the MORE-canvas details of a saved invoice.</summary>
+    /// <summary>Returns the MORE-canvas details of a saved invoice of the requested document type.</summary>
     /// <param name="invNo">Invoice number, a positive whole number.</param>
-    /// <returns>200 with the details; 404 <c>not-found</c> when the invoice is not found; 422 for a missing operator header or an invalid invoice number.</returns>
+    /// <param name="parameters">Entry parameters of the query string; LOCAL_DOC_TYPE selects the ROW_TYPE.</param>
+    /// <returns>200 with the details; 404 <c>not-found</c> when the invoice is not found; 422 for a missing operator header, an invalid invoice number or a LOCAL_DOC_TYPE other than 505, 532 or 783.</returns>
     [HttpGet("{invNo}/more")]
     [ProducesResponseType<MoreDetailsResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound, ProblemJson)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status422UnprocessableEntity, ProblemJson)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable, ProblemJson)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status500InternalServerError, ProblemJson)]
-    public async Task<ActionResult<MoreDetailsResponse>> More(string invNo)
+    public async Task<ActionResult<MoreDetailsResponse>> More(string invNo, [FromQuery] InvoiceEntryParameters parameters)
     {
         if (CurrentOperator() is not { } operatorContext)
         {
@@ -155,7 +158,8 @@ public sealed class InvoicesController : ControllerBase
             return await InvalidInvoiceNumber();
         }
 
-        var response = await _workflow.GetMoreDetails(number, operatorContext, HttpContext.RequestAborted);
+        var response = await _workflow.GetMoreDetails(
+            number, parameters ?? new InvoiceEntryParameters(), operatorContext, HttpContext.RequestAborted);
         return response is null ? await InvoiceNotFound(number) : Ok(response);
     }
 

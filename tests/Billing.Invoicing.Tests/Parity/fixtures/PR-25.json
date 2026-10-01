@@ -38,7 +38,7 @@
       },
       "requires": {
         "rows": [
-          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
           { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
         ],
         "context": []
@@ -62,7 +62,7 @@
       },
       "requires": {
         "rows": [
-          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
           { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
         ],
         "context": []
@@ -87,7 +87,7 @@
       },
       "requires": {
         "rows": [
-          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
           { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
         ],
         "context": [

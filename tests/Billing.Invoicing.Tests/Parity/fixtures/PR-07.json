@@ -16,14 +16,14 @@
       "input": {
         "operation": "BilInvoiceApiGateway.CalculatePreview",
         "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0, "finalDisc": 0.00 },
-        "lines": [ { "serviceId": "1001", "qty": 1, "discountType": "N" } ],
+        "lines": [ { "serviceId": "10701", "qty": 1, "discountType": "N" } ],
         "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "0123456789ABCDEF0123456789ABCDEF" },
         "amount1Auto": true
       },
       "requires": {
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
-          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": {} }
+          { "table": "SERVICES", "key": { "SERVICEID": "10701" }, "columns": {} }
         ],
         "context": [
           { "name": "bil_price_rule.billing_price", "value": 250.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2428" },
@@ -44,7 +44,7 @@
       "input": {
         "operation": "BilInvoiceApiGateway.CalculatePreview",
         "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0, "finalDisc": 30.00 },
-        "lines": [ { "serviceId": "1001", "qty": 1, "discountType": "N" } ],
+        "lines": [ { "serviceId": "10702", "qty": 1, "discountType": "N" } ],
         "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "0123456789ABCDEF0123456789ABCDEF" },
         "amount1Auto": true
       },
@@ -52,7 +52,7 @@
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
           { "table": "V_PAT_DATA", "key": { "PATIENTNO": "990000001" }, "columns": { "PAY_VAT": "Y" } },
-          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": {} }
+          { "table": "SERVICES", "key": { "SERVICEID": "10702" }, "columns": {} }
         ],
         "context": [
           { "name": "bil_price_rule.billing_price", "value": 300.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2428" },
@@ -73,7 +73,7 @@
       "input": {
         "operation": "BilInvoiceApiGateway.CalculatePreview",
         "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 2, "discT": 0, "finalDisc": 0.00 },
-        "lines": [ { "serviceId": "1001", "qty": 1, "discountType": "N" } ],
+        "lines": [ { "serviceId": "10703", "qty": 1, "discountType": "N" } ],
         "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "0123456789ABCDEF0123456789ABCDEF" },
         "amount1Auto": true
       },
@@ -81,7 +81,7 @@
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
           { "table": "V_PAT_DATA", "key": { "PATIENTNO": "990000001" }, "columns": { "PAY_VAT": "Y" } },
-          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": {} }
+          { "table": "SERVICES", "key": { "SERVICEID": "10703" }, "columns": {} }
         ],
         "context": [
           { "name": "bil_price_rule.billing_price", "value": 500.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2428" },
@@ -102,14 +102,14 @@
       "input": {
         "operation": "BilInvoiceApiGateway.CalculatePreview",
         "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 2, "discT": 0, "finalDisc": 0.00 },
-        "lines": [ { "serviceId": "1001", "qty": 1, "discountType": "N" } ],
+        "lines": [ { "serviceId": "10704", "qty": 1, "discountType": "N" } ],
         "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "0123456789ABCDEF0123456789ABCDEF" },
         "amount1Auto": true
       },
       "requires": {
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
-          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": {} }
+          { "table": "SERVICES", "key": { "SERVICEID": "10704" }, "columns": {} }
         ],
         "context": [
           { "name": "bil_price_rule.billing_price", "value": 500.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2428" },

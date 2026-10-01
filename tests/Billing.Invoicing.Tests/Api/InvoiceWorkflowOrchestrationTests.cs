@@ -116,15 +116,6 @@ public sealed class InvoiceWorkflowOrchestrationTests
 
     private static readonly DateTimeOffset RecordedCompletedAt = new(2026, 9, 28, 16, 45, 30, TimeSpan.Zero);
 
-    private static readonly string[] CreateTransactionReads =
-    [
-        nameof(ILookupQueries.LockPatientCardId),
-        nameof(ILookupQueries.LockClassAdvancedMode),
-        nameof(ILookupQueries.LockServiceProfiles),
-        nameof(ILookupQueries.LockPackageComponentFlags),
-        nameof(ILookupQueries.LockPatientMaxDeductable),
-    ];
-
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
     {
         Converters = { new JsonStringEnumConverter() },
@@ -881,7 +872,6 @@ public sealed class InvoiceWorkflowOrchestrationTests
         Assert.True(Called(fakes.Lookups.Calls, nameof(ILookupQueries.GetPatientCardId)));
         Assert.Equal(0, CreateCalls(fakes));
     }
-
 
     [Fact]
     [Trait("Decision", "D-51")]
@@ -2562,18 +2552,18 @@ public sealed class InvoiceWorkflowOrchestrationTests
 
     [Theory]
     [Trait("Decision", "D-73")]
-    [InlineData(false, null, 2, true)]
+    [InlineData(false, null, 2, false)]
     [InlineData(false, null, 1, true)]
-    [InlineData(false, null, null, true)]
+    [InlineData(false, null, null, false)]
     [InlineData(true, "1", 2, true)]
     [InlineData(true, " 1 ", 2, true)]
     [InlineData(true, "2", 1, false)]
-    [InlineData(true, "x", 2, true)]
+    [InlineData(true, "x", 2, false)]
     [InlineData(true, "x", 1, true)]
-    [InlineData(true, null, 1, true)]
-    [InlineData(true, null, 2, true)]
-    [InlineData(true, "  ", 2, true)]
-    public async Task ValidateLineAndCreate_Pref422_DecidesApprovalCheck(
+    [InlineData(true, null, 1, false)]
+    [InlineData(true, null, 2, false)]
+    [InlineData(true, "  ", 2, false)]
+    public async Task ValidateLineAndCreate_Pref422ElseEntryParameter_DecidesApprovalCheck(
         bool prefPresent, string? prefValue, int? x422ApprovCheck, bool blocks)
     {
         var draft = (await CreditDraft()) with { Parameters = new InvoiceEntryParameters { X422ApprovCheck = x422ApprovCheck } };
@@ -2592,13 +2582,13 @@ public sealed class InvoiceWorkflowOrchestrationTests
 
     [Theory]
     [Trait("Decision", "D-73")]
-    [InlineData(false, null, 2, 1, 1)]
+    [InlineData(false, null, 2, 2, 0)]
     [InlineData(false, null, 1, 1, 1)]
     [InlineData(true, "1", 2, 1, 1)]
-    [InlineData(true, "x", 2, 1, 1)]
-    [InlineData(true, null, 2, 1, 1)]
+    [InlineData(true, "x", 2, 2, 0)]
+    [InlineData(true, null, 2, null, 1)]
     [InlineData(true, "2", 1, 2, 0)]
-    public async Task ImportRequests_Pref422_DecidesApprovalMode(
+    public async Task ImportRequests_Pref422ElseEntryParameter_DecidesApprovalMode(
         bool prefPresent, string? prefValue, int? x422ApprovCheck, int? expectedX422, int expectedMode)
     {
         var draft = (await CreditDraft()) with
@@ -2617,6 +2607,45 @@ public sealed class InvoiceWorkflowOrchestrationTests
         Assert.Equal(
             expectedX422 == 1,
             response.Messages.Any(message => message.Text == OrdinaryService + " Need Approval"));
+    }
+
+    /// <summary>Asserts DR-14 takes REQ_NEED_A from the preview lines of the draft line's client id, else of its service id, else from the profile.</summary>
+    /// <param name="previewLines">Comma-separated client id:service id:REQ_NEED_A entries; an empty REQ_NEED_A is null.</param>
+    /// <param name="profileReqNeedA">REQ_NEED_A of the service profile.</param>
+    /// <param name="blocks">Whether DR-14 blocks the line.</param>
+    [Theory]
+    [InlineData("c1:S1:0,c1:S1:1", 0, true)]
+    [InlineData("c1:S1:,c9:S1:0", 1, true)]
+    [InlineData("c1:S1:0,c9:S1:1", 1, false)]
+    [InlineData("c9: s1 :1", 0, true)]
+    [InlineData("c9:S1:0,c8:S1:", 1, false)]
+    [InlineData("c9:S1:", 1, true)]
+    [InlineData("c9:S2:1", 0, false)]
+    public async Task ValidateLine_PreviewReqNeedA_ByClientIdElseServiceIdElseProfile(string previewLines, int profileReqNeedA, bool blocks)
+    {
+        var draft = (await CreditDraft()) with { Parameters = new InvoiceEntryParameters { X422ApprovCheck = 1 } };
+        var fakes = ArrangeApproval(draft, false, null);
+        fakes.Lookups.ServiceProfile = serviceId => Profile(serviceId) with { ReqNeedA = profileReqNeedA };
+        var preview = previewLines.Split(',')
+            .Select(entry => entry.Split(':'))
+            .Select((fields, index) => new EditablePreviewLine
+            {
+                ClientId = fields[0],
+                LineNo = index + 1,
+                ServiceId = fields[1],
+                Qty = 1m,
+                ListId = DefaultListId,
+                ReqNeedA = fields[2].Length == 0 ? null : int.Parse(fields[2], CultureInfo.InvariantCulture),
+            })
+            .ToArray();
+        fakes.InvoiceApi.Preview = (_, lines) => (
+            preview,
+            new PreviewTotalsRow { LineCount = lines.Count, PatPay = 0m, CashCollected = 0m, Amount1 = 0m, Amount2 = 0m });
+
+        var validated = await fakes.CreateService().Validate(
+            new ValidateDraftRequest { Draft = draft, Target = "SERVICEID", LineIndex = 0 }, Operator);
+
+        Assert.Equal(blocks, HasBlocking(validated.Messages, "DR-14"));
     }
 
     private static FakeDataPorts ArrangeApproval(DraftDto draft, bool prefPresent, string? prefValue)
@@ -2640,7 +2669,7 @@ public sealed class InvoiceWorkflowOrchestrationTests
     [InlineData("policy", 1)]
     [InlineData("policy", null)]
     [InlineData("policy", 2)]
-    public async Task ValidatePatientAndCreate_ExpiredCoverage_BlocksDr03WhateverTheRequestDateAdmin(string expiry, int? invDateAdmin)
+    public async Task ValidatePatientAndCreate_ExpiredCoverage_FollowsTheRequestDateAdmin(string expiry, int? invDateAdmin)
     {
         var draft = (await CreditDraft()) with { Parameters = new InvoiceEntryParameters { InvDateAdmin = invDateAdmin } };
         var fakes = Arrange(draft);
@@ -2650,11 +2679,12 @@ public sealed class InvoiceWorkflowOrchestrationTests
         var validated = await service.Validate(PatientValidation(draft), Operator);
         var created = await service.Create(CreateRequest(draft), Operator);
 
-        AssertOnlyExpiryBlocks(validated.Messages, expiry);
-        AssertOnlyExpiryBlocks(created.Messages, expiry);
-        Assert.Null(created.InvNo);
-        Assert.Equal(0, CreateCalls(fakes));
-        Assert.False(AnySessionCommitted(fakes));
+        var blocks = ExpiryBlocks(expiry, invDateAdmin);
+        AssertOnlyExpiryMessage(validated.Messages, expiry, blocks);
+        AssertOnlyExpiryMessage(created.Messages, expiry, blocks);
+        Assert.Equal(blocks, created.InvNo is null);
+        Assert.Equal(blocks ? 0 : 1, CreateCalls(fakes));
+        Assert.Equal(!blocks, AnySessionCommitted(fakes));
     }
 
     [Theory]
@@ -2668,7 +2698,7 @@ public sealed class InvoiceWorkflowOrchestrationTests
     [InlineData("policy", 1)]
     [InlineData("policy", null)]
     [InlineData("policy", 2)]
-    public async Task GetCoverage_ExpiredCoverage_BlocksDr03WhateverTheRequestDateAdmin(string expiry, int? invDateAdmin)
+    public async Task GetCoverage_ExpiredCoverage_FollowsTheRequestDateAdmin(string expiry, int? invDateAdmin)
     {
         var draft = await CreditDraft();
         var fakes = Arrange(draft);
@@ -2677,7 +2707,7 @@ public sealed class InvoiceWorkflowOrchestrationTests
         var response = await fakes.CreateService().GetCoverage(
             PatientNo, DraftDate, new InvoiceEntryParameters { InvDateAdmin = invDateAdmin }, Operator);
 
-        AssertOnlyExpiryBlocks(response.Messages, expiry);
+        AssertOnlyExpiryMessage(response.Messages, expiry, ExpiryBlocks(expiry, invDateAdmin));
         Assert.Equal(fakes.Lookups.PatientCoverage, response.Coverage);
     }
 
@@ -2690,23 +2720,29 @@ public sealed class InvoiceWorkflowOrchestrationTests
         _ => throw new ArgumentOutOfRangeException(nameof(expiry), expiry, "Unknown expiry case."),
     };
 
-    /// <summary>Asserts the only DR-03 message is the blocking legacy expiry text of <paramref name="expiry"/>, with no date-admin warning.</summary>
-    private static void AssertOnlyExpiryBlocks(IReadOnlyList<MessageDto> messages, string expiry)
+    /// <summary>Returns whether T023 blocks the expiry: contract and card block only when INV_DATE_ADMIN is 2, policy blocks unless it is 1.</summary>
+    private static bool ExpiryBlocks(string expiry, int? invDateAdmin) =>
+        expiry == "policy" ? invDateAdmin != 1 : invDateAdmin == 2;
+
+    /// <summary>Asserts the only DR-03 message is the legacy expiry text of <paramref name="expiry"/>: the blocking text, or the date-admin warning.</summary>
+    private static void AssertOnlyExpiryMessage(IReadOnlyList<MessageDto> messages, string expiry, bool blocks)
     {
         var ended = DraftDate.AddDays(-1).ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
-        var expected = expiry switch
+        var expected = (expiry, blocks) switch
         {
-            "contract" => "Contract  Ended " + ended,
-            "card" => "Card Expired " + ended,
-            "policy" => "Policy  Ended " + ended + " Patient well treated as cash patient ",
+            ("contract", true) => "Contract  Ended " + ended,
+            ("contract", false) => "Contract  Ended " + ended + " , But due to that user have date admin privileges system will open claim",
+            ("card", true) => "Card Expired " + ended,
+            ("card", false) => "Card Expired " + ended + " , But due to that user have date admin privileges system will open claim",
+            ("policy", true) => "Policy  Ended " + ended + " Patient well treated as cash patient ",
+            ("policy", false) => "Policy  Ended " + ended + " ,But due to that user have date admin privileges system will open claim",
             _ => throw new ArgumentOutOfRangeException(nameof(expiry), expiry, "Unknown expiry case."),
         };
 
         var dr03 = Assert.Single(messages, message => message.Rule == "DR-03");
         Assert.Equal(PatientNoItem, dr03.Field);
         Assert.Equal(expected, dr03.Text);
-        Assert.True(IsBlocking(dr03));
-        Assert.DoesNotContain(messages, message => message.Text.Contains("date admin privileges", StringComparison.Ordinal));
+        Assert.Equal(blocks ? ValidationMessage.Blocking : ValidationMessage.Warning, dr03.Severity);
     }
 
     private static (InvoiceHeaderDraft Header, decimal? ListId, decimal? MaxDeductable, int? CardId)? SubCompanyClaimPreload(string claimNo) =>
@@ -3048,65 +3084,114 @@ public sealed class InvoiceWorkflowOrchestrationTests
         Assert.Equal(1, CoverageReads(fakes));
     }
 
-    [Fact]
+    [Theory]
     [Trait("Decision", "D-111")]
-    public async Task GetInvoice_ReadsWithTheFormLocalDocType505AndReturnsTheView()
+    [InlineData(505)]
+    [InlineData(532)]
+    [InlineData(783)]
+    public async Task GetInvoice_ReadsWithTheRequestLocalDocTypeAndReturnsTheView(int localDocType)
     {
         var fakes = new FakeDataPorts();
         var header = new InvoiceHeaderDraft { PatientNo = PatientNo, InvNo = SavedInvoiceNo };
-        fakes.Invoices.Invoice = (invNo, localDocType) => invNo == SavedInvoiceNo && localDocType == FormLocalDocType
+        fakes.Invoices.Invoice = (invNo, docType) => invNo == SavedInvoiceNo && docType == localDocType
             ? (header, Array.Empty<InvoiceLineDraft>(), new Dictionary<string, object?>())
             : null;
 
-        var view = await fakes.CreateService().GetInvoice(SavedInvoiceNo, Operator);
+        var view = await fakes.CreateService().GetInvoice(
+            SavedInvoiceNo, new InvoiceEntryParameters { LocalDocType = localDocType }, Operator);
 
         Assert.NotNull(view);
         Assert.Same(header, view.Header);
         Assert.True(view.ReadOnly);
-        Assert.Equal(new object?[] { SavedInvoiceNo, FormLocalDocType }, SingleCall(fakes.Invoices.Calls, nameof(IInvoiceQueries.GetInvoice)).Args);
+        Assert.Equal(new object?[] { SavedInvoiceNo, localDocType }, SingleCall(fakes.Invoices.Calls, nameof(IInvoiceQueries.GetInvoice)).Args);
     }
 
-    [Fact]
+    [Theory]
     [Trait("Decision", "D-111")]
-    public async Task GetMoreDetails_ReadsWithTheFormLocalDocType505()
+    [InlineData(505)]
+    [InlineData(532)]
+    [InlineData(783)]
+    public async Task GetMoreDetails_ReadsWithTheRequestLocalDocType(int localDocType)
     {
         var fakes = new FakeDataPorts();
-        fakes.Invoices.MoreDetails = (invNo, localDocType) => invNo == SavedInvoiceNo && localDocType == FormLocalDocType
+        fakes.Invoices.MoreDetails = (invNo, docType) => invNo == SavedInvoiceNo && docType == localDocType
             ? (new Dictionary<string, object?> { ["INS_NUMBER"] = SavedInsuranceNumber },
                 Array.Empty<IReadOnlyDictionary<string, object?>>(),
                 Array.Empty<IReadOnlyDictionary<string, object?>>())
             : null;
 
-        var details = await fakes.CreateService().GetMoreDetails(SavedInvoiceNo, Operator);
+        var details = await fakes.CreateService().GetMoreDetails(
+            SavedInvoiceNo, new InvoiceEntryParameters { LocalDocType = localDocType }, Operator);
 
         Assert.NotNull(details);
         Assert.Equal(SavedInvoiceNo, details.InvNo);
         Assert.Equal(SavedInsuranceNumber, details.InsNumber);
-        Assert.Equal(new object?[] { SavedInvoiceNo, FormLocalDocType }, SingleCall(fakes.Invoices.Calls, nameof(IInvoiceQueries.GetMoreDetails)).Args);
+        Assert.Equal(new object?[] { SavedInvoiceNo, localDocType }, SingleCall(fakes.Invoices.Calls, nameof(IInvoiceQueries.GetMoreDetails)).Args);
     }
 
     [Fact]
     [Trait("Decision", "D-111")]
-    public void InvoiceEntryParameters_FromRequestJsonCarryingLocalDocType0_KeepsLocalDocType505()
+    public async Task GetInvoiceAndGetMoreDetails_DefaultParameters_ReadWithTheFormLocalDocType505()
     {
-        var parameters = JsonSerializer.Deserialize<InvoiceEntryParameters>($$"""{"localDocType":0,"claimNo":"{{ClaimNumber}}"}""", Json)!;
+        var fakes = new FakeDataPorts();
+        var service = fakes.CreateService();
 
-        Assert.Equal(FormLocalDocType, parameters.LocalDocType);
+        Assert.Null(await service.GetInvoice(SavedInvoiceNo, new InvoiceEntryParameters(), Operator));
+        Assert.Null(await service.GetMoreDetails(SavedInvoiceNo, new InvoiceEntryParameters(), Operator));
+
+        Assert.Equal(new object?[] { SavedInvoiceNo, FormLocalDocType }, SingleCall(fakes.Invoices.Calls, nameof(IInvoiceQueries.GetInvoice)).Args);
+        Assert.Equal(new object?[] { SavedInvoiceNo, FormLocalDocType }, SingleCall(fakes.Invoices.Calls, nameof(IInvoiceQueries.GetMoreDetails)).Args);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-111")]
+    [InlineData(0)]
+    [InlineData(-505)]
+    [InlineData(504)]
+    [InlineData(999)]
+    public async Task GetInvoiceAndGetMoreDetails_UnmappedLocalDocType_ThrowTheLocalDocTypeValidationWithoutReads(int localDocType)
+    {
+        var fakes = new FakeDataPorts();
+        var service = fakes.CreateService();
+        var parameters = new InvoiceEntryParameters { LocalDocType = localDocType };
+
+        var invoice = await Assert.ThrowsAsync<ArgumentException>(() => service.GetInvoice(SavedInvoiceNo, parameters, Operator));
+        var details = await Assert.ThrowsAsync<ArgumentException>(() => service.GetMoreDetails(SavedInvoiceNo, parameters, Operator));
+
+        foreach (var failure in new[] { invoice, details })
+        {
+            var message = Assert.Single(Assert.IsAssignableFrom<IReadOnlyList<MessageDto>>(failure.Data[ProblemDetailsWriter.MessagesDataKey]));
+            Assert.Equal("LOCAL_DOC_TYPE", message.Field);
+            Assert.Equal("LOCAL_DOC_TYPE must be 505, 532 or 783.", message.Text);
+            Assert.True(IsBlocking(message));
+            Assert.Null(message.Rule);
+        }
+
+        Assert.Empty(fakes.Journal);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-111")]
+    public void InvoiceEntryParameters_FromRequestJsonCarryingLocalDocType783_BindsIt()
+    {
+        var parameters = JsonSerializer.Deserialize<InvoiceEntryParameters>($$"""{"localDocType":783,"claimNo":"{{ClaimNumber}}"}""", Json)!;
+
+        Assert.Equal(783, parameters.LocalDocType);
         Assert.Equal(ClaimNumber, parameters.ClaimNo);
     }
 
     [Fact]
     [Trait("Decision", "D-111")]
-    public async Task DraftDto_FromRequestJsonCarryingLocalDocType0_KeepsLocalDocType505()
+    public async Task DraftDto_FromRequestJsonCarryingLocalDocType783_BindsIt()
     {
         var json = JsonSerializer.SerializeToNode(await CashDraft(), Json)!.AsObject();
-        json["parameters"]!["localDocType"] = 0;
+        json["parameters"]!["localDocType"] = 783;
         var text = json.ToJsonString(Json);
-        Assert.Contains("\"localDocType\":0", text, StringComparison.Ordinal);
+        Assert.Contains("\"localDocType\":783", text, StringComparison.Ordinal);
 
         var draft = JsonSerializer.Deserialize<DraftDto>(text, Json)!;
 
-        Assert.Equal(FormLocalDocType, draft.Parameters.LocalDocType);
+        Assert.Equal(783, draft.Parameters.LocalDocType);
     }
 
     private static async Task<DraftDto> ExpandedPackageDraft() => (await CashDraft()) with
@@ -3221,275 +3306,97 @@ public sealed class InvoiceWorkflowOrchestrationTests
     private static string[] ServicesReadOn(IEnumerable<(decimal ListId, string ServiceId)> reads, decimal listId) =>
         reads.Where(read => read.ListId == listId).Select(read => read.ServiceId).Order(StringComparer.Ordinal).ToArray();
 
-    /// <summary>Session of the create transaction: the one the locked PATIENT read ran in, opened last.</summary>
-    private static FakeOracleSession CreateTransactionSession(FakeDataPorts fakes)
-    {
-        var session = SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.LockPatientCardId)).Arg<FakeOracleSession>();
-        Assert.Same(fakes.SessionFactory.Sessions[^1], session);
-        return session;
-    }
-
-    /// <summary>Asserts the gate refused the create with <paramref name="openItemId"/> inside its transaction, which rolled back without posting or committing.</summary>
-    private static void AssertGatedInTheCreateTransaction(Exception failure, string openItemId, FakeDataPorts fakes)
-    {
-        Assert.Contains(openItemId, GateIds(failure));
-        Assert.Equal(0, CreateCalls(fakes));
-        var events = CreateTransactionSession(fakes).Events;
-        Assert.Contains(RollbackEvent, events);
-        Assert.DoesNotContain(CommitEvent, events);
-    }
-
     [Fact]
     [Trait("Decision", "D-112")]
-    [Trait("OpenItem", "OI-32")]
-    public async Task Create_CardSetAfterThePreflight_GatesOi32InTheCreateTransaction()
+    public async Task Create_NewCreate_RunsEveryLookupReadBeforeTheCreateTransactionOpens()
     {
-        var draft = await CashDraft();
-        var fakes = Arrange(draft);
-        fakes.Lookups.LockedPatientCardId = () => 42;
-
-        var failure = await GateAsync(() => fakes.CreateService().Create(CreateRequest(draft), Operator), OpenItemIds.OI32);
-
-        AssertGatedInTheCreateTransaction(failure, OpenItemIds.OI32, fakes);
-    }
-
-    [Fact]
-    [Trait("Decision", "D-112")]
-    [Trait("OpenItem", "OI-32")]
-    public async Task Create_RevisitLimitSetAfterThePreflight_GatesOi32InTheCreateTransaction()
-    {
-        var draft = await CashDraft();
-        var fakes = Arrange(draft);
-        fakes.Lookups.LockedServiceProfile = serviceId => Profile(serviceId) with { ConsRev = 1 };
-
-        var failure = await GateAsync(() => fakes.CreateService().Create(CreateRequest(draft), Operator), OpenItemIds.OI32);
-
-        AssertGatedInTheCreateTransaction(failure, OpenItemIds.OI32, fakes);
-    }
-
-    [Fact]
-    [Trait("Decision", "D-112")]
-    [Trait("OpenItem", "OI-32")]
-    public async Task Create_PackageComponentRevisitLimitSetAfterThePreflight_GatesOi32InTheCreateTransaction()
-    {
-        var draft = (await CashDraft()) with { Lines = new[] { Line(PackageService, "p1") } };
-        var fakes = Arrange(draft);
-        fakes.Lookups.ServiceProfile = PackageAwareProfile;
-        fakes.Lookups.LockedPackageComponentFlags = _ => new[] { Profile(FirstComponent) with { ConsRev = 2 } };
-
-        var failure = await GateAsync(() => fakes.CreateService().Create(CreateRequest(draft), Operator), OpenItemIds.OI32);
-
-        AssertGatedInTheCreateTransaction(failure, OpenItemIds.OI32, fakes);
-        Assert.Equal(
-            new object?[] { CreateTransactionSession(fakes), PackageService, DefaultListId },
-            SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.LockPackageComponentFlags)).Args);
-    }
-
-    [Fact]
-    [Trait("Decision", "D-112")]
-    [Trait("OpenItem", "OI-23")]
-    public async Task Create_AdvancedClassSetAfterThePreflight_GatesOi23InTheCreateTransaction()
-    {
-        var draft = await CreditDraft();
-        var fakes = Arrange(draft);
-        fakes.Lookups.PatientCoverage = InsuredCoverage(draft) with { MaxDeductable = 0m };
-        fakes.Lookups.ClassAdvancedMode = null;
-        fakes.Lookups.LockedClassAdvancedMode = () => 2;
-
-        var failure = await GateAsync(() => fakes.CreateService().Create(CreateRequest(draft), Operator), OpenItemIds.OI23);
-
-        AssertGatedInTheCreateTransaction(failure, OpenItemIds.OI23, fakes);
-        Assert.Single(fakes.Legacy.Calls, call => call.Method == nameof(ILegacyExternalCalls.GetPaidBefore));
-    }
-
-    [Fact]
-    [Trait("Decision", "D-112")]
-    [Trait("OpenItem", "OI-23")]
-    public async Task Create_DeductibleSetAfterThePreflight_GatesOi23InTheCreateTransaction()
-    {
-        var draft = await CreditDraft();
-        var fakes = Arrange(draft);
-        fakes.Lookups.PatientCoverage = InsuredCoverage(draft) with { MaxDeductable = 0m };
-        fakes.Lookups.LockedMaxDeductable = () => 50m;
-
-        var failure = await GateAsync(() => fakes.CreateService().Create(CreateRequest(draft), Operator), OpenItemIds.OI23);
-
-        AssertGatedInTheCreateTransaction(failure, OpenItemIds.OI23, fakes);
-        Assert.Single(fakes.Legacy.Calls, call => call.Method == nameof(ILegacyExternalCalls.GetPaidBefore));
-    }
-
-    [Theory]
-    [Trait("Decision", "D-112")]
-    [InlineData(0, 1)]
-    [InlineData(1, 0)]
-    public async Task Create_QueueFlagChangedAfterThePreflight_SendsAddToListOfTheLockedFlag(int preflightQueue, int lockedQueue)
-    {
-        var draft = await CashDraft();
-        var fakes = Arrange(draft);
-        fakes.Lookups.ServiceProfile = serviceId => Profile(serviceId) with { AddToQue = preflightQueue };
-        fakes.Lookups.LockedServiceProfile = serviceId => Profile(serviceId) with { AddToQue = lockedQueue };
-
-        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
-
-        Assert.DoesNotContain(response.Messages, IsBlocking);
-        Assert.NotNull(response.InvNo);
-        Assert.Equal((int?)lockedQueue, CreateCall(fakes).Arg<InvoiceHeaderDraft>().AddToList);
-        Assert.True(CreateCall(fakes).Arg<FakeOracleSession>().Committed);
-    }
-
-    [Fact]
-    [Trait("Decision", "D-112")]
-    public async Task Create_CreditDraft_LocksTheGateInputsInTheCreateSessionBeforeThePackageCreate()
-    {
-        var draft = (await CreditDraft()) with { Lines = new[] { Line(OrdinaryService, "c1"), Line(PackageService, "p1") } };
+        var draft = (await CreditDraft()) with
+        {
+            Lines = new[] { Line(OrdinaryService, "c1"), Line(PackageService, "p1") },
+            Parameters = new InvoiceEntryParameters { ClaimNo = ClaimNumber },
+        };
         var fakes = Arrange(draft);
         fakes.Lookups.PatientCoverage = InsuredCoverage(draft);
         fakes.Lookups.ServiceProfile = PackageAwareProfile;
+        fakes.Invoices.ClaimPreload = PreloadOf(credit: true, maxDeductable: 0m, cardId: null);
 
         var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
 
         Assert.DoesNotContain(response.Messages, IsBlocking);
-        var session = CreateCall(fakes).Arg<FakeOracleSession>();
-        Assert.Same(session, CreateTransactionSession(fakes));
+        Assert.NotNull(response.InvNo);
         var create = fakes.Journal.IndexOf(CreateFullInvoiceEntry);
         var open = fakes.Journal.LastIndexOf(SessionOpenEntry, create);
         Assert.True(open >= 0);
-        Assert.Equal(
-            CreateTransactionReads.Select(read => $"{nameof(ILookupQueries)}.{read}"),
-            fakes.Journal.Skip(open + 1).Take(create - open - 1));
-        Assert.Equal(
-            new object?[] { session, PatientNo },
-            SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.LockPatientCardId)).Args);
-        Assert.Equal(
-            new object?[] { session, SubCompany, ClassCode.ToString(CultureInfo.InvariantCulture) },
-            SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.LockClassAdvancedMode)).Args);
-        var services = SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.LockServiceProfiles));
-        Assert.Same(session, services.Arg<FakeOracleSession>());
-        Assert.Equal(new[] { OrdinaryService, PackageService }, services.Arg<string[]>());
-        Assert.Equal(DefaultListId, services.Arg<decimal>());
-        Assert.Equal(
-            new object?[] { session, PackageService, DefaultListId },
-            SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.LockPackageComponentFlags)).Args);
-        Assert.Equal(
-            new object?[] { session, PatientNo },
-            SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.LockPatientMaxDeductable)).Args);
-        Assert.False(Called(fakes.Lookups.Calls, nameof(ILookupQueries.LockClaimPreload)));
-        Assert.True(session.Committed);
-    }
+        Assert.Equal(open + 1, create);
+        Assert.DoesNotContain(
+            fakes.Journal.Skip(open),
+            entry => entry.StartsWith($"{nameof(ILookupQueries)}.", StringComparison.Ordinal)
+                || entry.StartsWith($"{nameof(IInvoiceQueries)}.", StringComparison.Ordinal));
+        foreach (var read in new[]
+        {
+            nameof(ILookupQueries.GetPatientCardId),
+            nameof(ILookupQueries.GetClassAdvancedMode),
+            nameof(ILookupQueries.GetServiceQueueFlags),
+            nameof(ILookupQueries.GetPackageComponentFlags),
+        })
+        {
+            Assert.True(Called(fakes.Lookups.Calls, read), read);
+        }
 
-    [Fact]
-    [Trait("Decision", "D-112")]
-    public async Task Create_CashDraft_LocksNoClassAndReadsNoDeductible()
-    {
-        var draft = await CashDraft();
-        var fakes = Arrange(draft);
-
-        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
-
-        Assert.NotNull(response.InvNo);
-        var session = CreateCall(fakes).Arg<FakeOracleSession>();
-        Assert.Equal(
-            new object?[] { session, PatientNo },
-            SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.LockPatientCardId)).Args);
-        Assert.Same(session, SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.LockServiceProfiles)).Arg<FakeOracleSession>());
-        Assert.False(Called(fakes.Lookups.Calls, nameof(ILookupQueries.LockClassAdvancedMode)));
-        Assert.False(Called(fakes.Lookups.Calls, nameof(ILookupQueries.LockPatientMaxDeductable)));
-        Assert.False(Called(fakes.Lookups.Calls, nameof(ILookupQueries.LockPackageComponentFlags)));
-        Assert.False(Called(fakes.Lookups.Calls, nameof(ILookupQueries.LockClaimPreload)));
-    }
-
-    [Fact]
-    [Trait("Decision", "D-112")]
-    [Trait("OpenItem", "OI-32")]
-    public async Task Create_ClaimPreloadCardSetAfterThePreflight_GatesOi32InTheCreateTransaction()
-    {
-        var draft = (await CashDraft()) with { Parameters = new InvoiceEntryParameters { ClaimNo = ClaimNumber } };
-        var fakes = Arrange(draft);
-        fakes.Lookups.PatientCardId = null;
-        fakes.Invoices.ClaimPreload = PreloadOf(credit: false, maxDeductable: null, cardId: null);
-        fakes.Lookups.LockedClaimPreload = _ => (PatientNo, null, 42);
-
-        var failure = await GateAsync(() => fakes.CreateService().Create(CreateRequest(draft), Operator), OpenItemIds.OI32);
-
-        AssertGatedInTheCreateTransaction(failure, OpenItemIds.OI32, fakes);
-        Assert.Equal(
-            new object?[] { CreateTransactionSession(fakes), ClaimNumber },
-            SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.LockClaimPreload)).Args);
-    }
-
-    [Fact]
-    [Trait("Decision", "D-112")]
-    [Trait("OpenItem", "OI-23")]
-    public async Task Create_ClaimPreloadDeductibleSetAfterThePreflight_GatesOi23InTheCreateTransaction()
-    {
-        var draft = (await CreditDraft()) with { Parameters = new InvoiceEntryParameters { ClaimNo = ClaimNumber } };
-        var fakes = Arrange(draft);
-        fakes.Lookups.PatientCoverage = InsuredCoverage(draft) with { MaxDeductable = 0m };
-        fakes.Invoices.ClaimPreload = PreloadOf(credit: true, maxDeductable: 0m, cardId: null);
-        fakes.Lookups.LockedClaimPreload = _ => (PatientNo, 50m, null);
-
-        var failure = await GateAsync(() => fakes.CreateService().Create(CreateRequest(draft), Operator), OpenItemIds.OI23);
-
-        AssertGatedInTheCreateTransaction(failure, OpenItemIds.OI23, fakes);
-        Assert.Single(fakes.Legacy.Calls, call => call.Method == nameof(ILegacyExternalCalls.GetPaidBefore));
-    }
-
-    [Fact]
-    [Trait("Decision", "D-112")]
-    public async Task Create_ClaimFirstInvoiceOfAnotherPatientUnderLock_IsNoGateInput()
-    {
-        var draft = (await CashDraft()) with { Parameters = new InvoiceEntryParameters { ClaimNo = ClaimNumber } };
-        var fakes = Arrange(draft);
-        fakes.Lookups.PatientCardId = null;
-        fakes.Invoices.ClaimPreload = PreloadOf(credit: false, maxDeductable: null, cardId: null);
-        fakes.Lookups.LockedClaimPreload = _ => ("P-OTHER", null, 42);
-
-        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
-
-        Assert.DoesNotContain(response.Messages, IsBlocking);
-        Assert.NotNull(response.InvNo);
+        Assert.True(Called(fakes.Invoices.Calls, nameof(IInvoiceQueries.GetClaimPreload)));
         Assert.True(CreateCall(fakes).Arg<FakeOracleSession>().Committed);
     }
 
     [Fact]
-    [Trait("Decision", "D-112")]
-    public async Task Create_ClaimDraft_LocksTheClaimFirstInvoiceFirstInTheCreateSession()
+    [Trait("Decision", "D-89")]
+    [Trait("Decision", "D-44")]
+    public async Task Create_ReceptionTransferSavepointTimesOut_RollsBackTheWholeCreateWithoutTheClearOrTheTotalCheck()
     {
-        var draft = (await CreditDraft()) with { Parameters = new InvoiceEntryParameters { ClaimNo = ClaimNumber } };
+        const string wholeRollbackEntry = $"{nameof(IOracleSession)}.{RollbackEvent}";
+        var draft = await CreditDraft();
         var fakes = Arrange(draft);
-        fakes.Lookups.PatientCoverage = InsuredCoverage(draft) with { MaxDeductable = 0m };
-        fakes.Invoices.ClaimPreload = PreloadOf(credit: true, maxDeductable: 0m, cardId: null);
+        fakes.SessionFactory.SavepointFailure = sessionEvent => sessionEvent == ReceptionTransferSavepointEvent
+            ? new TimeoutException("The Oracle savepoint did not complete within 30 seconds.")
+            : null;
 
-        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+        await Assert.ThrowsAsync<TimeoutException>(() => fakes.CreateService().Create(CreateRequest(draft), Operator));
 
-        Assert.DoesNotContain(response.Messages, IsBlocking);
-        var session = CreateCall(fakes).Arg<FakeOracleSession>();
-        Assert.Same(session, CreateTransactionSession(fakes));
-        var create = fakes.Journal.IndexOf(CreateFullInvoiceEntry);
-        var open = fakes.Journal.LastIndexOf(SessionOpenEntry, create);
-        Assert.True(open >= 0);
-        Assert.True(create > open + 1);
-        Assert.Equal($"{nameof(ILookupQueries)}.{nameof(ILookupQueries.LockClaimPreload)}", fakes.Journal[open + 1]);
-        Assert.Equal(new object?[] { session, ClaimNumber }, SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.LockClaimPreload)).Args);
-        Assert.True(session.Committed);
+        Assert.Equal(
+            new[] { CreateFullInvoiceEntry, ReceptionTransferSaveEntry, wholeRollbackEntry, SessionDisposeEntry },
+            JournalFromTheSave(fakes));
+        Assert.Empty(fakes.PatientTransfer.Calls);
+        Assert.False(Called(fakes.Legacy.Calls, nameof(ILegacyExternalCalls.ValidateTotalInvoice)));
+        Assert.False(AnySessionCommitted(fakes));
     }
 
     [Fact]
-    [Trait("Decision", "D-112")]
-    [Trait("Decision", "D-54")]
-    public async Task Create_Replay_RunsNoCreateTransactionRead()
+    [Trait("Decision", "D-89")]
+    [Trait("Decision", "D-44")]
+    public async Task Create_ReceptionTransferSavepointRollbackTimesOut_RollsBackTheWholeCreateWithoutTheTotalCheck()
     {
+        const string wholeRollbackEntry = $"{nameof(IOracleSession)}.{RollbackEvent}";
         var draft = await CreditDraft();
         var fakes = Arrange(draft);
-        fakes.Invoices.CreateRequest = RecordedFor(draft, Recorded(9001L, CreditCompany, SubCompany, false));
-        fakes.InvoiceApi.CreateMessage = ReplayMessage;
+        fakes.PatientTransfer.Throw = () => new InvalidOperationException("reception transfer clear failed");
+        fakes.SessionFactory.SavepointFailure = sessionEvent => sessionEvent == ReceptionTransferRollbackEvent
+            ? new TimeoutException("The Oracle savepoint rollback did not complete within 30 seconds.")
+            : null;
 
-        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+        await Assert.ThrowsAsync<TimeoutException>(() => fakes.CreateService().Create(CreateRequest(draft), Operator));
 
-        Assert.NotNull(response.InvNo);
-        Assert.Equal(1, CreateCalls(fakes));
-        Assert.DoesNotContain(fakes.Lookups.Calls, call => CreateTransactionReads.Contains(call.Method));
-        Assert.False(Called(fakes.Lookups.Calls, nameof(ILookupQueries.LockClaimPreload)));
+        Assert.Equal(
+            new[]
+            {
+                CreateFullInvoiceEntry,
+                ReceptionTransferSaveEntry,
+                ReceptionTransferClearEntry,
+                ReceptionTransferRollbackEntry,
+                wholeRollbackEntry,
+                SessionDisposeEntry,
+            },
+            JournalFromTheSave(fakes));
+        Assert.Single(fakes.PatientTransfer.Calls);
+        Assert.False(Called(fakes.Legacy.Calls, nameof(ILegacyExternalCalls.ValidateTotalInvoice)));
+        Assert.False(AnySessionCommitted(fakes));
     }
 }
-

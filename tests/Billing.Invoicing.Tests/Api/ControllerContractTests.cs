@@ -28,6 +28,7 @@ public sealed class ControllerContractTests
     private const string DocumentKindText = "Document kind must be invoice, patient-card, barcode-sms or iqama-check.";
     private const string RequestIdText = "Request id must be 32 upper-case hexadecimal characters.";
     private const string OfferIdText = "Offer id must be a positive whole number.";
+    private const string LocalDocTypeText = "LOCAL_DOC_TYPE must be 505, 532 or 783.";
     private const string PatientNo = "P100";
 
     /// <summary>2^53 + 1, the smallest positive integer a JSON number read as a double cannot hold.</summary>
@@ -221,7 +222,7 @@ public sealed class ControllerContractTests
         var fakes = new FakeDataPorts();
         var context = NewContext();
 
-        var result = await Controller<InvoicesController>(fakes, context).Get(invNo);
+        var result = await Controller<InvoicesController>(fakes, context).Get(invNo, new InvoiceEntryParameters());
 
         Assert.IsType<EmptyResult>(result.Result);
         await AssertInvalidInvoiceNumber(context, fakes);
@@ -241,7 +242,7 @@ public sealed class ControllerContractTests
 
         IActionResult? result = action switch
         {
-            "more" => (await controller.More("abc")).Result,
+            "more" => (await controller.More("abc", new InvoiceEntryParameters())).Result,
             "sms" => await controller.Sms("abc"),
             "documents" => await controller.Documents("abc", "bogus"),
             "update" => await controller.Update("abc"),
@@ -258,7 +259,7 @@ public sealed class ControllerContractTests
         var fakes = new FakeDataPorts();
         var context = NewContext(withOperator: false);
 
-        var result = await Controller<InvoicesController>(fakes, context).Get("abc");
+        var result = await Controller<InvoicesController>(fakes, context).Get("abc", new InvoiceEntryParameters());
 
         Assert.IsType<EmptyResult>(result.Result);
         Assert.Equal(StatusCodes.Status422UnprocessableEntity, context.Response.StatusCode);
@@ -272,7 +273,7 @@ public sealed class ControllerContractTests
         var fakes = new FakeDataPorts();
         var context = NewContext();
 
-        var result = await Controller<InvoicesController>(fakes, context).Get("007");
+        var result = await Controller<InvoicesController>(fakes, context).Get("007", new InvoiceEntryParameters());
 
         Assert.IsType<EmptyResult>(result.Result);
         Assert.Equal(7L, Assert.Single(fakes.Invoices.Calls).Arg<long>());
@@ -285,7 +286,7 @@ public sealed class ControllerContractTests
         var fakes = new FakeDataPorts();
         var context = NewContext();
 
-        var result = await Controller<InvoicesController>(fakes, context).More("12");
+        var result = await Controller<InvoicesController>(fakes, context).More("12", new InvoiceEntryParameters());
 
         Assert.IsType<EmptyResult>(result.Result);
         Assert.Equal(12L, Assert.Single(fakes.Invoices.Calls).Arg<long>());
@@ -453,7 +454,6 @@ public sealed class ControllerContractTests
     {
         var fakes = new FakeDataPorts();
         fakes.Lookups.PatientCoverage = new PatientCoverageSnapshot { PatientNo = PatientNo, CompCode = "0" };
-        fakes.InvoiceApi.InvoiceNo = 4321;
         var context = NewContext();
         var draft = CashDraft();
         draft = draft with { DraftSeal = fakes.InvoiceApi.SealDraftDate(draft.RequestId, draft.DraftDate) };
@@ -462,9 +462,9 @@ public sealed class ControllerContractTests
 
         var created = Assert.IsType<CreatedResult>(result.Result);
         Assert.Equal(StatusCodes.Status201Created, created.StatusCode);
-        Assert.Equal("/api/invoices/4321", created.Location);
         var invoice = Assert.IsType<CreateInvoiceResponse>(created.Value);
-        Assert.Equal(4321L, invoice.InvNo);
+        Assert.Equal($"/api/invoices/{invoice.InvNo.ToString(CultureInfo.InvariantCulture)}", created.Location);
+        Assert.Single(fakes.CallsTo(nameof(FakeBilInvoiceApiGateway.CreateFullInvoice)));
         Assert.Equal(0, context.Response.Body.Length);
     }
 
@@ -579,6 +579,61 @@ public sealed class ControllerContractTests
         var call = Assert.Single(fakes.Lovs.Calls);
         Assert.Equal(method, call.Method);
         Assert.Contains(number, call.Args.OfType<int>());
+    }
+
+    [Theory]
+    [Trait("Decision", "D-111")]
+    [InlineData("/api/invoices/5?localDocType=783", "GetInvoice", 783)]
+    [InlineData("/api/invoices/5/more?localDocType=532", "GetMoreDetails", 532)]
+    [InlineData("/api/invoices/5", "GetInvoice", 505)]
+    [InlineData("/api/invoices/5/more", "GetMoreDetails", 505)]
+    public async Task Pipeline_SavedInvoiceRead_PassesTheQueryLocalDocTypeToTheRead(string path, string method, int localDocType)
+    {
+        var fakes = new FakeDataPorts();
+
+        var (status, _, body) = await SendAsync(fakes, "GET", path);
+
+        Assert.Equal(StatusCodes.Status404NotFound, status);
+        Assert.Equal("not-found", body.GetProperty("type").GetString());
+        var call = Assert.Single(fakes.Invoices.Calls);
+        Assert.Equal(method, call.Method);
+        Assert.Equal(new object?[] { 5L, localDocType }, call.Args);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-111")]
+    [InlineData("/api/invoices/5?localDocType=0")]
+    [InlineData("/api/invoices/5/more?localDocType=999")]
+    public async Task Pipeline_SavedInvoiceReadWithAnUnmappedLocalDocType_Writes422OnLocalDocTypeWithoutReads(string path)
+    {
+        var fakes = new FakeDataPorts();
+
+        var (status, contentType, body) = await SendAsync(fakes, "GET", path);
+
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, status);
+        Assert.Equal(ProblemJson, contentType);
+        Assert.Equal("field-validation", body.GetProperty("type").GetString());
+        var message = Assert.Single(body.GetProperty("messages").EnumerateArray());
+        Assert.Equal("LOCAL_DOC_TYPE", message.GetProperty("field").GetString());
+        Assert.Equal(LocalDocTypeText, message.GetProperty("text").GetString());
+        Assert.Equal(ValidationMessage.Blocking, message.GetProperty("severity").GetString());
+        Assert.Empty(fakes.Journal);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-111")]
+    [InlineData("/api/invoices/5?localDocType=abc")]
+    [InlineData("/api/invoices/5/more?localDocType=abc")]
+    public async Task Pipeline_SavedInvoiceReadWithANonIntegerLocalDocType_IsRejectedOnLocalDocTypeWithoutReads(string path)
+    {
+        var fakes = new FakeDataPorts();
+
+        var (status, _, body) = await SendAsync(fakes, "GET", path);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, status);
+        var error = Assert.Single(body.GetProperty("errors").EnumerateObject());
+        Assert.Equal("LOCAL_DOC_TYPE", ModelStateFieldMap.FieldOf(error.Name));
+        Assert.Empty(fakes.Journal);
     }
 
     /// <summary>Sends one request with the operator headers and an optional JSON body through the controllers, the exception handler and the operator-context middleware, in-process.</summary>

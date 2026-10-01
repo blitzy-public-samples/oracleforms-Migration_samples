@@ -214,7 +214,7 @@ export interface InvoiceEntryParameters {
   /** PARAMETER.DIRECT_COMP_SHARE. */
   directCompShare: number | null;
   /** PARAMETER.LOCAL_DOC_TYPE. */
-  readonly localDocType: number;
+  localDocType: number;
   /** PARAMETER.VISIT_UNIQUE. */
   visitUnique: string | null;
   /** PARAMETER.NEW_DOC. */
@@ -843,7 +843,8 @@ export type ProblemType =
   | 'operator-context-missing'
   | 'open-item'
   | 'oracle-unavailable'
-  | 'oracle-error';
+  | 'oracle-error'
+  | 'not-found';
 
 /** Oracle error catalogue kinds carried by a problem body. */
 export type ProblemKind =
@@ -869,7 +870,7 @@ export interface ProblemPayload {
   adjusted?: AdjustedValues;
   /** Open-item id of a blocked operation (open-item). */
   openItemId?: string | null;
-  /** Oracle text after the ORA prefix, 'The Oracle error text could not be read.' when it cannot be extracted, or the open-item message. */
+  /** Oracle text after the ORA prefix, or 'The Oracle error text could not be read.' (oracle-business-error, operator-context-missing); the open-item message (open-item); the text naming what was not found (not-found); 'The Oracle connection string is not configured or is not well-formed.' (oracle-error with no number). */
   message?: string | null;
   /** Signed Oracle error number, such as -20931. */
   oracleErrorNumber?: number | null;

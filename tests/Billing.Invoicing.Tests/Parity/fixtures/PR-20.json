@@ -17,7 +17,7 @@
         "operation": "BilInvoiceApiGateway.CreateFullInvoice",
         "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "subPayType": 1, "discT": 0 },
         "lines": [
-          { "serviceId": "1001", "qty": 1, "patServReqRowId": 7001, "approvRefNo": null }
+          { "serviceId": "1001", "qty": 1, "patServReqRowId": 7201, "approvRefNo": null }
         ],
         "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "0F2A7C5E9B3D4E61A8C2D7F14B6E9A30" },
         "requestId": "20A00000000000000000000000000001",
@@ -26,13 +26,13 @@
       },
       "requires": {
         "rows": [
-          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
-          { "table": "PAT_SERV_REQ", "key": { "PAT_SERV_REQ_ROW_ID": 7001 }, "columns": { "D_INV_ROW_ID": null } },
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "PAT_SERV_REQ", "key": { "PAT_SERV_REQ_ROW_ID": 7201 }, "columns": { "D_INV_ROW_ID": null } },
           {
             "table": "V_SERVICES_REQ",
-            "key": { "PAT_SERV_REQ_ROW_ID": 7001 },
+            "key": { "PAT_SERV_REQ_ROW_ID": 7201 },
             "columns": {
-              "PATIENTNO": 990000001,
+              "PATIENTNO": "990000001",
               "PAY_TYPE": "Cash",
               "SERVICEID": "1001",
               "QTY": 1,
@@ -60,7 +60,7 @@
         "operation": "BilInvoiceApiGateway.CreateFullInvoice",
         "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "subPayType": 1, "discT": 0 },
         "lines": [
-          { "serviceId": "1001", "qty": 1, "patServReqRowId": 7002, "approvRefNo": null }
+          { "serviceId": "1001", "qty": 1, "patServReqRowId": 7202, "approvRefNo": null }
         ],
         "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "0F2A7C5E9B3D4E61A8C2D7F14B6E9A30" },
         "requestId": "20A00000000000000000000000000002",
@@ -69,13 +69,13 @@
       },
       "requires": {
         "rows": [
-          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
-          { "table": "PAT_SERV_REQ", "key": { "PAT_SERV_REQ_ROW_ID": 7002 }, "columns": { "D_INV_ROW_ID": 880002 } },
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "PAT_SERV_REQ", "key": { "PAT_SERV_REQ_ROW_ID": 7202 }, "columns": { "D_INV_ROW_ID": 880002 } },
           {
             "table": "V_SERVICES_REQ",
-            "key": { "PAT_SERV_REQ_ROW_ID": 7002 },
+            "key": { "PAT_SERV_REQ_ROW_ID": 7202 },
             "columns": {
-              "PATIENTNO": 990000001,
+              "PATIENTNO": "990000001",
               "PAY_TYPE": "Cash",
               "SERVICEID": "1001",
               "QTY": 1,
@@ -102,7 +102,7 @@
         "operation": "BilInvoiceApiGateway.CreateFullInvoice",
         "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "subPayType": 1, "discT": 0 },
         "lines": [
-          { "serviceId": "1001", "qty": 1, "patServReqRowId": 7003, "approvRefNo": null }
+          { "serviceId": "1001", "qty": 1, "patServReqRowId": 7203, "approvRefNo": null }
         ],
         "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "0F2A7C5E9B3D4E61A8C2D7F14B6E9A30" },
         "requestId": "20A00000000000000000000000000003",
@@ -111,13 +111,13 @@
       },
       "requires": {
         "rows": [
-          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
-          { "table": "PAT_SERV_REQ", "key": { "PAT_SERV_REQ_ROW_ID": 7003 }, "columns": { "D_INV_ROW_ID": null } },
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "PAT_SERV_REQ", "key": { "PAT_SERV_REQ_ROW_ID": 7203 }, "columns": { "D_INV_ROW_ID": null } },
           {
             "table": "V_SERVICES_REQ",
-            "key": { "PAT_SERV_REQ_ROW_ID": 7003 },
+            "key": { "PAT_SERV_REQ_ROW_ID": 7203 },
             "columns": {
-              "PATIENTNO": 990000001,
+              "PATIENTNO": "990000001",
               "PAY_TYPE": "Cash",
               "SERVICEID": "1001",
               "QTY": 1,
@@ -144,7 +144,7 @@
         "operation": "BilInvoiceApiGateway.CreateFullInvoice",
         "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 2, "subPayType": 1, "discT": 0 },
         "lines": [
-          { "serviceId": "1001", "qty": 1, "patServReqRowId": 7004, "approvRefNo": null }
+          { "serviceId": "1001", "qty": 1, "patServReqRowId": 7204, "approvRefNo": null }
         ],
         "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "0F2A7C5E9B3D4E61A8C2D7F14B6E9A30" },
         "requestId": "20A00000000000000000000000000004",
@@ -153,13 +153,13 @@
       },
       "requires": {
         "rows": [
-          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
-          { "table": "PAT_SERV_REQ", "key": { "PAT_SERV_REQ_ROW_ID": 7004 }, "columns": { "D_INV_ROW_ID": null } },
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "PAT_SERV_REQ", "key": { "PAT_SERV_REQ_ROW_ID": 7204 }, "columns": { "D_INV_ROW_ID": null } },
           {
             "table": "V_SERVICES_REQ",
-            "key": { "PAT_SERV_REQ_ROW_ID": 7004 },
+            "key": { "PAT_SERV_REQ_ROW_ID": 7204 },
             "columns": {
-              "PATIENTNO": 990000001,
+              "PATIENTNO": "990000001",
               "PAY_TYPE": "Credit",
               "SERVICEID": "1001",
               "QTY": 1,
@@ -186,7 +186,7 @@
         "operation": "BilInvoiceApiGateway.CreateFullInvoice",
         "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 2, "subPayType": 1, "discT": 0 },
         "lines": [
-          { "serviceId": "1001", "qty": 1, "patServReqRowId": 7005, "approvRefNo": "AP-55" }
+          { "serviceId": "1001", "qty": 1, "patServReqRowId": 7205, "approvRefNo": "AP-55" }
         ],
         "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "0F2A7C5E9B3D4E61A8C2D7F14B6E9A30" },
         "requestId": "20A00000000000000000000000000005",
@@ -195,13 +195,13 @@
       },
       "requires": {
         "rows": [
-          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
-          { "table": "PAT_SERV_REQ", "key": { "PAT_SERV_REQ_ROW_ID": 7005 }, "columns": { "D_INV_ROW_ID": null } },
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "PAT_SERV_REQ", "key": { "PAT_SERV_REQ_ROW_ID": 7205 }, "columns": { "D_INV_ROW_ID": null } },
           {
             "table": "V_SERVICES_REQ",
-            "key": { "PAT_SERV_REQ_ROW_ID": 7005 },
+            "key": { "PAT_SERV_REQ_ROW_ID": 7205 },
             "columns": {
-              "PATIENTNO": 990000001,
+              "PATIENTNO": "990000001",
               "PAY_TYPE": "Credit",
               "SERVICEID": "1001",
               "QTY": 1,

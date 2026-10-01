@@ -23,8 +23,8 @@
       },
       "requires": {
         "rows": [
-          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
-          { "table": "BIL_INVOICE_CREATE_REQUEST", "key": { "REQUEST_ID": "A22E0000000000000000000000000003" }, "columns": { "INV_NO": null, "PATIENTNO": 990000001, "COMPLETED_AT": null } }
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "BIL_INVOICE_CREATE_REQUEST", "key": { "REQUEST_ID": "A22E0000000000000000000000000003" }, "columns": { "INV_NO": null, "PATIENTNO": "990000001", "COMPLETED_AT": null } }
         ],
         "context": []
       },
@@ -44,8 +44,8 @@
       },
       "requires": {
         "rows": [
-          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
-          { "table": "BIL_INVOICE_CREATE_REQUEST", "key": { "REQUEST_ID": "A22E0000000000000000000000000004" }, "columns": { "INV_NO": 880000010, "PATIENTNO": 990000002, "COMPLETED_AT": "2026-09-28T10:05:00" } }
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "BIL_INVOICE_CREATE_REQUEST", "key": { "REQUEST_ID": "A22E0000000000000000000000000004" }, "columns": { "INV_NO": 880000010, "PATIENTNO": "990000002", "COMPLETED_AT": "2026-09-28T10:05:00" } }
         ],
         "context": []
       },
@@ -65,8 +65,8 @@
       },
       "requires": {
         "rows": [
-          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
-          { "table": "BIL_INVOICE_CREATE_REQUEST", "key": { "REQUEST_ID": "A22E0000000000000000000000000005" }, "columns": { "INV_NO": 880000011, "PATIENTNO": 990000001, "COMPLETED_AT": "2026-09-28T10:05:00" } },
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "BIL_INVOICE_CREATE_REQUEST", "key": { "REQUEST_ID": "A22E0000000000000000000000000005" }, "columns": { "INV_NO": 880000011, "PATIENTNO": "990000001", "COMPLETED_AT": "2026-09-28T10:05:00" } },
           { "table": "T_INV", "key": { "INV_NO": 880000011 }, "absent": true }
         ],
         "context": []
@@ -87,9 +87,9 @@
       },
       "requires": {
         "rows": [
-          { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
-          { "table": "BIL_INVOICE_CREATE_REQUEST", "key": { "REQUEST_ID": "A22E0000000000000000000000000006" }, "columns": { "INV_NO": 880000012, "PATIENTNO": 990000001, "COMPLETED_AT": "2026-09-28T10:05:00" } },
-          { "table": "T_INV", "key": { "INV_NO": 880000012 }, "columns": { "PATIENTNO": 990000001 } }
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "BIL_INVOICE_CREATE_REQUEST", "key": { "REQUEST_ID": "A22E0000000000000000000000000006" }, "columns": { "INV_NO": 880000012, "PATIENTNO": "990000001", "COMPLETED_AT": "2026-09-28T10:05:00" } },
+          { "table": "T_INV", "key": { "INV_NO": 880000012 }, "columns": { "PATIENTNO": "990000001" } }
         ],
         "context": []
       },

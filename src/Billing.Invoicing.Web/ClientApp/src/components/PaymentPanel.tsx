@@ -430,7 +430,7 @@ export default function PaymentPanel({ state, dispatch, onValidate }: PaymentPan
       </div>
 
       <div className="field">
-        <label id={ids.discT}>Discount Type</label>
+        <span id={ids.discT} className="field-caption">Discount Type</span>
         <div className="field-row" role="radiogroup" aria-labelledby={ids.discT}>
           <label>
             <input

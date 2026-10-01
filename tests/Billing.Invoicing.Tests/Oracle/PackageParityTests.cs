@@ -764,7 +764,6 @@ public sealed class PackageParityTests
     private static string GatewayName(Operation operation) =>
         OperationNames.First(pair => pair.Value == operation).Key;
 
-
     /// <summary>Maps a case input onto the gateway call it names; every input key must be one the operation consumes.</summary>
     private static CasePlan PlanCase(CaseLabel label, JsonElement input, Operation defaultOperation)
     {
@@ -1119,7 +1118,6 @@ public sealed class PackageParityTests
         where T : struct =>
         value ?? throw label.Precondition($"input.{path} is missing.");
 
-
     /// <summary>Reads the connection and transaction of an <see cref="OracleSession"/> for in-session SELECT statements.</summary>
     private static (OracleConnection Connection, OracleTransaction Transaction) SessionHandles(IOracleSession session)
     {
@@ -1400,7 +1398,6 @@ public sealed class PackageParityTests
         JsonValueKind.Number when value.TryGetDecimal(out var number) => number,
         _ => throw label.Precondition($"key {column} value {value.GetRawText()} is neither a string nor a decimal number."),
     };
-
 
     /// <summary>Reads requires.context into value checks: an explicit output field, a values object, a dotted name with an optional [serviceid], or flat field keys.</summary>
     /// <param name="label">Case under test.</param>
@@ -1930,7 +1927,6 @@ public sealed class PackageParityTests
         _ => $"{value.GetType().Name} '{Convert.ToString(value, CultureInfo.InvariantCulture)}'",
     };
 
-
     /// <summary>Replaces each {name} token in the expected string values with the case's own expected scalar value of that name.</summary>
     private static JsonElement RenderTemplates(CaseLabel label, JsonElement values)
     {
@@ -2238,4 +2234,3 @@ public sealed class PackageParityTests
             key is null ? string.Empty : key.Replace("_", string.Empty, StringComparison.Ordinal).ToUpperInvariant();
     }
 }
-

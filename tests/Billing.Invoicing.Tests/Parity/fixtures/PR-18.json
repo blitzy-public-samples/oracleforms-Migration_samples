@@ -99,14 +99,14 @@
       "status": "derivable",
       "input": {
         "operation": "BilInvoiceApiGateway.GetPackageLines",
-        "packageServiceId": "P100",
+        "packageServiceId": "P101",
         "listId": 1,
         "parentSourceId": null
       },
       "requires": {
         "rows": [
-          { "table": "SERVICES", "key": { "SERVICEID": "P100", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 1, "PACKAGE_PRICING_METHOD": "FIXED_PRICE" } },
-          { "table": "PACKAGE_DTL", "key": { "SERVICEID": "P100", "LIST_ID": 1 }, "rowCount": 0 }
+          { "table": "SERVICES", "key": { "SERVICEID": "P101", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 1, "PACKAGE_PRICING_METHOD": "FIXED_PRICE" } },
+          { "table": "PACKAGE_DTL", "key": { "SERVICEID": "P101", "LIST_ID": 1 }, "rowCount": 0 }
         ],
         "context": []
       },
@@ -121,9 +121,9 @@
         "operation": "BilInvoiceApiGateway.CalculatePreview",
         "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
         "lines": [
-          { "clientId": "L1", "serviceId": "P100", "qty": 1, "discountType": "N", "disc": 0, "packageServiceId": "P100", "packageInstanceId": "P100:9E3A1C5B7D2F4A6B8C0D1E2F3A4B5C6D", "packageLineRole": "PARENT", "packageComponentOrder": 0, "packagePricingMethod": "FIXED_PRICE", "packageDefinitionToken": "2d2397f15608d5667548afd9aade4d1bf542fc0f38598b1399a2781c1a3d9cbc" },
-          { "clientId": "L2", "serviceId": "2001", "qty": 2, "discountType": "N", "disc": 0, "packageServiceId": "P100", "packageInstanceId": "P100:9E3A1C5B7D2F4A6B8C0D1E2F3A4B5C6D", "packageLineRole": "COMPONENT", "packageComponentOrder": 1, "packagePricingMethod": "FIXED_PRICE", "packageDefinitionToken": "2d2397f15608d5667548afd9aade4d1bf542fc0f38598b1399a2781c1a3d9cbc" },
-          { "clientId": "L3", "serviceId": "2002", "qty": 1, "discountType": "N", "disc": 0, "packageServiceId": "P100", "packageInstanceId": "P100:9E3A1C5B7D2F4A6B8C0D1E2F3A4B5C6D", "packageLineRole": "COMPONENT", "packageComponentOrder": 2, "packagePricingMethod": "FIXED_PRICE", "packageDefinitionToken": "2d2397f15608d5667548afd9aade4d1bf542fc0f38598b1399a2781c1a3d9cbc" }
+          { "clientId": "L1", "serviceId": "P102", "qty": 1, "discountType": "N", "disc": 0, "packageServiceId": "P102", "packageInstanceId": "P102:9E3A1C5B7D2F4A6B8C0D1E2F3A4B5C6D", "packageLineRole": "PARENT", "packageComponentOrder": 0, "packagePricingMethod": "FIXED_PRICE", "packageDefinitionToken": "2d2397f15608d5667548afd9aade4d1bf542fc0f38598b1399a2781c1a3d9cbc" },
+          { "clientId": "L2", "serviceId": "2001", "qty": 2, "discountType": "N", "disc": 0, "packageServiceId": "P102", "packageInstanceId": "P102:9E3A1C5B7D2F4A6B8C0D1E2F3A4B5C6D", "packageLineRole": "COMPONENT", "packageComponentOrder": 1, "packagePricingMethod": "FIXED_PRICE", "packageDefinitionToken": "2d2397f15608d5667548afd9aade4d1bf542fc0f38598b1399a2781c1a3d9cbc" },
+          { "clientId": "L3", "serviceId": "2002", "qty": 1, "discountType": "N", "disc": 0, "packageServiceId": "P102", "packageInstanceId": "P102:9E3A1C5B7D2F4A6B8C0D1E2F3A4B5C6D", "packageLineRole": "COMPONENT", "packageComponentOrder": 2, "packagePricingMethod": "FIXED_PRICE", "packageDefinitionToken": "2d2397f15608d5667548afd9aade4d1bf542fc0f38598b1399a2781c1a3d9cbc" }
         ],
         "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "5F0C3B8A2D6E4F1A9B7C0D3E5F8A1B2C" },
         "amount1Auto": true
@@ -131,7 +131,7 @@
       "requires": {
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
-          { "table": "SERVICES", "key": { "SERVICEID": "P100", "LIST_ID": 1, "IS_PACKAGE": 1 }, "rowCount": 0 }
+          { "table": "SERVICES", "key": { "SERVICEID": "P102", "LIST_ID": 1, "IS_PACKAGE": 1 }, "rowCount": 0 }
         ],
         "context": []
       },

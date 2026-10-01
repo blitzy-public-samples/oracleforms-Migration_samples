@@ -770,6 +770,7 @@ public sealed class DataContractTests
 
     [Fact]
     [Trait("Decision", "D-106")]
+    [Trait("Decision", "D-129")]
     public async Task SubCompanySql_InSqlite_ListsOnlySubCompaniesOfACompanyOfTheCentre()
     {
         var own = await LovRows(LovQueries.SubCompanySql, new { compCode = OwnCompany, infoCenterId = OwnCentre });
@@ -784,6 +785,7 @@ public sealed class DataContractTests
 
     [Fact]
     [Trait("Decision", "D-106")]
+    [Trait("Decision", "D-129")]
     public async Task TheClassSql_InSqlite_ListsOnlyClassesOfASubCompanyOfACompanyOfTheCentre()
     {
         var own = await LovRows(LovQueries.TheClassSql, new { subCompCode = "S1", infoCenterId = OwnCentre });
@@ -799,6 +801,7 @@ public sealed class DataContractTests
     [Fact]
     [Trait("Decision", "D-105")]
     [Trait("Decision", "D-106")]
+    [Trait("Decision", "D-129")]
     public async Task ReservNoSql_InSqlite_ListsOnlyTheProjectedColumnsForAnActiveDoctorOfTheCentre()
     {
         var own = await LovRows(LovQueries.ReservNoSql, ReservationBinds(ActiveDoctor, OwnCentre));
@@ -815,6 +818,7 @@ public sealed class DataContractTests
 
     [Fact]
     [Trait("Decision", "D-105")]
+    [Trait("Decision", "D-129")]
     public async Task PayTypesSql_InSqlite_ListsOnlyTheTypeIdAndEnglishName()
     {
         var rows = await LovRows(LovQueries.PayTypesSql, new { lang = "E" });
@@ -960,7 +964,7 @@ public sealed class DataContractTests
         return select;
     }
 
-    /// <summary>Runs a LOV SELECT unchanged over the seeded rows in an in-memory SQLite database with DECODE registered.</summary>
+    /// <summary>Runs a LOV SELECT unchanged over the seeded rows in an in-memory SQLite database with DECODE registered (D-129).</summary>
     /// <returns>The rows keyed by upper-case column name in column order.</returns>
     private static async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> LovRows(string sql, object binds)
     {

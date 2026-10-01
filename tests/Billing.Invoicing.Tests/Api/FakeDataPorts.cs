@@ -67,6 +67,9 @@ public sealed class FakeOracleSession : IOracleSession
     /// <summary>True when the whole transaction was rolled back.</summary>
     public bool RolledBack => Events.Contains(RollbackEvent);
 
+    /// <summary>Failure of a savepoint call by its event name, Save:name or Rollback:name, raised after the event is recorded; null, or a null result, lets the call succeed.</summary>
+    public Func<string, Exception?>? SavepointFailure { get; set; }
+
     public Task Commit(CancellationToken cancellationToken = default)
     {
         Log(CommitEvent);
@@ -79,14 +82,24 @@ public sealed class FakeOracleSession : IOracleSession
         return Task.CompletedTask;
     }
 
-    public void Rollback(string savepointName) => Log($"{RollbackEvent}:{savepointName}");
+    public Task Rollback(string savepointName, CancellationToken cancellationToken = default) =>
+        Savepoint($"{RollbackEvent}:{savepointName}");
 
-    public void Save(string savepointName) => Log($"Save:{savepointName}");
+    public Task Save(string savepointName, CancellationToken cancellationToken = default) =>
+        Savepoint($"Save:{savepointName}");
 
     public ValueTask DisposeAsync()
     {
         Log(DisposeEvent);
         return ValueTask.CompletedTask;
+    }
+
+    private Task Savepoint(string sessionEvent)
+    {
+        Log(sessionEvent);
+        return SavepointFailure?.Invoke(sessionEvent) is { } failure
+            ? Task.FromException(failure)
+            : Task.CompletedTask;
     }
 
     private void Log(string sessionEvent)
@@ -114,10 +127,13 @@ public sealed class FakeOracleSessionFactory : IOracleSessionFactory
     /// <summary>Sessions opened, in opening order.</summary>
     public List<FakeOracleSession> Sessions { get; } = new();
 
+    /// <summary><see cref="FakeOracleSession.SavepointFailure"/> of every session opened.</summary>
+    public Func<string, Exception?>? SavepointFailure { get; set; }
+
     public Task<IOracleSession> Open(CancellationToken cancellationToken = default)
     {
         FakeRecorder.Record(_journal, Calls, nameof(IOracleSessionFactory), nameof(Open), []);
-        var session = new FakeOracleSession(_journal);
+        var session = new FakeOracleSession(_journal) { SavepointFailure = SavepointFailure };
         Sessions.Add(session);
         return Task.FromResult<IOracleSession>(session);
     }
@@ -135,11 +151,6 @@ public sealed class FakeLookupQueries : ILookupQueries
         _journal = journal;
         PackageComponentFlags = packageServiceId => ServiceProfile(packageServiceId)?.Components ?? Array.Empty<ServiceProfile>();
         ServiceQueueFlags = QueueFlagsFromProfiles;
-        LockedPatientCardId = () => PatientCardId;
-        LockedClassAdvancedMode = () => ClassAdvancedMode;
-        LockedServiceProfile = ServiceProfileWithQueueFlag;
-        LockedPackageComponentFlags = packageServiceId => PackageComponentFlags(packageServiceId);
-        LockedMaxDeductable = () => PatientCoverage?.MaxDeductable;
     }
 
     /// <summary>Recorded calls.</summary>
@@ -208,24 +219,6 @@ public sealed class FakeLookupQueries : ILookupQueries
 
     /// <summary>DISC_CLASSES.USE_ADVANCED of any class.</summary>
     public int? ClassAdvancedMode { get; set; }
-
-    /// <summary>CARD_ID of the locked PATIENT read; defaults to <see cref="PatientCardId"/> at call time.</summary>
-    public Func<int?> LockedPatientCardId { get; set; }
-
-    /// <summary>USE_ADVANCED of the locked DISC_CLASSES read; defaults to <see cref="ClassAdvancedMode"/> at call time.</summary>
-    public Func<int?> LockedClassAdvancedMode { get; set; }
-
-    /// <summary>Service profile by service id of the locked SERVICES read; defaults to <see cref="ServiceProfile"/> carrying the id's <see cref="ServiceQueueFlags"/> flag, or a profile of that flag alone when there is no profile.</summary>
-    public Func<string, ServiceProfile?> LockedServiceProfile { get; set; }
-
-    /// <summary>Component profiles by package service id of the locked PACKAGE_DTL read; defaults to <see cref="PackageComponentFlags"/> at call time.</summary>
-    public Func<string, IReadOnlyList<ServiceProfile>> LockedPackageComponentFlags { get; set; }
-
-    /// <summary>MAX_DEDUCTABLE of the locked V_PAT_DATA read; defaults to the <see cref="PatientCoverage"/> deductible at call time.</summary>
-    public Func<decimal?> LockedMaxDeductable { get; set; }
-
-    /// <summary>Patient, deductible and card id by claim number of the locked T_INV read of a claim's first invoice; null by default, and <see cref="FakeDataPorts"/> sets it to its <see cref="FakeInvoiceQueries.ClaimPreload"/> at call time.</summary>
-    public Func<string, (string? PatientNo, decimal? MaxDeductable, int? CardId)?> LockedClaimPreload { get; set; } = _ => null;
 
     public Task<IReadOnlyDictionary<int, string?>> GetPreferences(CancellationToken cancellationToken = default)
     {
@@ -342,65 +335,6 @@ public sealed class FakeLookupQueries : ILookupQueries
     {
         Record(nameof(GetClassAdvancedMode), [subCompCode, classCode]);
         return Task.FromResult(ClassAdvancedMode);
-    }
-
-    public Task<int?> LockPatientCardId(IOracleSession session, string patientNo, CancellationToken cancellationToken = default)
-    {
-        Record(nameof(LockPatientCardId), [session, patientNo]);
-        return Task.FromResult(LockedPatientCardId());
-    }
-
-    public Task<int?> LockClassAdvancedMode(IOracleSession session, string subCompCode, string classCode, CancellationToken cancellationToken = default)
-    {
-        Record(nameof(LockClassAdvancedMode), [session, subCompCode, classCode]);
-        return Task.FromResult(LockedClassAdvancedMode());
-    }
-
-    /// <summary>Returns the <see cref="LockedServiceProfile"/> of each distinct id that has one, recording a copy of the ids.</summary>
-    public Task<IReadOnlyDictionary<string, ServiceProfile>> LockServiceProfiles(IOracleSession session, IReadOnlyCollection<string> serviceIds, decimal listId, CancellationToken cancellationToken = default)
-    {
-        Record(nameof(LockServiceProfiles), [session, serviceIds.ToArray(), listId]);
-        var profiles = new Dictionary<string, ServiceProfile>(StringComparer.Ordinal);
-        foreach (var serviceId in serviceIds)
-        {
-            if (!profiles.ContainsKey(serviceId) && LockedServiceProfile(serviceId) is { } profile)
-            {
-                profiles[serviceId] = profile;
-            }
-        }
-
-        return Task.FromResult<IReadOnlyDictionary<string, ServiceProfile>>(profiles);
-    }
-
-    public Task<IReadOnlyList<ServiceProfile>> LockPackageComponentFlags(IOracleSession session, string packageServiceId, decimal listId, CancellationToken cancellationToken = default)
-    {
-        Record(nameof(LockPackageComponentFlags), [session, packageServiceId, listId]);
-        return Task.FromResult(LockedPackageComponentFlags(packageServiceId));
-    }
-
-    public Task<decimal?> LockPatientMaxDeductable(IOracleSession session, string patientNo, CancellationToken cancellationToken = default)
-    {
-        Record(nameof(LockPatientMaxDeductable), [session, patientNo]);
-        return Task.FromResult(LockedMaxDeductable());
-    }
-
-    public Task<(string? PatientNo, decimal? MaxDeductable, int? CardId)?> LockClaimPreload(IOracleSession session, string claimNo, CancellationToken cancellationToken = default)
-    {
-        Record(nameof(LockClaimPreload), [session, claimNo]);
-        return Task.FromResult(LockedClaimPreload(claimNo));
-    }
-
-    private ServiceProfile? ServiceProfileWithQueueFlag(string serviceId)
-    {
-        var profile = ServiceProfile(serviceId);
-        if (!ServiceQueueFlags(new[] { serviceId }).TryGetValue(serviceId, out var flag))
-        {
-            return profile;
-        }
-
-        return profile is null
-            ? new ServiceProfile { ServiceId = serviceId, AddToQue = flag }
-            : profile with { AddToQue = flag };
     }
 
     private IReadOnlyDictionary<string, int> QueueFlagsFromProfiles(IReadOnlyCollection<string> serviceIds)
@@ -1018,8 +952,6 @@ public sealed class FakeDataPorts
         SessionFactory = new FakeOracleSessionFactory(Journal);
         Lookups = new FakeLookupQueries(Journal);
         Invoices = new FakeInvoiceQueries(Journal);
-        Lookups.LockedClaimPreload = claimNo =>
-            Invoices.ClaimPreload(claimNo) is { } preload ? (preload.Header.PatientNo, preload.MaxDeductable, preload.CardId) : null;
         Lovs = new FakeLovQueries(Journal);
         InvoiceApi = new FakeBilInvoiceApiGateway(Journal);
         Import = new FakeBilImportGateway(Journal);

@@ -122,11 +122,12 @@ public sealed class InvoiceQueries : IInvoiceQueries
 
     /// <summary>Saved invoice header, lines and display values keyed by column name, or null when not found.</summary>
     /// <param name="invNo">Invoice number.</param>
-    /// <param name="localDocType">LOCAL_DOC_TYPE resolved by the server: 532 or 505 filters ROW_TYPE 1, 783 filters ROW_TYPE 2.</param>
+    /// <param name="localDocType">LOCAL_DOC_TYPE of the request: 532 or 505 filters ROW_TYPE 1, 783 filters ROW_TYPE 2.</param>
     /// <param name="cancellationToken">Cancels the connection open and the reads.</param>
     /// <returns>The header, the lines in D_INV_ROW_ID order and the display values, or null.</returns>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="localDocType"/> is not 505, 532 or 783; no connection is opened.</exception>
     /// <exception cref="InvalidCastException">The saved invoice has no INVDATE, or a whole-number column holds a fractional number.</exception>
+    /// <exception cref="OverflowException">A whole-number column holds a number outside the Int32 or Int64 range.</exception>
     public async Task<(InvoiceHeaderDraft Header, IReadOnlyList<InvoiceLineDraft> Lines, IReadOnlyDictionary<string, object?> Display)?> GetInvoice(
         long invNo,
         int localDocType,
@@ -141,7 +142,7 @@ public sealed class InvoiceQueries : IInvoiceQueries
 
     /// <summary>More-details header, line and transfer rows of a saved invoice keyed by upper-case column name, or null when not found.</summary>
     /// <param name="invNo">Invoice number.</param>
-    /// <param name="localDocType">LOCAL_DOC_TYPE resolved by the server: 532 or 505 filters ROW_TYPE 1, 783 filters ROW_TYPE 2.</param>
+    /// <param name="localDocType">LOCAL_DOC_TYPE of the request: 532 or 505 filters ROW_TYPE 1, 783 filters ROW_TYPE 2.</param>
     /// <param name="cancellationToken">Cancels the connection open and the reads.</param>
     /// <returns>The header row, the line rows in D_INV_ROW_ID order and the transfer rows, or null.</returns>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="localDocType"/> is not 505, 532 or 783; no connection is opened.</exception>

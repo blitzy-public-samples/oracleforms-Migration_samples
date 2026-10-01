@@ -178,7 +178,7 @@ public sealed class BilInvoiceApiGateway : IBilInvoiceApiGateway
 
         var oracleSession = AsOracleSession(session);
 
-        return await ExecuteAsync(
+        var result = await ExecuteAsync(
             oracleSession,
             PlsqlBlocks.Create,
             inputs =>
@@ -194,6 +194,9 @@ public sealed class BilInvoiceApiGateway : IBilInvoiceApiGateway
             OutputArrayReader.ReadFullInvoiceResult,
             nameof(CreateFullInvoice),
             cancellationToken).ConfigureAwait(false);
+
+        oracleSession.EndCall();
+        return result;
     }
 
     /// <summary>Runs BIL_INVOICE_API.GET_BUNDLED_OFFER_IG_LINES for the draft's patient, pay type and date.</summary>
