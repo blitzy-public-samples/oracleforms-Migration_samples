@@ -19,21 +19,20 @@ public static class InvoicingDataRegistration
     /// <param name="configuration">Configuration holding <c>ConnectionStrings:HisOracle</c> and the <c>Invoicing:*</c> keys.</param>
     /// <returns>The same <paramref name="services"/> instance.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="services"/> or <paramref name="configuration"/> is null.</exception>
-    /// <exception cref="InvalidOperationException">An <c>Invoicing:*</c> value is present but is not an integer, <c>Invoicing:MaxOutputLines</c> or <c>Invoicing:CommandTimeoutSeconds</c> is below 1, <c>Invoicing:CommandTimeoutSeconds</c> is above <see cref="InvoicingDataOptions.MaxCommandTimeoutSeconds"/>, or <c>Invoicing:DraftSealKey</c> is malformed or is absent while <c>ConnectionStrings:HisOracle</c> is set.</exception>
+    /// <exception cref="InvalidOperationException">An <c>Invoicing:*</c> value is present but is not an integer, <c>Invoicing:MaxOutputLines</c> or <c>Invoicing:CommandTimeoutSeconds</c> is below 1, <c>Invoicing:CommandTimeoutSeconds</c> is above <see cref="InvoicingDataOptions.MaxCommandTimeoutSeconds"/>, or <c>Invoicing:DraftSealKey</c> is malformed or is absent while <c>ConnectionStrings:HisOracle</c> holds an attribute.</exception>
     public static IServiceCollection AddInvoicingData(this IServiceCollection services, IConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
 
-        var connectionString = configuration.GetConnectionString("HisOracle") ?? string.Empty;
         var options = new InvoicingDataOptions
         {
-            ConnectionString = connectionString,
+            ConnectionString = configuration.GetConnectionString("HisOracle") ?? string.Empty,
             ApplicationId = ReadInt(configuration, "Invoicing:ApplicationId", 48, int.MinValue, int.MaxValue),
             MaxOutputLines = ReadInt(configuration, "Invoicing:MaxOutputLines", 1000, 1, int.MaxValue),
             CommandTimeoutSeconds = ReadInt(configuration, "Invoicing:CommandTimeoutSeconds", 30, 1, InvoicingDataOptions.MaxCommandTimeoutSeconds),
-            DraftSealKey = ReadDraftSealKey(configuration, connectionString),
         };
+        options = options with { DraftSealKey = ReadDraftSealKey(configuration, options.HasConnectionString) };
 
         services.AddSingleton(options);
 
@@ -87,18 +86,18 @@ public static class InvoicingDataRegistration
         return n;
     }
 
-    /// <summary>Reads <c>Invoicing:DraftSealKey</c>, required once an Oracle connection string is set; blank returns empty.</summary>
+    /// <summary>Reads <c>Invoicing:DraftSealKey</c>, required once the Oracle connection string holds an attribute; blank returns empty.</summary>
     /// <param name="configuration">Configuration to read.</param>
-    /// <param name="connectionString">Configured <c>ConnectionStrings:HisOracle</c>.</param>
+    /// <param name="hasConnectionString">Whether <c>ConnectionStrings:HisOracle</c> holds an attribute (<see cref="InvoicingDataOptions.HasConnectionString"/>).</param>
     /// <returns>The trimmed base64 key, or empty when neither the key nor a connection string is set.</returns>
-    /// <exception cref="InvalidOperationException">The key is absent while a connection string is set, or is not base64 of at least <see cref="BilInvoiceApiGateway.MinDraftSealKeyBytes"/> bytes.</exception>
-    private static string ReadDraftSealKey(IConfiguration configuration, string connectionString)
+    /// <exception cref="InvalidOperationException">The key is absent while the connection string holds an attribute, or is not base64 of at least <see cref="BilInvoiceApiGateway.MinDraftSealKeyBytes"/> bytes.</exception>
+    private static string ReadDraftSealKey(IConfiguration configuration, bool hasConnectionString)
     {
         const string key = "Invoicing:DraftSealKey";
         var value = configuration[key]?.Trim() ?? string.Empty;
         if (value.Length == 0)
         {
-            return string.IsNullOrWhiteSpace(connectionString)
+            return !hasConnectionString
                 ? string.Empty
                 : throw new InvalidOperationException($"Configuration value '{key}' must be set when 'ConnectionStrings:HisOracle' is set.");
         }

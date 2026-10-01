@@ -36,6 +36,7 @@ public sealed class InvoiceWorkflowOrchestrationTests
     private const string ReplayMessage = "Invoice 9001 was already created for this request.";
     private const string CommitEvent = "Commit";
     private const string RollbackEvent = "Rollback";
+    private const string DisposeEvent = "Dispose";
     private const string ReceptionTransferSavepointEvent = "Save:dr21";
     private const string InvDateField = "INVDATE";
     private const string LineField = "LINE";
@@ -58,6 +59,7 @@ public sealed class InvoiceWorkflowOrchestrationTests
     private const int OnHold = 2;
     private const int PackageServiceLocation = 14;
     private const string VisitUnique = "V1";
+    private const string ConsultationClaim = "1";
     private const long SelectedRequestRowId = 7001L;
     private const string SelectedRequestRowUnreadableText = "Request import failed: a selected request line could not be read.";
     private const string SelectedRequestView = "V_SERVICES_REQ";
@@ -100,6 +102,21 @@ public sealed class InvoiceWorkflowOrchestrationTests
     private const long SavedInvoiceNo = 5L;
     private const int FormLocalDocType = 505;
     private const string SavedInsuranceNumber = "INS-5";
+    private const int LockedDoctor = 10;
+    private const int LockedDoctorClinic = 14;
+    private const string LockedDoctorClinicName = "General Clinic";
+    private const string LockedDoctorName = "Dr. Ahmed Ali";
+    private const int PickedDoctor = 11;
+    private const int PickedDoctorClinic = 15;
+    private const string PickedDoctorClinicName = "Women Clinic";
+    private const string PickedDoctorName = "Dr. Huda Nasser";
+    private const string ConsultationPatient = "2001";
+    private const string NewConsultationClaim = "1";
+    private const string FixedServiceCompany = "1059";
+    private const string ClinicNameItem = "CLINICNAME";
+    private const string DocNameItem = "DOC_NAME";
+    private const string ClaimNoItem = "CLAIM_NO";
+    private const string AddToListItem = "ADD_TO_LIST";
 
     private static readonly OperatorContext Operator = new()
     {
@@ -2170,6 +2187,99 @@ public sealed class InvoiceWorkflowOrchestrationTests
         Assert.Empty(fakes.Lovs.Calls);
     }
 
+    [Fact]
+    [Trait("Decision", "D-49")]
+    [Trait("OpenItem", "OI-42")]
+    public async Task GetLov_ReservNoWithoutAnyBind_NamesEveryMissingBindInItemOrder()
+    {
+        var fakes = new FakeDataPorts();
+
+        var response = await fakes.CreateService().GetLov(ReservationList, new Dictionary<string, string?>(), null, Operator);
+
+        AssertBindsRefused(
+            response,
+            fakes,
+            ReservationList,
+            LovBindRefusal(DocIdItem, "DOCIDX is required for the RESERV_NO list."),
+            LovBindRefusal(PatientNoItem, "PATIENTNO is required for the RESERV_NO list."),
+            LovBindRefusal(InvDateItem, "INVDATE is required for the RESERV_NO list."));
+    }
+
+    [Theory]
+    [Trait("Decision", "D-49")]
+    [InlineData("abc")]
+    [InlineData("012")]
+    public async Task GetLov_ReservNoWithANonCanonicalDoctorAndNoPatientOrDate_RefusesTheDoctorAndNamesTheMissingBinds(string docIdx)
+    {
+        var fakes = new FakeDataPorts();
+        var binds = new Dictionary<string, string?> { [DocIdItem] = docIdx };
+
+        var response = await fakes.CreateService().GetLov(ReservationList, binds, null, Operator);
+
+        AssertBindsRefused(
+            response,
+            fakes,
+            ReservationList,
+            LovBindRefusal(DocIdItem, "DOCIDX must be a positive whole number."),
+            LovBindRefusal(PatientNoItem, "PATIENTNO is required for the RESERV_NO list."),
+            LovBindRefusal(InvDateItem, "INVDATE is required for the RESERV_NO list."));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-49")]
+    public async Task GetLov_ReservNoWithAnOverlongPatientAndNoDate_RefusesThePatientAndNamesTheDate()
+    {
+        var fakes = new FakeDataPorts();
+        var binds = LovBinds();
+        binds[PatientNoItem] = "P123456789012";
+
+        var response = await fakes.CreateService().GetLov(ReservationList, binds, null, Operator);
+
+        AssertBindsRefused(
+            response,
+            fakes,
+            ReservationList,
+            LovBindRefusal(PatientNoItem, "PATIENTNO has 13 characters; at most 12 can be bound."),
+            LovBindRefusal(InvDateItem, "INVDATE is required for the RESERV_NO list."));
+    }
+
+    [Theory]
+    [Trait("Decision", "D-49")]
+    [InlineData(null, "PAYTYPE is required for the OFFERS list.")]
+    [InlineData("3", "PAYTYPE must be 1 (Cash) or 2 (Credit).")]
+    public async Task GetLov_OffersWithoutACashOrCreditPayTypeOrDate_NamesThePayTypeThenTheDate(string? payType, string payTypeText)
+    {
+        var fakes = new FakeDataPorts();
+        var binds = new Dictionary<string, string?>();
+        if (payType is not null)
+        {
+            binds[PayTypeItem] = payType;
+        }
+
+        var response = await fakes.CreateService().GetLov("OFFERS", binds, null, Operator);
+
+        AssertBindsRefused(
+            response,
+            fakes,
+            "OFFERS",
+            LovBindRefusal(PayTypeItem, payTypeText),
+            LovBindRefusal(InvDateItem, "INVDATE is required for the OFFERS list."));
+    }
+
+    private static MessageDto LovBindRefusal(string item, string text) =>
+        new() { Field = item, Text = text, Severity = ValidationMessage.Blocking, Rule = null };
+
+    private static void AssertBindsRefused(LovResponse? response, FakeDataPorts fakes, string lov, params MessageDto[] expected)
+    {
+        Assert.NotNull(response);
+        Assert.Equal(lov, response.Name);
+        Assert.Equal(expected, response.Messages);
+        Assert.Empty(response.Rows);
+        Assert.Empty(response.OpenItems);
+        Assert.False(response.ViewOnly);
+        Assert.Empty(fakes.Lovs.Calls);
+    }
+
     private static Dictionary<string, string?> LovBinds() => new(StringComparer.Ordinal)
     {
         [CompCodeItem] = CreditCompany,
@@ -3398,5 +3508,448 @@ public sealed class InvoiceWorkflowOrchestrationTests
         Assert.Single(fakes.PatientTransfer.Calls);
         Assert.False(Called(fakes.Legacy.Calls, nameof(ILegacyExternalCalls.ValidateTotalInvoice)));
         Assert.False(AnySessionCommitted(fakes));
+    }
+
+    /// <summary>Cash draft that reaches the package call of a rolled-back operation: a visit for ImportRequests, claim parameter 1 for ImportVisitLine, an ordinary line beside the package for ImportPackage.</summary>
+    private static async Task<DraftDto> RolledBackDraft(string operation) => operation switch
+    {
+        nameof(InvoiceWorkflowService.ImportRequests) => await RequestImportDraft(),
+        nameof(InvoiceWorkflowService.ImportVisitLine) =>
+            (await CashDraft()) with { Parameters = new InvoiceEntryParameters { ClaimNo = ConsultationClaim } },
+        nameof(InvoiceWorkflowService.ImportPackage) =>
+            (await CashDraft()) with { Lines = new[] { Line(OrdinaryService, "c1"), Line(PackageService, "p1") } },
+        _ => await CashDraft(),
+    };
+
+    /// <summary>Fakes answering one selected request row and two bundled-offer components.</summary>
+    private static FakeDataPorts ArrangeRolledBack(DraftDto draft)
+    {
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = PackageAwareProfile;
+        fakes.Invoices.SelectedRequestRows = (_, _, _) =>
+            new[] { (SelectedRequestRowId, OrdinaryService, (int?)null, (int?)0, (string?)null) };
+        fakes.InvoiceApi.BundledOfferLines = (_, _, _) =>
+            new[] { OfferComponent(FirstComponent, 71L, 40m), OfferComponent(SecondComponent, 72L, 60m) };
+        return fakes;
+    }
+
+    /// <summary>Runs a rolled-back operation, or the validation of a line target on line 0, and returns its response.</summary>
+    private static async Task<object> RunRolledBack(FakeDataPorts fakes, DraftDto draft, string operation)
+    {
+        var service = fakes.CreateService();
+        return operation switch
+        {
+            nameof(InvoiceWorkflowService.Preview) => await service.Preview(draft, Operator),
+            nameof(InvoiceWorkflowService.ImportRequests) =>
+                await service.ImportRequests(new ImportRequestsRequest { Draft = draft }, Operator),
+            nameof(InvoiceWorkflowService.ImportVisitLine) =>
+                await service.ImportVisitLine(new VisitLineRequest { Draft = draft }, Operator),
+            nameof(InvoiceWorkflowService.ImportPackage) => await service.ImportPackage(PackageRequest(draft), Operator),
+            nameof(InvoiceWorkflowService.ImportBundledOffer) =>
+                await service.ImportBundledOffer(new BundledOfferRequest { Draft = draft, OfferId = BundledOfferId }, Operator),
+            _ => await service.Validate(new ValidateDraftRequest { Draft = draft, Target = operation, LineIndex = 0 }, Operator),
+        };
+    }
+
+    /// <summary>Makes the package call of a rolled-back operation throw <paramref name="failure"/>.</summary>
+    private static void FailPackageCall(FakeDataPorts fakes, string operation, Exception failure)
+    {
+        switch (operation)
+        {
+            case nameof(InvoiceWorkflowService.ImportRequests):
+                fakes.Import.RequestLines = (_, _, _, _) => throw failure;
+                break;
+            case nameof(InvoiceWorkflowService.ImportVisitLine):
+                fakes.Import.VisitLine = (_, _) => throw failure;
+                break;
+            case nameof(InvoiceWorkflowService.ImportPackage):
+                fakes.InvoiceApi.PackageLines = (_, _, _) => throw failure;
+                break;
+            case nameof(InvoiceWorkflowService.ImportBundledOffer):
+                fakes.InvoiceApi.BundledOfferLines = (_, _, _) => throw failure;
+                break;
+            default:
+                fakes.InvoiceApi.PreviewFailure = (_, _) => failure;
+                break;
+        }
+    }
+
+    /// <summary>Sessions a rolled-back operation opens: the context preview and the package lines for ImportPackage, else one.</summary>
+    private static int RolledBackSessions(string operation) =>
+        operation == nameof(InvoiceWorkflowService.ImportPackage) ? 2 : 1;
+
+    /// <summary>Asserts that <paramref name="count"/> sessions were opened and each was rolled back, then disposed, and never committed.</summary>
+    private static void AssertRolledBackBeforeDisposal(FakeDataPorts fakes, int count)
+    {
+        Assert.Equal(count, fakes.SessionFactory.Sessions.Count);
+        Assert.All(fakes.SessionFactory.Sessions, session => Assert.Equal(new[] { RollbackEvent, DisposeEvent }, session.Events));
+        Assert.False(AnySessionCommitted(fakes));
+    }
+
+    [Theory]
+    [Trait("Decision", "D-135")]
+    [Trait("Decision", "D-10")]
+    [InlineData(nameof(InvoiceWorkflowService.Preview))]
+    [InlineData(nameof(InvoiceWorkflowService.ImportRequests))]
+    [InlineData(nameof(InvoiceWorkflowService.ImportVisitLine))]
+    [InlineData(nameof(InvoiceWorkflowService.ImportPackage))]
+    [InlineData(nameof(InvoiceWorkflowService.ImportBundledOffer))]
+    [InlineData("SERVICEID")]
+    [InlineData("QTY")]
+    public async Task RolledBackOperation_PackageCallSucceeds_RollsBackEverySessionBeforeDisposal(string operation)
+    {
+        var draft = await RolledBackDraft(operation);
+        var fakes = ArrangeRolledBack(draft);
+
+        await RunRolledBack(fakes, draft, operation);
+
+        AssertRolledBackBeforeDisposal(fakes, RolledBackSessions(operation));
+    }
+
+    [Theory]
+    [Trait("Decision", "D-135")]
+    [Trait("Decision", "D-10")]
+    [InlineData(nameof(InvoiceWorkflowService.Preview), true)]
+    [InlineData(nameof(InvoiceWorkflowService.Preview), false)]
+    [InlineData("SERVICEID", true)]
+    [InlineData("SERVICEID", false)]
+    [InlineData("QTY", true)]
+    [InlineData("QTY", false)]
+    [InlineData(nameof(InvoiceWorkflowService.ImportRequests), false)]
+    [InlineData(nameof(InvoiceWorkflowService.ImportVisitLine), false)]
+    [InlineData(nameof(InvoiceWorkflowService.ImportPackage), false)]
+    [InlineData(nameof(InvoiceWorkflowService.ImportBundledOffer), false)]
+    public async Task RolledBackOperation_PackageCallFails_PropagatesThatFailureAndRollsBackBeforeDisposal(string operation, bool refused)
+    {
+        var draft = await RolledBackDraft(operation);
+        var fakes = ArrangeRolledBack(draft);
+        var failure = refused ? FakeOracleFailures.DiscountRefused() : FakeOracleFailures.NoListener();
+        FailPackageCall(fakes, operation, failure);
+
+        var thrown = await Assert.ThrowsAsync<OracleException>(() => RunRolledBack(fakes, draft, operation));
+
+        Assert.Same(failure, thrown);
+        AssertRolledBackBeforeDisposal(fakes, RolledBackSessions(operation));
+    }
+
+    [Theory]
+    [Trait("Decision", "D-135")]
+    [Trait("Decision", "D-10")]
+    [InlineData(nameof(InvoiceWorkflowService.Preview))]
+    [InlineData(nameof(InvoiceWorkflowService.ImportRequests))]
+    [InlineData(nameof(InvoiceWorkflowService.ImportVisitLine))]
+    [InlineData(nameof(InvoiceWorkflowService.ImportPackage))]
+    [InlineData(nameof(InvoiceWorkflowService.ImportBundledOffer))]
+    [InlineData("SERVICEID")]
+    [InlineData("QTY")]
+    public async Task RolledBackOperation_RollbackFails_ReturnsTheResponseOfARolledBackCall(string operation)
+    {
+        var draft = await RolledBackDraft(operation);
+        var rolledBack = ArrangeRolledBack(draft);
+        var fakes = ArrangeRolledBack(draft);
+        fakes.SessionFactory.RollbackFailure = () => new TimeoutException("The Oracle rollback did not complete within 30 seconds.");
+
+        var expected = await RunRolledBack(rolledBack, draft, operation);
+        var response = await RunRolledBack(fakes, draft, operation);
+
+        Assert.Equal(JsonSerializer.Serialize(expected, Json), JsonSerializer.Serialize(response, Json));
+        AssertRolledBackBeforeDisposal(fakes, RolledBackSessions(operation));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-135")]
+    [Trait("Decision", "D-10")]
+    public async Task Create_NewCreate_RollsBackEachPreflightPreviewSessionAndCommitsTheCreateSessionWithoutRollback()
+    {
+        var draft = await CashDraft();
+        var fakes = Arrange(draft);
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.NotNull(response.InvNo);
+        var createSession = CreateCall(fakes).Arg<FakeOracleSession>();
+        Assert.Equal(new[] { ReceptionTransferSavepointEvent, CommitEvent, DisposeEvent }, createSession.Events);
+        var previewSessions = fakes.SessionFactory.Sessions.Where(session => !ReferenceEquals(session, createSession)).ToArray();
+        Assert.NotEmpty(previewSessions);
+        Assert.All(previewSessions, session => Assert.Equal(new[] { RollbackEvent, DisposeEvent }, session.Events));
+    }
+
+    /// <summary>Cash draft with amount 1 of 60 and amount 2 of 40, both on the cash method, and 200 tendered.</summary>
+    private static async Task<DraftDto> TenderedCashDraft() => WithHeader(
+        await CashDraft(),
+        header => header with { Amount1 = 60m, Amount2 = 40m, SubPayType = 1, SubPayType2 = 1, CashPayed = 200m });
+
+    /// <summary>Preview echoing each line on the default list with the package's amount due and amounts 1 and 2.</summary>
+    private static Func<InvoiceHeaderDraft, IReadOnlyList<InvoiceLineDraft>, (IReadOnlyList<EditablePreviewLine> Lines, PreviewTotalsRow Totals)> PreviewWithAmounts(
+        decimal amountDue, decimal? amount1, decimal? amount2) =>
+        (_, lines) => (
+            lines.Select((line, index) => new EditablePreviewLine
+            {
+                ClientId = line.ClientId,
+                LineNo = index + 1,
+                ServiceId = line.ServiceId,
+                ListId = DefaultListId,
+                Qty = line.Qty,
+            }).ToArray(),
+            new PreviewTotalsRow { LineCount = lines.Count, CashCollected = amountDue, Amount1 = amount1, Amount2 = amount2 });
+
+    [Fact]
+    [Trait("Decision", "D-136")]
+    public async Task Preview_PackageReturnsNoAmounts_DerivesRefundAndTotalCollectedFromTheHeaderAmounts()
+    {
+        var draft = await TenderedCashDraft();
+        var fakes = Arrange(draft);
+        fakes.InvoiceApi.Preview = PreviewWithAmounts(100m, null, null);
+
+        var response = await fakes.CreateService().Preview(draft, Operator);
+
+        Assert.Equal(100m, response.Refund);
+        Assert.Equal(100m, response.TotalCollected);
+        Assert.Null(response.Totals.Amount1);
+        Assert.Null(response.Totals.Amount2);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-136")]
+    public async Task Preview_PackageReturnsAmounts_DerivesRefundAndTotalCollectedFromThePackageAmounts()
+    {
+        var draft = await TenderedCashDraft();
+        var fakes = Arrange(draft);
+        fakes.InvoiceApi.Preview = PreviewWithAmounts(150m, 150m, 0m);
+
+        var response = await fakes.CreateService().Preview(draft, Operator);
+
+        Assert.Equal(50m, response.Refund);
+        Assert.Equal(150m, response.TotalCollected);
+        Assert.Equal(150m, response.Totals.Amount1);
+        Assert.Equal(0m, response.Totals.Amount2);
+    }
+
+    /// <summary>Doctor-clinic rows of <see cref="LockedDoctor"/> and <see cref="PickedDoctor"/>; any other doctor has none.</summary>
+    private static (int ClinicId, string? ClinicName, string? DocName)? DoctorClinicOf(int docId) => docId switch
+    {
+        LockedDoctor => (LockedDoctorClinic, LockedDoctorClinicName, LockedDoctorName),
+        PickedDoctor => (PickedDoctorClinic, PickedDoctorClinicName, PickedDoctorName),
+        _ => null,
+    };
+
+    /// <summary>A cash draft of <see cref="ConsultationPatient"/> with <see cref="PickedDoctor"/> at its clinic and a new-consultation claim parameter, locked to <paramref name="theDoc"/>.</summary>
+    private static async Task<DraftDto> PickedDoctorDraft(int? theDoc, string compCode = CashCompany) =>
+        WithHeader(await CashDraft(), header => header with
+        {
+            PatientNo = ConsultationPatient,
+            DocId = PickedDoctor,
+            ClinicId = PickedDoctorClinic,
+            CompCode = compCode,
+        }) with
+        {
+            Parameters = new InvoiceEntryParameters { ClaimNo = NewConsultationClaim, TheDoc = theDoc },
+        };
+
+    private static ValidateDraftRequest DoctorValidation(DraftDto draft) => new() { Draft = draft, Target = DocIdItem };
+
+    [Fact]
+    [Trait("Decision", "D-138")]
+    public async Task ValidateDoctor_LockedDoctorReset_RereadsTheLockedDoctorsClinicForTheClaimNumberVisitLineAndLines()
+    {
+        var draft = await PickedDoctorDraft(LockedDoctor);
+        var fakes = Arrange(draft);
+        fakes.Lookups.PatientCoverage = new PatientCoverageSnapshot { PatientNo = ConsultationPatient, CompCode = CashCompany };
+        fakes.Lookups.DoctorClinic = DoctorClinicOf;
+
+        var response = await fakes.CreateService().Validate(DoctorValidation(draft), Operator);
+
+        Assert.Equal(new[] { WarningMessage(DocIdItem, "You Cant Change doctor", "DR-11") }, response.Messages);
+        Assert.Equal(LockedDoctor, response.Adjusted[DocIdItem]);
+        Assert.Equal(LockedDoctorClinic, response.Adjusted[ClinicItem]);
+        Assert.Equal(LockedDoctorClinicName, response.Adjusted[ClinicNameItem]);
+        Assert.Equal(LockedDoctorName, response.Adjusted[DocNameItem]);
+        Assert.Equal("O-2001-14-290926", response.Adjusted[ClaimNoItem]);
+        Assert.Equal(VisitLineChoice.Consultation, response.VisitLine);
+        Assert.Equal(new object?[] { LockedDoctor }, SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetDoctorClinic)).Args);
+        var previews = fakes.InvoiceApi.Calls.Where(call => call.Method == nameof(IBilInvoiceApiGateway.CalculatePreview)).ToArray();
+        Assert.NotEmpty(previews);
+        Assert.All(previews, call =>
+        {
+            Assert.Equal(LockedDoctor, call.Arg<InvoiceHeaderDraft>().DocId);
+            Assert.Equal(LockedDoctorClinic, call.Arg<InvoiceHeaderDraft>().ClinicId);
+        });
+    }
+
+    [Fact]
+    [Trait("Decision", "D-138")]
+    public async Task ValidateDoctor_FixedServiceCompanyWithADoctorAtClinic14_ChoosesServiceTwoThousandFromTheDoctorsClinic()
+    {
+        var draft = (await PickedDoctorDraft(theDoc: null, FixedServiceCompany)) with { Lines = Array.Empty<InvoiceLineDraft>() };
+        var fakes = Arrange(draft);
+        fakes.Lookups.DoctorClinic = docId => docId == PickedDoctor ? (LockedDoctorClinic, LockedDoctorClinicName, PickedDoctorName) : null;
+
+        var response = await fakes.CreateService().Validate(DoctorValidation(draft), Operator);
+
+        Assert.Empty(response.Messages);
+        Assert.Equal(VisitLineChoice.FixedService("2000"), response.VisitLine);
+        Assert.Equal(LockedDoctorClinic, response.Adjusted[ClinicItem]);
+        Assert.Equal(
+            string.Create(CultureInfo.InvariantCulture, $"O-{ConsultationPatient}-{LockedDoctorClinic}-{DraftDate:ddMMyy}"),
+            response.Adjusted[ClaimNoItem]);
+        Assert.False(response.Adjusted.ContainsKey(DocIdItem));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-138")]
+    public async Task ValidateDoctor_DoctorWithoutAClinicRow_KeepsTheClinicSkipsTheClaimNumberAndStillChoosesTheVisitLine()
+    {
+        var draft = (await PickedDoctorDraft(LockedDoctor)) with { Lines = Array.Empty<InvoiceLineDraft>() };
+        var fakes = Arrange(draft);
+
+        var response = await fakes.CreateService().Validate(DoctorValidation(draft), Operator);
+
+        Assert.Equal(new[] { WarningMessage(DocIdItem, "You Cant Change doctor", "DR-11") }, response.Messages);
+        Assert.Equal(new[] { AddToListItem, DocIdItem }, response.Adjusted.Keys.Order(StringComparer.Ordinal));
+        Assert.Equal(LockedDoctor, response.Adjusted[DocIdItem]);
+        Assert.Equal(VisitLineChoice.Consultation, response.VisitLine);
+        Assert.Equal(new object?[] { LockedDoctor }, SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetDoctorClinic)).Args);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-138")]
+    public async Task ValidateDoctor_NoDoctor_ReadsNoClinicAndAdjustsNoClaimNumber()
+    {
+        var draft = WithHeader(await PickedDoctorDraft(theDoc: null), header => header with { DocId = null }) with
+        {
+            Lines = Array.Empty<InvoiceLineDraft>(),
+        };
+        var fakes = Arrange(draft);
+        fakes.Lookups.DoctorClinic = DoctorClinicOf;
+
+        var response = await fakes.CreateService().Validate(DoctorValidation(draft), Operator);
+
+        Assert.Equal(new[] { WarningMessage(DocIdItem, "You Must Select Doctor", "DR-11") }, response.Messages);
+        Assert.Equal(new[] { AddToListItem }, response.Adjusted.Keys);
+        Assert.False(Called(fakes.Lookups.Calls, nameof(ILookupQueries.GetDoctorClinic)));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-138")]
+    public async Task NewDraft_NewConsultationDoctor_CarriesTheDoctorsClinicAndNamesWithoutBuildingTheClaimNumber()
+    {
+        var fakes = new FakeDataPorts();
+        fakes.Lookups.DoctorClinic = DoctorClinicOf;
+
+        var response = await fakes.CreateService().NewDraft(
+            new InvoiceEntryParameters { ClaimNo = NewConsultationClaim, NewDoc = LockedDoctor }, Operator);
+
+        Assert.Equal(LockedDoctor, response.Draft.Header.DocId);
+        Assert.Equal(LockedDoctorClinic, response.Draft.Header.ClinicId);
+        Assert.Null(response.Draft.Header.ClaimNo);
+        Assert.Equal(
+            new Dictionary<string, string?>(StringComparer.Ordinal)
+            {
+                [DocNameItem] = LockedDoctorName,
+                [ClinicNameItem] = LockedDoctorClinicName,
+            },
+            response.Display);
+        Assert.Equal(new object?[] { LockedDoctor }, SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetDoctorClinic)).Args);
+        var json = JsonSerializer.Serialize(response, Json);
+        Assert.Contains("\"display\":{\"DOC_NAME\":\"Dr. Ahmed Ali\",\"CLINICNAME\":\"General Clinic\"}", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-138")]
+    public async Task NewDraft_PresetDoctorWithoutAClinicRow_LeavesTheClinicUnsetAndTheDisplayEmpty()
+    {
+        var fakes = new FakeDataPorts();
+
+        var response = await fakes.CreateService().NewDraft(
+            new InvoiceEntryParameters { ClaimNo = NewConsultationClaim, NewDoc = LockedDoctor }, Operator);
+
+        Assert.Equal(LockedDoctor, response.Draft.Header.DocId);
+        Assert.Null(response.Draft.Header.ClinicId);
+        Assert.Empty(response.Display);
+        Assert.True(Called(fakes.Lookups.Calls, nameof(ILookupQueries.GetDoctorClinic)));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-138")]
+    public async Task NewDraft_VisitDoctor_CarriesTheVisitDoctorsClinicAndNames()
+    {
+        var fakes = new FakeDataPorts();
+        fakes.Lookups.VisitDoctor = PickedDoctor;
+        fakes.Lookups.DoctorClinic = DoctorClinicOf;
+
+        var response = await fakes.CreateService().NewDraft(new InvoiceEntryParameters { VisitUnique = VisitUnique }, Operator);
+
+        Assert.Equal(PickedDoctor, response.Draft.Header.DocId);
+        Assert.Equal(PickedDoctorClinic, response.Draft.Header.ClinicId);
+        Assert.Equal(PickedDoctorName, response.Display[DocNameItem]);
+        Assert.Equal(PickedDoctorClinicName, response.Display[ClinicNameItem]);
+        Assert.Equal(new object?[] { PickedDoctor }, SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetDoctorClinic)).Args);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-138")]
+    public async Task NewDraft_NoPresetDoctor_ReadsNoDoctorClinic()
+    {
+        var fakes = new FakeDataPorts();
+        fakes.Lookups.DoctorClinic = DoctorClinicOf;
+
+        var response = await fakes.CreateService().NewDraft(new InvoiceEntryParameters(), Operator);
+
+        Assert.Null(response.Draft.Header.DocId);
+        Assert.Null(response.Draft.Header.ClinicId);
+        Assert.Empty(response.Display);
+        Assert.False(Called(fakes.Lookups.Calls, nameof(ILookupQueries.GetDoctorClinic)));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-55")]
+    [Trait("Decision", "D-138")]
+    public async Task Create_WithoutPriorValidation_LockedDoctor_SendsTheLockedDoctorsClinicAndChecksAndBuildsTheClaimFromIt()
+    {
+        var draft = await PickedDoctorDraft(LockedDoctor);
+        var fakes = Arrange(draft);
+        fakes.Lookups.PatientCoverage = new PatientCoverageSnapshot { PatientNo = ConsultationPatient, CompCode = CashCompany };
+        fakes.Lookups.DoctorClinic = DoctorClinicOf;
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.Contains(WarningMessage(DocIdItem, "You Cant Change doctor", "DR-11"), response.Messages);
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        var header = CreateCall(fakes).Arg<InvoiceHeaderDraft>();
+        Assert.Equal(LockedDoctor, header.DocId);
+        Assert.Equal(LockedDoctorClinic, header.ClinicId);
+        Assert.Equal(
+            string.Create(CultureInfo.InvariantCulture, $"O-{ConsultationPatient}-{LockedDoctorClinic}-{DraftDate:ddMMyy}"),
+            header.ClaimNo);
+        Assert.Equal(new object?[] { LockedDoctor }, SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetDoctorClinic)).Args);
+        Assert.Equal(
+            new object?[] { LockedDoctorClinic, ConsultationPatient },
+            SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetClinicProfile)).Args);
+        Assert.All(
+            fakes.InvoiceApi.Calls.Where(call => call.Method == nameof(IBilInvoiceApiGateway.CalculatePreview)),
+            call => Assert.Equal(LockedDoctorClinic, call.Arg<InvoiceHeaderDraft>().ClinicId));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-55")]
+    [Trait("Decision", "D-138")]
+    public async Task Create_WithoutPriorValidation_DoctorWithoutAClinicRow_KeepsTheDraftClinic()
+    {
+        var draft = await PickedDoctorDraft(theDoc: null);
+        var fakes = Arrange(draft);
+        fakes.Lookups.PatientCoverage = new PatientCoverageSnapshot { PatientNo = ConsultationPatient, CompCode = CashCompany };
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        var header = CreateCall(fakes).Arg<InvoiceHeaderDraft>();
+        Assert.Equal(PickedDoctor, header.DocId);
+        Assert.Equal(PickedDoctorClinic, header.ClinicId);
+        Assert.Equal(
+            string.Create(CultureInfo.InvariantCulture, $"O-{ConsultationPatient}-{PickedDoctorClinic}-{DraftDate:ddMMyy}"),
+            header.ClaimNo);
+        Assert.Equal(
+            new object?[] { PickedDoctorClinic, ConsultationPatient },
+            SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetClinicProfile)).Args);
     }
 }

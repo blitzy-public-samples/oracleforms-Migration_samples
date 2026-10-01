@@ -3,13 +3,13 @@ using Billing.Invoicing.Domain.Model;
 
 namespace Billing.Invoicing.Data.Ports;
 
-/// <summary>Unit of work over one Oracle connection; disposing it uncommitted attempts to roll back its local transaction.</summary>
+/// <summary>Unit of work over one Oracle connection; disposing it uncommitted attempts to roll back its local transaction and can raise that rollback's failure.</summary>
 public interface IOracleSession : IAsyncDisposable
 {
     /// <summary>Commits the transaction.</summary>
     Task Commit(CancellationToken cancellationToken = default);
 
-    /// <summary>Rolls back the whole transaction.</summary>
+    /// <summary>Rolls back the whole transaction; once called, whether it succeeded or failed, disposing the session raises no rollback failure.</summary>
     Task Rollback(CancellationToken cancellationToken = default);
 
     /// <summary>Rolls back to a named savepoint; the transaction stays open.</summary>
@@ -111,6 +111,9 @@ public interface ILookupQueries
 
     /// <summary>DISC_CLASSES.USE_ADVANCED of a class, or null.</summary>
     Task<int?> GetClassAdvancedMode(string subCompCode, string classCode, CancellationToken cancellationToken = default);
+
+    /// <summary>Clinic id and name of a doctor's clinic with the doctor's name, or null unless exactly one row with a clinic id is found.</summary>
+    Task<(int ClinicId, string? ClinicName, string? DocName)?> GetDoctorClinic(int docId, CancellationToken cancellationToken = default);
 }
 
 /// <summary>Read-only queries over saved invoices, request rows, claim preloads and create requests.</summary>

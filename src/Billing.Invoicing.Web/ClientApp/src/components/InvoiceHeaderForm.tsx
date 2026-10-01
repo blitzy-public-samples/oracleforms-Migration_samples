@@ -4,9 +4,9 @@ import { ApiError, getCurrencies, getInvoiceTypes } from '../api/client';
 import type { InvoiceHeaderDraft, LookupItem, MessageDto, ValidateTarget } from '../api/types';
 import { fieldErrorFor } from '../state/invoiceDraft';
 import type { InvoiceDraftAction, InvoiceDraftState } from '../state/invoiceDraft';
-import LovPicker from './LovPicker';
+import LovPicker, { readOnlyTextProps } from './LovPicker';
 import type { LovBinds, LovName } from './LovPicker';
-import FieldMessage from './FieldMessage';
+import FieldMessage, { fieldMessageRefs, SeverityLabel } from './FieldMessage';
 import OpenItemNotice from './OpenItemNotice';
 
 type InvoiceHeaderFormProps = {
@@ -14,6 +14,12 @@ type InvoiceHeaderFormProps = {
   dispatch: Dispatch<InvoiceDraftAction>;
   onValidate: (target: ValidateTarget) => void;
   onPatientChanged: () => void;
+  /** Validation targets queued or in flight; their fields are marked pending. */
+  busyTargets?: ReadonlySet<string>;
+};
+
+type WaitingListPanelProps = {
+  state: InvoiceDraftState;
   onShowReservations: () => void;
 };
 
@@ -43,10 +49,15 @@ type LookupList = { status: 'loading' | 'loaded' | 'failed'; items: LookupItem[]
 /** Note texts a lookup shows while its list is loading, failed or empty. */
 type LookupNotes = { loading: string; failed: string; empty: string };
 
-type LookupNote = { text: string; className: string };
+type LookupNote = { text: string; className: string; warning: boolean };
 
 const LOOKUP_LOADING: LookupList = { status: 'loading', items: [] };
 const LOOKUP_FAILED: LookupList = { status: 'failed', items: [] };
+
+const NO_TARGETS: ReadonlySet<string> = new Set();
+
+/** Static list elements of the Form's INVTYPEID item. */
+const INVOICE_TYPE_FORM_ELEMENTS: readonly LookupItem[] = [{ code: '0', name: '' }];
 
 const INVOICE_TYPE_NOTES: LookupNotes = {
   loading: 'Loading invoice types…',
@@ -142,12 +153,16 @@ function payTypeText(payType: number | null | undefined): string {
   return shown(payType);
 }
 
-/** Select options for a lookup list, keeping a current value the list does not hold. */
-function selectOptions(items: readonly LookupItem[], current: string): LookupItem[] {
+/** Select options for a lookup list, keeping a current value the list does not hold under its Form list element's label, else its code. */
+function selectOptions(items: readonly LookupItem[], current: string, formElements: readonly LookupItem[] = []): LookupItem[] {
   if (current === '') {
     return [{ code: '', name: '' }, ...items];
   }
-  return items.some((item) => item.code === current) ? [...items] : [{ code: current, name: current }, ...items];
+  if (items.some((item) => item.code === current)) {
+    return [...items];
+  }
+  const element = formElements.find((item) => item.code === current);
+  return [element ?? { code: current, name: current }, ...items];
 }
 
 /** Lookup list for a resolved response body; a body that is not an array counts as failed. */
@@ -155,16 +170,57 @@ function resolvedLookup(body: unknown): LookupList {
   return Array.isArray(body) ? { status: 'loaded', items: body } : LOOKUP_FAILED;
 }
 
+/** Requests a lookup list into `setList`, reporting a failure under `source`; returns the cleanup that drops a late result. */
+function loadLookup(
+  fetchList: () => Promise<LookupItem[]>,
+  setList: (list: LookupList) => void,
+  source: string,
+  dispatch: Dispatch<InvoiceDraftAction>,
+): () => void {
+  let cancelled = false;
+  fetchList().then(
+    (items) => {
+      if (!cancelled) {
+        setList(resolvedLookup(items));
+      }
+    },
+    (reason: unknown) => {
+      if (cancelled) {
+        return;
+      }
+      setList(LOOKUP_FAILED);
+      const error =
+        reason instanceof ApiError
+          ? reason
+          : new ApiError({
+              status: 0,
+              type: 'client-error',
+              title: 'Lookup failed',
+              message: reason instanceof Error ? reason.message : String(reason),
+            });
+      dispatch({ type: 'errorReceived', source, error });
+    },
+  );
+  return () => {
+    cancelled = true;
+  };
+}
+
 /** Note for a lookup list, or null when the list is loaded and holds at least one item. */
 function lookupNote(list: LookupList, notes: LookupNotes): LookupNote | null {
   switch (list.status) {
     case 'loading':
-      return { text: notes.loading, className: 'msg' };
+      return { text: notes.loading, className: 'msg', warning: false };
     case 'failed':
-      return { text: notes.failed, className: 'msg msg-warning' };
+      return { text: notes.failed, className: 'msg msg-warning', warning: true };
     case 'loaded':
-      return list.items.length === 0 ? { text: notes.empty, className: 'msg msg-warning' } : null;
+      return list.items.length === 0 ? { text: notes.empty, className: 'msg msg-warning', warning: true } : null;
   }
+}
+
+/** The full value as a title, or undefined when it is empty. */
+function titleOf(value: string): string | undefined {
+  return value === '' ? undefined : value;
 }
 
 /** Space-separated class names of the entry flags that apply. */
@@ -233,49 +289,39 @@ export default function InvoiceHeaderForm({
   dispatch,
   onValidate,
   onPatientChanged,
-  onShowReservations,
+  busyTargets = NO_TARGETS,
 }: InvoiceHeaderFormProps) {
   const id = useId();
   const [invoiceTypes, setInvoiceTypes] = useState<LookupList>(LOOKUP_LOADING);
   const [currencies, setCurrencies] = useState<LookupList>(LOOKUP_LOADING);
+  const [invoiceTypesAttempt, setInvoiceTypesAttempt] = useState(0);
+  const [currenciesAttempt, setCurrenciesAttempt] = useState(0);
   const [lov, setLov] = useState<HeaderLov | null>(null);
   const [pending, setPending] = useState<PendingValidation[]>([]);
   const nextSeq = useRef(0);
   const lastFiredSeq = useRef(0);
   const patientOnFocus = useRef<{ value: string | null } | null>(null);
+  const lookupsReloadedAt = useRef(state.successCount);
 
+  useEffect(() => loadLookup(getInvoiceTypes, setInvoiceTypes, 'INVTYPEID', dispatch), [invoiceTypesAttempt]);
+
+  useEffect(() => loadLookup(getCurrencies, setCurrencies, 'CURR_CODE', dispatch), [currenciesAttempt]);
+
+  // A list that failed to load is requested once more after each later successful outcome (D-153).
   useEffect(() => {
-    let cancelled = false;
-    const fail = (source: string, markFailed: () => void) => (reason: unknown) => {
-      if (cancelled) {
-        return;
-      }
-      markFailed();
-      const error =
-        reason instanceof ApiError
-          ? reason
-          : new ApiError({
-              status: 0,
-              type: 'client-error',
-              title: 'Lookup failed',
-              message: reason instanceof Error ? reason.message : String(reason),
-            });
-      dispatch({ type: 'errorReceived', source, error });
-    };
-    getInvoiceTypes().then((items) => {
-      if (!cancelled) {
-        setInvoiceTypes(resolvedLookup(items));
-      }
-    }, fail('INVTYPEID', () => setInvoiceTypes(LOOKUP_FAILED)));
-    getCurrencies().then((items) => {
-      if (!cancelled) {
-        setCurrencies(resolvedLookup(items));
-      }
-    }, fail('CURR_CODE', () => setCurrencies(LOOKUP_FAILED)));
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    if (lookupsReloadedAt.current === state.successCount) {
+      return;
+    }
+    lookupsReloadedAt.current = state.successCount;
+    if (invoiceTypes.status === 'failed') {
+      setInvoiceTypes(LOOKUP_LOADING);
+      setInvoiceTypesAttempt((attempt) => attempt + 1);
+    }
+    if (currencies.status === 'failed') {
+      setCurrencies(LOOKUP_LOADING);
+      setCurrenciesAttempt((attempt) => attempt + 1);
+    }
+  }, [state.successCount, invoiceTypes.status, currencies.status]);
 
   useEffect(() => {
     const fresh = pending.filter((entry) => entry.seq > lastFiredSeq.current);
@@ -390,13 +436,20 @@ export default function InvoiceHeaderForm({
     }
   };
 
-  const renderMessages = (entry: TargetMessages) => (
+  const renderMessages = (entry: TargetMessages, messageId: string) => (
     <FieldMessage
+      id={messageId}
       messages={entry.messages}
       fieldError={entry.fieldError}
       onDismiss={(index) => dismiss(entry.refs[index] ?? [])}
     />
   );
+
+  /** aria-describedby, and aria-errormessage while invalid, linking a control to the messages rendered under `messageId`. */
+  const messageAria = (entry: TargetMessages, messageId: string) => {
+    const refs = fieldMessageRefs(messageId, entry.messages, entry.fieldError);
+    return { 'aria-describedby': refs.describedBy, 'aria-errormessage': entry.invalid ? refs.errorMessage : undefined };
+  };
 
   const patientMessages = targetMessages(state, 'PATIENTNO');
   const companyMessages = targetMessages(state, 'COMP_CODE');
@@ -405,10 +458,14 @@ export default function InvoiceHeaderForm({
   const deptWiseMessages = targetMessages(state, 'DEPT_WISE');
   const callMessages = targetMessages(state, 'CALL');
 
-  const inputClass = (invalid = false): string | undefined => classNames({ 'read-only': locked, invalid });
-  const fixedClass = (invalid = false): string | undefined => classNames({ 'read-only': true, invalid });
+  const validating = (target: HeaderTarget): boolean => busyTargets.has(target);
+  const inputClass = (invalid = false, busy = false): string | undefined =>
+    classNames({ 'read-only': locked, invalid, 'is-pending': busy });
+  const fixedClass = (invalid = false, busy = false): string | undefined =>
+    classNames({ 'read-only': true, invalid, 'is-pending': busy });
   // OI-33 fields stay disabled until a saved view is loaded; loaded values remain read-only.
   const notSavedDisabled = savedView === null;
+  const notSavedClass = notSavedDisabled ? undefined : 'read-only';
 
   const renderPickerButton = (name: HeaderLov, label: string) => (
     <button type="button" aria-label={label} aria-haspopup="dialog" disabled={locked} onClick={() => setLov(name)}>
@@ -431,12 +488,14 @@ export default function InvoiceHeaderForm({
           type="checkbox"
           checked={header?.[field] === 1}
           disabled={locked}
-          className={entry.invalid ? 'invalid' : undefined}
+          className={inputClass(entry.invalid, validating(target))}
           aria-invalid={entry.invalid || undefined}
+          {...messageAria(entry, `${inputId}-msg`)}
+          aria-busy={validating(target) || undefined}
           onChange={onFlagChange(field, target)}
         />
       </div>
-      {renderMessages(entry)}
+      {renderMessages(entry, `${inputId}-msg`)}
       <OpenItemNotice ids={state.openItems[target] ?? []} serverMessages={state.openItemMessages} />
     </div>
   );
@@ -456,7 +515,7 @@ export default function InvoiceHeaderForm({
               className={inputClass()}
               onChange={(event) => setField('invTypeId', toNumber(event.currentTarget.value))}
             >
-              {selectOptions(invoiceTypes.items, invTypeValue).map((item, index) => (
+              {selectOptions(invoiceTypes.items, invTypeValue, INVOICE_TYPE_FORM_ELEMENTS).map((item, index) => (
                 <option key={`${index}-${item.code}`} value={item.code}>
                   {item.name}
                 </option>
@@ -464,7 +523,12 @@ export default function InvoiceHeaderForm({
             </select>
             {invTypeNote !== null && (
               <div id={`${id}-invtype-note`} role="status" className={invTypeNote.className}>
-                {invTypeNote.text}
+                {invTypeNote.warning && (
+                  <>
+                    <SeverityLabel severity="Warning" />{' '}
+                  </>
+                )}
+                <span>{invTypeNote.text}</span>
               </div>
             )}
           </div>
@@ -472,10 +536,37 @@ export default function InvoiceHeaderForm({
           <div className="field">
             <label htmlFor={`${id}-invno`}>Invoice No</label>
             <div className="field-row">
-              <input id={`${id}-invno`} type="text" readOnly className="read-only" value={shown(invNo)} />
-              <input type="text" readOnly aria-label="Invoice date" className="read-only" value={invoiceDate} />
-              <label htmlFor={`${id}-invtime`}>Time</label>
-              <input id={`${id}-invtime`} type="text" readOnly className="read-only" value={invoiceTime} />
+              <input
+                id={`${id}-invno`}
+                type="text"
+                readOnly
+                tabIndex={-1}
+                className={classNames({ 'read-only': true, 'invno-saved': state.saved !== null && shown(invNo) !== '' })}
+                title={titleOf(shown(invNo))}
+                value={shown(invNo)}
+              />
+              <input
+                id={`${id}-invdate`}
+                type="text"
+                readOnly
+                tabIndex={-1}
+                aria-label="Invoice date"
+                className="read-only"
+                title={titleOf(invoiceDate)}
+                value={invoiceDate}
+              />
+              <span className="field-group">
+                <label htmlFor={`${id}-invtime`}>Time</label>
+                <input
+                  id={`${id}-invtime`}
+                  type="text"
+                  readOnly
+                  tabIndex={-1}
+                  className="read-only"
+                  title={titleOf(invoiceTime)}
+                  value={invoiceTime}
+                />
+              </span>
             </div>
           </div>
 
@@ -488,16 +579,28 @@ export default function InvoiceHeaderForm({
                 autoComplete="off"
                 maxLength={PATIENT_NO_MAX_LENGTH}
                 readOnly={locked}
-                className={inputClass(patientMessages.invalid)}
+                tabIndex={locked ? -1 : undefined}
+                className={inputClass(patientMessages.invalid, validating('PATIENTNO'))}
                 aria-invalid={patientMessages.invalid || undefined}
+                {...messageAria(patientMessages, `${id}-patientno-msg`)}
+                aria-busy={validating('PATIENTNO') || undefined}
+                title={locked ? titleOf(header?.patientNo ?? '') : undefined}
                 value={header?.patientNo ?? ''}
                 onFocus={onPatientFocus}
                 onBlur={onPatientBlur}
                 onChange={(event) => setField('patientNo', enteredText(event.currentTarget.value))}
               />
-              <input type="text" readOnly aria-label="Patient name" className="read-only" value={patientName} />
+              <input
+                id={`${id}-patientname`}
+                type="text"
+                readOnly
+                aria-label="Patient name"
+                className="read-only"
+                value={patientName}
+                {...readOnlyTextProps(patientName)}
+              />
             </div>
-            {renderMessages(patientMessages)}
+            {renderMessages(patientMessages, `${id}-patientno-msg`)}
           </div>
 
           <div className="field">
@@ -507,14 +610,26 @@ export default function InvoiceHeaderForm({
                 id={`${id}-compcode`}
                 type="text"
                 readOnly
-                className={fixedClass(companyMessages.invalid)}
+                tabIndex={-1}
+                className={fixedClass(companyMessages.invalid, validating('COMP_CODE'))}
                 aria-invalid={companyMessages.invalid || undefined}
+                {...messageAria(companyMessages, `${id}-compcode-msg`)}
+                aria-busy={validating('COMP_CODE') || undefined}
+                title={titleOf(shown(header?.compCode))}
                 value={shown(header?.compCode)}
               />
-              <input type="text" readOnly aria-label="Company name" className="read-only" value={nameOf('COMP_NAME')} />
+              <input
+                id={`${id}-compname`}
+                type="text"
+                readOnly
+                aria-label="Company name"
+                className="read-only"
+                value={nameOf('COMP_NAME')}
+                {...readOnlyTextProps(nameOf('COMP_NAME'))}
+              />
               {renderPickerButton('COMPANY1_2', 'Choose company')}
             </div>
-            {renderMessages(companyMessages)}
+            {renderMessages(companyMessages, `${id}-compcode-msg`)}
           </div>
 
           <div className="field">
@@ -524,15 +639,19 @@ export default function InvoiceHeaderForm({
                 id={`${id}-subcompcode`}
                 type="text"
                 readOnly
+                tabIndex={-1}
                 className="read-only"
+                title={titleOf(shown(header?.subCompCode))}
                 value={shown(header?.subCompCode)}
               />
               <input
+                id={`${id}-subcompname`}
                 type="text"
                 readOnly
                 aria-label="Sub company name"
                 className="read-only"
                 value={nameOf('SUB_COMP_NAME')}
+                {...readOnlyTextProps(nameOf('SUB_COMP_NAME'))}
               />
               {renderPickerButton('SUB_COMPANY', 'Choose sub company')}
             </div>
@@ -541,8 +660,24 @@ export default function InvoiceHeaderForm({
           <div className="field">
             <label htmlFor={`${id}-classcode`}>Class</label>
             <div className="field-row">
-              <input id={`${id}-classcode`} type="text" readOnly className="read-only" value={shown(header?.classCode)} />
-              <input type="text" readOnly aria-label="Class name" className="read-only" value={nameOf('CLASS_NAME')} />
+              <input
+                id={`${id}-classcode`}
+                type="text"
+                readOnly
+                tabIndex={-1}
+                className="read-only"
+                title={titleOf(shown(header?.classCode))}
+                value={shown(header?.classCode)}
+              />
+              <input
+                id={`${id}-classname`}
+                type="text"
+                readOnly
+                aria-label="Class name"
+                className="read-only"
+                value={nameOf('CLASS_NAME')}
+                {...readOnlyTextProps(nameOf('CLASS_NAME'))}
+              />
               {renderPickerButton('THE_CLASS', 'Choose class')}
             </div>
           </div>
@@ -558,6 +693,7 @@ export default function InvoiceHeaderForm({
               className={inputClass()}
               value={header?.noteNo ?? ''}
               onChange={(event) => setField('noteNo', enteredText(event.currentTarget.value))}
+              {...(locked ? readOnlyTextProps(header?.noteNo ?? '') : {})}
             />
           </div>
         </div>
@@ -565,40 +701,55 @@ export default function InvoiceHeaderForm({
         <div className="header-col">
           <div className="field">
             <label htmlFor={`${id}-claimno`}>Claim No</label>
-            <input id={`${id}-claimno`} type="text" readOnly className="read-only" value={shown(header?.claimNo)} />
-          </div>
-
-          <div className="field">
-            <label htmlFor={`${id}-paytype`}>Paytype</label>
             <input
-              id={`${id}-paytype`}
+              id={`${id}-claimno`}
               type="text"
               readOnly
               className="read-only"
-              value={payTypeText(header?.payType)}
+              value={shown(header?.claimNo)}
+              {...readOnlyTextProps(shown(header?.claimNo))}
             />
           </div>
 
           <div className="field">
-            <label htmlFor={`${id}-currcode`}>Currency</label>
-            <select
-              id={`${id}-currcode`}
-              value={currencyValue}
-              disabled={locked || currencyNote !== null}
-              aria-busy={currencies.status === 'loading' || undefined}
-              aria-describedby={currencyNote === null ? undefined : `${id}-currcode-note`}
-              className={inputClass()}
-              onChange={(event) => setField('currCode', enteredText(event.currentTarget.value))}
-            >
-              {selectOptions(currencies.items, currencyValue).map((item, index) => (
-                <option key={`${index}-${item.code}`} value={item.code}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
+            <label htmlFor={`${id}-paytype`}>Paytype</label>
+            <div className="field-row">
+              <input
+                id={`${id}-paytype`}
+                type="text"
+                readOnly
+                tabIndex={-1}
+                className="read-only"
+                title={titleOf(payTypeText(header?.payType))}
+                value={payTypeText(header?.payType)}
+              />
+              <span className="field-group">
+                <label htmlFor={`${id}-currcode`}>Currency</label>
+                <select
+                  id={`${id}-currcode`}
+                  value={currencyValue}
+                  disabled={locked || currencyNote !== null}
+                  aria-busy={currencies.status === 'loading' || undefined}
+                  aria-describedby={currencyNote === null ? undefined : `${id}-currcode-note`}
+                  className={inputClass()}
+                  onChange={(event) => setField('currCode', enteredText(event.currentTarget.value))}
+                >
+                  {selectOptions(currencies.items, currencyValue).map((item, index) => (
+                    <option key={`${index}-${item.code}`} value={item.code}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              </span>
+            </div>
             {currencyNote !== null && (
               <div id={`${id}-currcode-note`} role="status" className={currencyNote.className}>
-                {currencyNote.text}
+                {currencyNote.warning && (
+                  <>
+                    <SeverityLabel severity="Warning" />{' '}
+                  </>
+                )}
+                <span>{currencyNote.text}</span>
               </div>
             )}
           </div>
@@ -610,14 +761,26 @@ export default function InvoiceHeaderForm({
                 id={`${id}-docidx`}
                 type="text"
                 readOnly
-                className={fixedClass(doctorMessages.invalid)}
+                tabIndex={-1}
+                className={fixedClass(doctorMessages.invalid, validating('DOCIDX'))}
                 aria-invalid={doctorMessages.invalid || undefined}
+                {...messageAria(doctorMessages, `${id}-docidx-msg`)}
+                aria-busy={validating('DOCIDX') || undefined}
+                title={titleOf(shown(header?.docId))}
                 value={shown(header?.docId)}
               />
-              <input type="text" readOnly aria-label="Doctor name" className="read-only" value={nameOf('DOC_NAME')} />
+              <input
+                id={`${id}-docname`}
+                type="text"
+                readOnly
+                aria-label="Doctor name"
+                className="read-only"
+                value={nameOf('DOC_NAME')}
+                {...readOnlyTextProps(nameOf('DOC_NAME'))}
+              />
               {renderPickerButton('DOC', 'Choose doctor')}
             </div>
-            {renderMessages(doctorMessages)}
+            {renderMessages(doctorMessages, `${id}-docidx-msg`)}
           </div>
 
           <div className="field">
@@ -627,13 +790,25 @@ export default function InvoiceHeaderForm({
                 id={`${id}-clinicid`}
                 type="text"
                 readOnly
-                className={fixedClass(clinicMessages.invalid)}
+                tabIndex={-1}
+                className={fixedClass(clinicMessages.invalid, validating('CLINICID'))}
                 aria-invalid={clinicMessages.invalid || undefined}
+                {...messageAria(clinicMessages, `${id}-clinicid-msg`)}
+                aria-busy={validating('CLINICID') || undefined}
+                title={titleOf(shown(header?.clinicId))}
                 value={shown(header?.clinicId)}
               />
-              <input type="text" readOnly aria-label="Clinic name" className="read-only" value={nameOf('CLINICNAME')} />
+              <input
+                id={`${id}-clinicname`}
+                type="text"
+                readOnly
+                aria-label="Clinic name"
+                className="read-only"
+                value={nameOf('CLINICNAME')}
+                {...readOnlyTextProps(nameOf('CLINICNAME'))}
+              />
             </div>
-            {renderMessages(clinicMessages)}
+            {renderMessages(clinicMessages, `${id}-clinicid-msg`)}
           </div>
 
           <div className="field">
@@ -644,16 +819,20 @@ export default function InvoiceHeaderForm({
                 type="text"
                 readOnly
                 disabled={notSavedDisabled}
-                className="read-only"
+                tabIndex={-1}
+                className={notSavedClass}
+                title={titleOf(shown(header?.docId1))}
                 value={shown(header?.docId1)}
               />
               <input
+                id={`${id}-docname1`}
                 type="text"
                 readOnly
                 disabled={notSavedDisabled}
                 aria-label="Transferring doctor name"
-                className="read-only"
+                className={notSavedClass}
                 value={nameOf('DOC_NAME1')}
+                {...readOnlyTextProps(nameOf('DOC_NAME1'))}
               />
             </div>
             <OpenItemNotice ids={NOT_SAVED_IDS} />
@@ -667,54 +846,29 @@ export default function InvoiceHeaderForm({
                 type="text"
                 readOnly
                 disabled={notSavedDisabled}
-                className="read-only"
+                tabIndex={-1}
+                className={notSavedClass}
+                title={titleOf(shown(header?.oferId))}
                 value={shown(header?.oferId)}
               />
               <input
+                id={`${id}-offername`}
                 type="text"
                 readOnly
                 disabled={notSavedDisabled}
                 aria-label="Discount package name"
-                className="read-only"
+                className={notSavedClass}
                 value={nameOf('OFFER_NAME')}
+                {...readOnlyTextProps(nameOf('OFFER_NAME'))}
               />
             </div>
             <OpenItemNotice ids={NOT_SAVED_IDS} />
           </div>
+        </div>
 
+        <div className="header-flags">
           {renderFlag('deptWise', 'DEPT_WISE', 'ER/ Dept Wise', deptWiseMessages, `${id}-deptwise`)}
           {renderFlag('call', 'CALL', 'Call', callMessages, `${id}-call`)}
-
-          <div className="field">
-            <label htmlFor={`${id}-seqno`}>Seq No</label>
-            <div className="field-row">
-              <input
-                id={`${id}-seqno`}
-                type="text"
-                readOnly
-                disabled={notSavedDisabled}
-                className="read-only"
-                value={shown(header?.seqNo)}
-              />
-              <button type="button" disabled={locked} aria-haspopup="dialog" onClick={onShowReservations}>
-                Show reservations
-              </button>
-            </div>
-            <OpenItemNotice ids={NOT_SAVED_IDS} />
-          </div>
-
-          <div className="field">
-            <label htmlFor={`${id}-reservtime`}>Reserv Time</label>
-            <input
-              id={`${id}-reservtime`}
-              type="text"
-              readOnly
-              disabled={notSavedDisabled}
-              className="read-only"
-              value={nameOf('RESERV_THE_TIME')}
-            />
-            <OpenItemNotice ids={NOT_SAVED_IDS} />
-          </div>
         </div>
       </div>
 
@@ -727,5 +881,60 @@ export default function InvoiceHeaderForm({
         />
       )}
     </>
+  );
+}
+
+/** Waiting List fields of the invoice: reservation sequence number and time, with the reservations list button. */
+export function WaitingListPanel({ state, onShowReservations }: WaitingListPanelProps) {
+  const id = useId();
+  const savedView = state.saved?.view ?? null;
+  const header: InvoiceHeaderDraft | null = savedView?.header ?? state.draft?.header ?? null;
+  const names: Record<string, unknown> = savedView !== null ? savedView.display : state.display;
+  const locked = state.readOnly || state.draft === null;
+  // OI-33 fields stay disabled until a saved view is loaded; loaded values remain read-only.
+  const notSavedDisabled = savedView === null;
+  const notSavedClass = notSavedDisabled ? undefined : 'read-only';
+
+  return (
+    <div className="waiting-list-panel" role="group" aria-labelledby={`${id}-title`}>
+      <div className="panel-title" role="heading" aria-level={2} id={`${id}-title`}>
+        Waiting List
+      </div>
+
+      <div className="field">
+        <label htmlFor={`${id}-seqno`}>Seq No</label>
+        <div className="field-row">
+          <input
+            id={`${id}-seqno`}
+            type="text"
+            readOnly
+            disabled={notSavedDisabled}
+            tabIndex={-1}
+            className={notSavedClass}
+            title={titleOf(shown(header?.seqNo))}
+            value={shown(header?.seqNo)}
+          />
+          <button type="button" disabled={locked} aria-haspopup="dialog" onClick={onShowReservations}>
+            Show reservations
+          </button>
+        </div>
+        <OpenItemNotice ids={NOT_SAVED_IDS} />
+      </div>
+
+      <div className="field">
+        <label htmlFor={`${id}-reservtime`}>Reserv Time</label>
+        <input
+          id={`${id}-reservtime`}
+          type="text"
+          readOnly
+          disabled={notSavedDisabled}
+          tabIndex={-1}
+          className={notSavedClass}
+          title={titleOf(shown(lookupValue(names, 'RESERV_THE_TIME')))}
+          value={shown(lookupValue(names, 'RESERV_THE_TIME'))}
+        />
+        <OpenItemNotice ids={NOT_SAVED_IDS} />
+      </div>
+    </div>
   );
 }

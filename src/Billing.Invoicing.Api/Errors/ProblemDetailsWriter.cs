@@ -23,7 +23,10 @@ public sealed class ProblemDetailsWriter
     private const string ProblemJsonContentType = "application/problem+json";
     private const string FieldValidationType = "field-validation";
     private const string NotFoundType = "not-found";
+    private const string MethodNotAllowedType = "method-not-allowed";
+    private const string UnsupportedMediaTypeType = "unsupported-media-type";
     private const string AboutBlankType = "about:blank";
+    private const string ApiPathPrefix = "/api";
 
     private const string OracleBusinessErrorTitle = "Oracle business error";
     private const string OperatorContextMissingTitle = "Operator context missing";
@@ -32,7 +35,13 @@ public sealed class ProblemDetailsWriter
     private const string OracleErrorTitle = "Oracle error";
     private const string FieldValidationTitle = "Validation failed";
     private const string NotFoundTitle = "Not found";
+    private const string MethodNotAllowedTitle = "Method not allowed";
+    private const string UnsupportedMediaTypeTitle = "Unsupported media type";
     private const string InternalServerErrorTitle = "Internal Server Error";
+
+    private const string RouteNotFoundMessage = "No resource matches the request path.";
+    private const string MethodNotAllowedMessage = "The request method is not allowed for this resource.";
+    private const string UnsupportedMediaTypeMessage = "The request body must be sent as application/json.";
 
     /// <summary>Web-default serializer options with string enums, relaxed escaping and dictionary keys written as given.</summary>
     private static readonly JsonSerializerOptions Options = CreateOptions();
@@ -169,6 +178,40 @@ public sealed class ProblemDetailsWriter
         body["message"] = message;
 
         return WriteBodyAsync(context, StatusCodes.Status404NotFound, body);
+    }
+
+    /// <summary>Writes the bodiless 404, 405 or 415 the framework left on an <c>/api</c> request as a <c>not-found</c>, <c>method-not-allowed</c> or <c>unsupported-media-type</c> body, keeping the status and headers.</summary>
+    /// <param name="statusCodeContext">The status-code-pages context of the request.</param>
+    /// <returns>A task that completes when the body is written, or at once for another status, a path outside <c>/api</c> or a started response.</returns>
+    public Task WriteAsync(StatusCodeContext statusCodeContext)
+    {
+        ArgumentNullException.ThrowIfNull(statusCodeContext);
+
+        HttpContext context = statusCodeContext.HttpContext;
+        if (context.Response.HasStarted
+            || !context.Request.Path.StartsWithSegments(ApiPathPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return Task.CompletedTask;
+        }
+
+        int status = context.Response.StatusCode;
+        (string Type, string Title, string Message)? refusal = status switch
+        {
+            StatusCodes.Status404NotFound => (NotFoundType, NotFoundTitle, RouteNotFoundMessage),
+            StatusCodes.Status405MethodNotAllowed => (MethodNotAllowedType, MethodNotAllowedTitle, MethodNotAllowedMessage),
+            StatusCodes.Status415UnsupportedMediaType => (UnsupportedMediaTypeType, UnsupportedMediaTypeTitle, UnsupportedMediaTypeMessage),
+            _ => null,
+        };
+
+        if (refusal is not { } written)
+        {
+            return Task.CompletedTask;
+        }
+
+        Dictionary<string, object?> body = Problem(written.Type, written.Title, status);
+        body["message"] = written.Message;
+
+        return WriteBodyAsync(context, status, body);
     }
 
     /// <summary>Builds the 422 body of an Oracle application error; field, legacy text and kind only when set.</summary>

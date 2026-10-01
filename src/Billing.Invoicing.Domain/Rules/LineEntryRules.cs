@@ -91,15 +91,15 @@ public static class LineEntryRules
     }
 
     /// <summary>Requires an approval reference on a credit line whose service needs approval (T074).</summary>
-    /// <param name="serviceId">Line service id (SERVICEID); null or empty skips the check.</param>
+    /// <param name="serviceId">Line service id (SERVICEID); null, empty or white space skips the check.</param>
     /// <param name="payType">Header pay type (PAYTYPE); only 2 (credit) is checked.</param>
     /// <param name="x422ApprovCheck">Approval-check setting X422_APPROV_CHECK: 1 enforces, 2 bypasses.</param>
     /// <param name="reqNeedA">Approval-needed flag (REQ_NEED_A); null or 0 never blocks.</param>
-    /// <param name="approvRefNo">Approval reference number (APPROV_REF_NO).</param>
+    /// <param name="approvRefNo">Approval reference number (APPROV_REF_NO); null, empty or white space is missing.</param>
     /// <returns>A blocking APPROV_REF_NO message of the service id followed by 'Need Approval'; otherwise <see cref="RuleResult.Empty"/>.</returns>
     public static RuleResult ValidateApproval(string? serviceId, int? payType, int? x422ApprovCheck, int? reqNeedA, string? approvRefNo)
     {
-        if (string.IsNullOrEmpty(serviceId) || payType != CreditPayType)
+        if (string.IsNullOrWhiteSpace(serviceId) || payType != CreditPayType)
         {
             return RuleResult.Empty;
         }
@@ -109,7 +109,7 @@ public static class LineEntryRules
             return RuleResult.Empty;
         }
 
-        if (x422ApprovCheck == ApprovalCheckEnforced && reqNeedA is not null && reqNeedA != 0 && string.IsNullOrEmpty(approvRefNo))
+        if (x422ApprovCheck == ApprovalCheckEnforced && reqNeedA is not null && reqNeedA != 0 && string.IsNullOrWhiteSpace(approvRefNo))
         {
             return Block(ApprovalReferenceField, serviceId + NeedApprovalSuffix, ApprovalRule);
         }
@@ -119,9 +119,9 @@ public static class LineEntryRules
 
     /// <summary>Requires a service on the line (T066).</summary>
     /// <param name="serviceId">Line service id (SERVICEID).</param>
-    /// <returns>A blocking SERVICEID message when the service id is null or empty; otherwise <see cref="RuleResult.Empty"/>.</returns>
+    /// <returns>A blocking SERVICEID message when the service id is null, empty or white space; otherwise <see cref="RuleResult.Empty"/>.</returns>
     public static RuleResult RequireService(string? serviceId) =>
-        string.IsNullOrEmpty(serviceId) ? Block(ServiceField, SelectServiceText, ServiceRule) : RuleResult.Empty;
+        string.IsNullOrWhiteSpace(serviceId) ? Block(ServiceField, SelectServiceText, ServiceRule) : RuleResult.Empty;
 
     /// <summary>Warns when an insured new invoice carries a service the doctor did not request on the claim (T052).</summary>
     /// <param name="header">Draft header supplying SUB_COMP_CODE and INV_NO.</param>

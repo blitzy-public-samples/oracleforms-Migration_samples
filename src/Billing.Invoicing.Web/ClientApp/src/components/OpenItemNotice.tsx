@@ -29,13 +29,15 @@ function ownText(source: Record<string, string> | undefined, id: string): string
   return typeof value === 'string' ? value : undefined;
 }
 
-/** Lists the open items an action or response reports as not available in this build. */
+/** Lists the open items an action or response reports as not available in this build, highlighting the `recent` one and how many times in a row it was requested. */
 export default function OpenItemNotice({
   ids,
   serverMessages,
+  recent,
 }: {
   ids: string[];
   serverMessages?: Record<string, string>;
+  recent?: { id: string; count: number };
 }) {
   const uniqueIds = Array.from(new Set(ids));
   if (uniqueIds.length === 0) {
@@ -46,11 +48,13 @@ export default function OpenItemNotice({
     <ul className="open-item-notice" role="status">
       {uniqueIds.map((id) => {
         const title = ownText(OPEN_ITEM_TITLES, id) ?? ownText(serverMessages, id);
+        const isRecent = recent !== undefined && recent.id === id;
         return (
-          <li key={id}>
+          <li key={id} className={isRecent ? 'open-item-notice__item--recent' : undefined}>
             {title === undefined
               ? `Not available in this build — open item ${id}`
               : `Not available in this build — open item ${id}: ${title}`}
+            {isRecent && recent.count > 1 ? ` — requested ${recent.count} times` : ''}
           </li>
         );
       })}

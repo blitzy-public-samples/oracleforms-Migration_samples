@@ -11,4 +11,7 @@ public sealed record NewDraftResponse
 
     /// <summary>Advisory open-item ids that apply to the new draft.</summary>
     public IReadOnlyList<string> OpenItems { get; init; } = [];
+
+    /// <summary>Display names of the preset doctor and clinic by upper-case item name.</summary>
+    public IReadOnlyDictionary<string, string?> Display { get; init; } = new Dictionary<string, string?>(StringComparer.Ordinal);
 }

@@ -18,6 +18,7 @@ public sealed class LineInputBinderTests
 {
     private const string LineCountName = "line_count";
     private const string ClientIdName = "l_client_id";
+    private const string ClientIdItem = "CLIENT_ID";
     private const string UsePriceOverrideName = "l_use_price_override";
 
     /// <summary>U+00E9, two bytes in UTF-8.</summary>
@@ -330,11 +331,7 @@ public sealed class LineInputBinderTests
 
         ArgumentException error = Assert.Throws<ArgumentException>(() => ClientIdBinder.Bind(lines));
 
-        Assert.Contains("index 2", error.Message);
-        Assert.Contains(ClientIdName, error.Message);
-        Assert.Contains("4001", error.Message);
-        Assert.Contains("4000", error.Message);
-        Assert.Equal("lines", error.ParamName);
+        AssertBindingRejection("CLIENT_ID on line 3 has 4001 characters; at most 4000 can be bound.", ClientIdItem, error);
     }
 
     [Fact]
@@ -372,11 +369,7 @@ public sealed class LineInputBinderTests
 
         ArgumentException error = Assert.Throws<ArgumentException>(() => ClientIdBinder.Bind(lines));
 
-        Assert.Contains("index 1", error.Message);
-        Assert.Contains(ClientIdName, error.Message);
-        Assert.Contains("4002", error.Message);
-        Assert.Contains("UTF-8", error.Message);
-        Assert.Equal("lines", error.ParamName);
+        AssertBindingRejection("CLIENT_ID on line 2 has 4002 bytes in UTF-8; at most 4000 can be bound.", ClientIdItem, error);
     }
 
     [Theory]
@@ -502,7 +495,7 @@ public sealed class LineInputBinderTests
 
         ArgumentException error = Assert.Throws<ArgumentException>(() => LineInputBinder.Bind([line]));
 
-        Assert.Contains("l_offer_name_snapshot", error.Message);
+        AssertBindingRejection("OFFER_NAME_SNAPSHOT on line 1 has 4001 characters; at most 4000 can be bound.", "OFFER_NAME_SNAPSHOT", error);
     }
 
     [Fact]
@@ -520,7 +513,7 @@ public sealed class LineInputBinderTests
     }
 
     [Fact]
-    public void Bind_TextOver4000Utf8Bytes_ThrowsNamingTheLineAndArray()
+    public void Bind_TextOver4000Utf8Bytes_ThrowsNamingTheLineAndItem()
     {
         IReadOnlyList<InvoiceLineDraft> lines =
         [
@@ -530,11 +523,7 @@ public sealed class LineInputBinderTests
 
         ArgumentException error = Assert.Throws<ArgumentException>(() => LineInputBinder.Bind(lines));
 
-        Assert.Contains("index 1", error.Message);
-        Assert.Contains("l_offer_name_snapshot", error.Message);
-        Assert.Contains("4002", error.Message);
-        Assert.Contains("UTF-8", error.Message);
-        Assert.Equal("lines", error.ParamName);
+        AssertBindingRejection("OFFER_NAME_SNAPSHOT on line 2 has 4002 bytes in UTF-8; at most 4000 can be bound.", "OFFER_NAME_SNAPSHOT", error);
     }
 
     [Fact]
@@ -589,18 +578,18 @@ public sealed class LineInputBinderTests
 
     [Theory]
     [MemberData(nameof(SettableTextArrayWidths))]
-    public void Bind_TextOverItsFieldWidthInCharacters_ThrowsBindingRejectionNamingTheLineAndArray(string arrayName, int width)
+    public void Bind_TextOverItsFieldWidthInCharacters_ThrowsBindingRejectionNamingTheLineAndItem(string arrayName, int width)
     {
         IReadOnlyList<InvoiceLineDraft> lines =
         [
             Line("S1", "c-1"),
             WithText(Line("S2", "c-2"), arrayName, new string('x', width + 1)),
         ];
-        string expected = $"Invoice line at index 1: {arrayName} has {width + 1} characters; at most {width} can be bound.";
+        string expected = $"{ItemOf(arrayName)} on line 2 has {width + 1} characters; at most {width} can be bound.";
 
         ArgumentException error = Assert.Throws<ArgumentException>(() => LineInputBinder.Bind(lines));
 
-        AssertBindingRejection(expected, error);
+        AssertBindingRejection(expected, ItemOf(arrayName), error);
     }
 
     [Theory]
@@ -610,13 +599,13 @@ public sealed class LineInputBinderTests
         string value = new(TwoByteCharacter, width / 2 + 1);
         int bytes = Encoding.UTF8.GetByteCount(value);
         IReadOnlyList<InvoiceLineDraft> lines = [Line("S1", "c-1"), WithText(Line("S2", "c-2"), arrayName, value)];
-        string expected = $"Invoice line at index 1: {arrayName} has {bytes} bytes in UTF-8; at most {width} can be bound.";
+        string expected = $"{ItemOf(arrayName)} on line 2 has {bytes} bytes in UTF-8; at most {width} can be bound.";
 
         ArgumentException error = Assert.Throws<ArgumentException>(() => LineInputBinder.Bind(lines));
 
         Assert.InRange(value.Length, 1, width);
         Assert.True(bytes > width, $"{bytes} bytes");
-        AssertBindingRejection(expected, error);
+        AssertBindingRejection(expected, ItemOf(arrayName), error);
     }
 
     [Fact]
@@ -644,21 +633,23 @@ public sealed class LineInputBinderTests
     }
 
     [Theory]
-    [InlineData("client-id-characters", "Invoice line at index 1: l_client_id has 4001 characters; at most 4000 can be bound.")]
-    [InlineData("client-id-bytes", "Invoice line at index 1: l_client_id has 4002 bytes in UTF-8; at most 4000 can be bound.")]
-    [InlineData("text-characters", "Invoice line at index 1: l_offer_name_snapshot has 4001 characters; at most 4000 can be bound.")]
-    [InlineData("text-bytes", "Invoice line at index 1: l_offer_name_snapshot has 4002 bytes in UTF-8; at most 4000 can be bound.")]
-    [InlineData("service-id-characters", "Invoice line at index 1: l_serviceid has 21 characters; at most 20 can be bound.")]
-    [InlineData("teeth-no-characters", "Invoice line at index 1: l_teeth_no has 3 characters; at most 2 can be bound.")]
-    [InlineData("teeth-no-bytes", "Invoice line at index 1: l_teeth_no has 4 bytes in UTF-8; at most 2 can be bound.")]
-    [InlineData("discount-type-bytes", "Invoice line at index 1: l_discount_type has 2 bytes in UTF-8; at most 1 can be bound.")]
-    [InlineData("package-definition-token-bytes", "Invoice line at index 1: l_package_definition_token has 66 bytes in UTF-8; at most 64 can be bound.")]
-    public void BindingRejection_CarriesItsTextAndTranslatesToFormLevelFieldValidation(string rejectionCase, string expectedText)
+    [InlineData("client-id-characters", "CLIENT_ID", "CLIENT_ID on line 2 has 4001 characters; at most 4000 can be bound.")]
+    [InlineData("client-id-bytes", "CLIENT_ID", "CLIENT_ID on line 2 has 4002 bytes in UTF-8; at most 4000 can be bound.")]
+    [InlineData("text-characters", "OFFER_NAME_SNAPSHOT", "OFFER_NAME_SNAPSHOT on line 2 has 4001 characters; at most 4000 can be bound.")]
+    [InlineData("text-bytes", "OFFER_NAME_SNAPSHOT", "OFFER_NAME_SNAPSHOT on line 2 has 4002 bytes in UTF-8; at most 4000 can be bound.")]
+    [InlineData("service-id-characters", "SERVICEID", "SERVICEID on line 2 has 21 characters; at most 20 can be bound.")]
+    [InlineData("teeth-no-characters", "TEETH_NO", "TEETH_NO on line 2 has 3 characters; at most 2 can be bound.")]
+    [InlineData("teeth-no-bytes", "TEETH_NO", "TEETH_NO on line 2 has 4 bytes in UTF-8; at most 2 can be bound.")]
+    [InlineData("discount-type-bytes", "LDISCT", "LDISCT on line 2 has 2 bytes in UTF-8; at most 1 can be bound.")]
+    [InlineData("package-definition-token-bytes", "PACKAGE_DEFINITION_TOKEN", "PACKAGE_DEFINITION_TOKEN on line 2 has 66 bytes in UTF-8; at most 64 can be bound.")]
+    public void BindingRejection_CarriesItsTextAndItemAndTranslatesToFieldValidationPlacedOnItsItem(
+        string rejectionCase, string expectedField, string expectedText)
     {
         ArgumentException error = BindingRejection(rejectionCase);
 
         Assert.Equal("lines", error.ParamName);
         Assert.Equal(expectedText, error.Data[OracleFailureTranslator.BindingRejectionKey]);
+        Assert.Equal(expectedField, error.Data[OracleFailureTranslator.BindingRejectionFieldKey]);
 
         DataFailure? failure = new OracleFailureTranslator().Translate(error);
 
@@ -666,7 +657,7 @@ public sealed class LineInputBinderTests
         Assert.Equal(422, failure.Status);
         Assert.Equal("field-validation", failure.Type);
         Assert.Equal(expectedText, failure.Message);
-        Assert.Null(failure.Field);
+        Assert.Equal(expectedField, failure.Field);
         Assert.Null(failure.Number);
         Assert.Null(failure.Package);
         Assert.Null(failure.Kind);
@@ -680,18 +671,24 @@ public sealed class LineInputBinderTests
         ArgumentException lineNullLine = Assert.Throws<ArgumentException>(() => LineInputBinder.Bind([Line("S1", "c-1"), null!]));
         var otherType = new InvalidOperationException("Not a binding rejection.");
         otherType.Data[OracleFailureTranslator.BindingRejectionKey] = "Not a binding rejection.";
+        otherType.Data[OracleFailureTranslator.BindingRejectionFieldKey] = ClientIdItem;
+        var fieldOnly = new ArgumentException("Not a binding rejection.", "lines");
+        fieldOnly.Data[OracleFailureTranslator.BindingRejectionFieldKey] = ClientIdItem;
 
         Assert.False(clientIdNullLine.Data.Contains(OracleFailureTranslator.BindingRejectionKey));
         Assert.False(lineNullLine.Data.Contains(OracleFailureTranslator.BindingRejectionKey));
+        Assert.False(clientIdNullLine.Data.Contains(OracleFailureTranslator.BindingRejectionFieldKey));
+        Assert.False(lineNullLine.Data.Contains(OracleFailureTranslator.BindingRejectionFieldKey));
         Assert.Null(translator.Translate(clientIdNullLine));
         Assert.Null(translator.Translate(lineNullLine));
         Assert.Null(translator.Translate(otherType));
+        Assert.Null(translator.Translate(fieldOnly));
     }
 
     [Fact]
     public async Task BindingRejection_IsWrittenAsFieldValidationProblem()
     {
-        const string expectedText = "Invoice line at index 1: l_client_id has 4001 characters; at most 4000 can be bound.";
+        const string expectedText = "CLIENT_ID on line 2 has 4001 characters; at most 4000 can be bound.";
         var context = new DefaultHttpContext();
         context.Response.Body = new MemoryStream();
         context.Features.Set<IExceptionHandlerFeature>(new ExceptionHandlerFeature
@@ -712,7 +709,7 @@ public sealed class LineInputBinderTests
         JsonElement message = Assert.Single(body.GetProperty("messages").EnumerateArray());
         Assert.Equal(expectedText, message.GetProperty("text").GetString());
         Assert.Equal("Blocking", message.GetProperty("severity").GetString());
-        Assert.Equal(JsonValueKind.Null, message.GetProperty("field").ValueKind);
+        Assert.Equal(ClientIdItem, message.GetProperty("field").GetString());
         Assert.Equal(JsonValueKind.Array, body.GetProperty("openItems").ValueKind);
         Assert.Empty(body.GetProperty("openItems").EnumerateArray());
     }
@@ -756,12 +753,34 @@ public sealed class LineInputBinderTests
         return data;
     }
 
-    /// <summary>Asserts the exception is the binder's rejection of <c>lines</c> carrying exactly the expected text.</summary>
-    private static void AssertBindingRejection(string expected, ArgumentException error)
+    /// <summary>Returns the D_INV Form item, or the upper-case t_line_input field name, of a VARCHAR2 array bound from a line field.</summary>
+    private static string ItemOf(string arrayName) => arrayName switch
+    {
+        "l_serviceid" => "SERVICEID",
+        "l_discount_type" => "LDISCT",
+        "l_teeth_no" => "TEETH_NO",
+        "l_tooth_surface" => "TOOTH_SURFACE",
+        "l_teeth_no2" => "TEETH_NO2",
+        "l_approv_ref_no" => "APPROV_REF_NO",
+        "l_claim_no" => "CLAIM_NO",
+        "l_package_service_id" => "IMP_FROM_PKG",
+        "l_package_instance_id" => "PACKAGE_INSTANCE_ID",
+        "l_package_line_role" => "PACKAGE_LINE_ROLE",
+        "l_package_pricing_method" => "PACKAGE_PRICING_METHOD",
+        "l_package_definition_token" => "PACKAGE_DEFINITION_TOKEN",
+        "l_offer_instance_id" => "OFFER_INSTANCE_ID",
+        "l_offer_line_role" => "OFFER_LINE_ROLE",
+        "l_offer_name_snapshot" => "OFFER_NAME_SNAPSHOT",
+        _ => throw new ArgumentOutOfRangeException(nameof(arrayName), arrayName, "Not a VARCHAR2 array bound from a line field."),
+    };
+
+    /// <summary>Asserts the exception is the binder's rejection of <c>lines</c> carrying exactly the expected text, placed on the expected item.</summary>
+    private static void AssertBindingRejection(string expected, string item, ArgumentException error)
     {
         Assert.Equal(new ArgumentException(expected, "lines").Message, error.Message);
         Assert.Equal("lines", error.ParamName);
         Assert.Equal(expected, error.Data[OracleFailureTranslator.BindingRejectionKey]);
+        Assert.Equal(item, error.Data[OracleFailureTranslator.BindingRejectionFieldKey]);
     }
 
     private static InvoiceLineDraft PriceOverrideCase(string lineKind)

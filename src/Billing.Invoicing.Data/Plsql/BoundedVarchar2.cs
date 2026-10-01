@@ -59,22 +59,47 @@ internal static class BoundedVarchar2
         }
 
         // A value over the destination width in characters or UTF-8 bytes is rejected, never truncated to fit (D-108).
-        string? rejection = null;
+        if (Rejection(bindName, null, value, maxBytes, paramName) is { } rejection)
+        {
+            throw rejection;
+        }
+    }
+
+    /// <summary>Returns the rejection of a value longer than <paramref name="maxBytes"/> in characters, else in UTF-8 bytes, or null when the value fits.</summary>
+    /// <param name="subject">Name the rejection text starts with.</param>
+    /// <param name="field">Legacy item the rejection is placed on, or null for a form-level rejection.</param>
+    /// <param name="value">Value to check.</param>
+    /// <param name="maxBytes">Destination width in bytes.</param>
+    /// <param name="paramName">Argument the rejection names.</param>
+    /// <returns>An <see cref="ArgumentException"/> holding its text under <see cref="OracleFailureTranslator.BindingRejectionKey"/> and a non-null field under <see cref="OracleFailureTranslator.BindingRejectionFieldKey"/>; null when the value fits.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="value"/> is null.</exception>
+    internal static ArgumentException? Rejection(string subject, string? field, string value, int maxBytes, string paramName)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+
+        string? text = null;
         if (value.Length > maxBytes)
         {
-            rejection = $"{bindName} has {value.Length} characters; at most {maxBytes} can be bound.";
+            text = $"{subject} has {value.Length} characters; at most {maxBytes} can be bound.";
         }
         else if (Encoding.UTF8.GetByteCount(value) is var bytes && bytes > maxBytes)
         {
-            rejection = $"{bindName} has {bytes} bytes in UTF-8; at most {maxBytes} can be bound.";
+            text = $"{subject} has {bytes} bytes in UTF-8; at most {maxBytes} can be bound.";
         }
 
-        if (rejection is not null)
+        if (text is null)
         {
-            var error = new ArgumentException(rejection, paramName);
-            error.Data[OracleFailureTranslator.BindingRejectionKey] = rejection;
-            throw error;
+            return null;
         }
+
+        var error = new ArgumentException(text, paramName);
+        error.Data[OracleFailureTranslator.BindingRejectionKey] = text;
+        if (field is not null)
+        {
+            error.Data[OracleFailureTranslator.BindingRejectionFieldKey] = field;
+        }
+
+        return error;
     }
 
     /// <summary>Creates a VARCHAR2 IN parameter of size <paramref name="maxBytes"/> after <see cref="Validate"/>, sending a null value as <see cref="DBNull.Value"/>.</summary>

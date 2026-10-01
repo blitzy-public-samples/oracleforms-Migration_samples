@@ -62,7 +62,7 @@ public sealed class OracleFactAttribute : FactAttribute
         }
     }
 
-    /// <summary>Open-item id (for example OI-06) whose missing evidence keeps the test skipped.</summary>
+    /// <summary>Open-item id or range (for example OI-06, or OI-08 … OI-10) whose missing evidence keeps the test skipped.</summary>
     public string? PendingOn { get; set; }
 
     /// <summary>Side-effect class of the test; <see cref="CreateSideEffects"/> gates it on the recorded isolation clearance.</summary>

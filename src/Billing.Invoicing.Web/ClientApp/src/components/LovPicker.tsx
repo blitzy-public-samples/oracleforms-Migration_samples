@@ -1,8 +1,8 @@
-import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { UIEvent } from 'react';
+import { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { InputHTMLAttributes, UIEvent } from 'react';
 import { ApiError, getLov } from '../api/client';
-import type { LovBinds as ApiLovBinds, LovResponse } from '../api/types';
-import FieldMessage from './FieldMessage';
+import type { LovBinds as ApiLovBinds, LovResponse, MessageDto } from '../api/types';
+import FieldMessage, { fieldMessageRefs } from './FieldMessage';
 import OpenItemNotice from './OpenItemNotice';
 
 /** The LOVs the picker can open. */
@@ -13,6 +13,32 @@ export type LovBinds = ApiLovBinds;
 
 /** Receives each LOV request's Oracle availability: false on a 503, true when its rows arrive. */
 export const LovConnectivityContext = createContext<((available: boolean) => void) | null>(null);
+
+/** Props of a read-only free-text input: the full value as title, automatic direction, the start shown on focus, and Home / End scrolling. */
+export function readOnlyTextProps(
+  value: string,
+): Pick<InputHTMLAttributes<HTMLInputElement>, 'title' | 'dir' | 'onFocus' | 'onKeyDown'> {
+  return {
+    title: value === '' ? undefined : value,
+    dir: 'auto',
+    onFocus: (event) => {
+      event.currentTarget.scrollLeft = 0;
+    },
+    onKeyDown: (event) => {
+      if (event.ctrlKey || event.altKey || event.metaKey) {
+        return;
+      }
+      const input = event.currentTarget;
+      if (event.key === 'Home') {
+        event.preventDefault();
+        input.scrollLeft = 0;
+      } else if (event.key === 'End') {
+        event.preventDefault();
+        input.scrollLeft = getComputedStyle(input).direction === 'rtl' ? -input.scrollWidth : input.scrollWidth;
+      }
+    },
+  };
+}
 
 type LovRow = LovResponse['rows'][number];
 
@@ -26,8 +52,14 @@ type LovPickerProps = {
 /** A response row with its display text per column and the lower-cased text the filter matches. */
 type PreparedRow = { row: LovRow; index: number; texts: string[]; needles: string[] };
 
-/** The prepared rows of one response and each column's share of the table width in percent. */
-type PreparedRows = { rows: PreparedRow[]; widths: number[] };
+/** The prepared rows of one response, and per column its longest texts, longest first, and every distinct text while none is longer than SHORT_VALUE_CHARS (null after). */
+type PreparedRows = { rows: PreparedRow[]; samples: string[][]; shortTexts: (Set<string> | null)[] };
+
+/** Per column, in pixels with padding and border: the minimum, the width that keeps the header whole, and the natural width. */
+type ColumnLevels = { hard: number[]; soft: number[]; natural: number[] };
+
+/** Column widths in pixels, and the table width when the minimums overflow the scroller. */
+type ColumnLayout = { widths: number[]; tableWidth: number | null };
 
 /** One rendered body row, or a gap standing in for unrendered rows. */
 type WindowPart = { kind: 'row'; position: number } | { kind: 'gap'; rows: number; ordinal: number };
@@ -41,11 +73,23 @@ const INITIAL_ROW_COUNT = 25;
 /** Row and header height in pixels until the rendered table is measured. */
 const FALLBACK_ROW_HEIGHT = 30;
 
-/** Widest column in characters, before padding. */
+/** Characters of a value that count toward its column's natural width. */
 const MAX_COLUMN_CHARS = 40;
 
-/** Characters added to each column width. */
-const COLUMN_PADDING_CHARS = 2;
+/** Longest value, in characters, of a column whose values are never cut. */
+const SHORT_VALUE_CHARS = 12;
+
+/** Characters every column keeps visible. */
+const MIN_COLUMN_CHARS = 4;
+
+/** Longest texts per column measured for its width. */
+const WIDTH_SAMPLES = 8;
+
+/** Pixels added to each measured text width. */
+const TEXT_SLACK_PX = 1;
+
+/** Milliseconds after opening during which a backdrop click does not close the picker. */
+const BACKDROP_CLOSE_DELAY_MS = 500;
 
 /** Dialog titles from the Form; untitled payment LOVs use their LOV names. */
 const TITLES: Record<LovName, string> = {
@@ -75,6 +119,106 @@ const COLUMNS: Record<LovName, readonly string[]> = {
 
 /** Elements the Tab key cycles through inside the dialog. */
 const FOCUSABLE_SELECTOR = 'input:not([tabindex="-1"]), button:not([tabindex="-1"]), [tabindex="0"]';
+
+/** Background elements left outside `inert`: scripts and the page-level live regions appended to the body. */
+const INERT_EXEMPT_SELECTOR = 'script, body > [aria-live]';
+
+/** One open modal: its backdrop, the release of its inert background while it is topmost, and its focused control while covered. */
+type ModalLayer = { element: HTMLElement; release: (() => void) | null; focus: HTMLElement | null };
+
+/** Open modals in opening order; only the last one keeps its background inert. */
+const modalLayers: ModalLayer[] = [];
+
+/** Makes every sibling on the path from `element` up to the body inert, including siblings added later; returns an idempotent release. */
+function markBackground(element: HTMLElement): () => void {
+  const marked: Element[] = [];
+  const observers: MutationObserver[] = [];
+  const mark = (candidate: Node, keep: Element) => {
+    if (candidate instanceof Element && candidate !== keep && !candidate.hasAttribute('inert') && !candidate.matches(INERT_EXEMPT_SELECTOR)) {
+      candidate.setAttribute('inert', '');
+      marked.push(candidate);
+    }
+  };
+  let node: Element = element;
+  while (node !== document.body && node.parentElement !== null) {
+    const parent: Element = node.parentElement;
+    const keep = node;
+    for (const sibling of Array.from(parent.children)) {
+      mark(sibling, keep);
+    }
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        record.addedNodes.forEach((added) => mark(added, keep));
+      }
+    });
+    observer.observe(parent, { childList: true });
+    observers.push(observer);
+    node = parent;
+  }
+  let released = false;
+  return () => {
+    if (released) {
+      return;
+    }
+    released = true;
+    for (const observer of observers) {
+      observer.disconnect();
+    }
+    for (const candidate of marked) {
+      candidate.removeAttribute('inert');
+    }
+  };
+}
+
+/** Moves focus back into a resumed modal when it is not already there: to its last focused control, else to its dialog. */
+function refocusResumed(layer: ModalLayer, focus: HTMLElement | null): void {
+  window.setTimeout(() => {
+    const active = document.activeElement;
+    if (layer.release === null || !layer.element.isConnected || (active !== null && layer.element.contains(active))) {
+      return;
+    }
+    const target =
+      focus !== null && focus.isConnected && layer.element.contains(focus)
+        ? focus
+        : layer.element.querySelector<HTMLElement>('[role="dialog"], [role="alertdialog"]');
+    target?.focus();
+  }, 0);
+}
+
+/** Makes the page behind the modal at `element` inert, suspending an already open modal until this one is released; returns an idempotent release. */
+export function inertBackground(element: HTMLElement): () => void {
+  const covered = modalLayers.at(-1);
+  if (covered !== undefined && covered.release !== null) {
+    const active = document.activeElement;
+    covered.focus = active instanceof HTMLElement && covered.element.contains(active) ? active : null;
+    covered.release();
+    covered.release = null;
+  }
+  const layer: ModalLayer = { element, release: markBackground(element), focus: null };
+  modalLayers.push(layer);
+  let released = false;
+  return () => {
+    if (released) {
+      return;
+    }
+    released = true;
+    layer.release?.();
+    layer.release = null;
+    const position = modalLayers.indexOf(layer);
+    if (position === -1) {
+      return;
+    }
+    modalLayers.splice(position, 1);
+    const resumed = modalLayers.at(-1);
+    if (position !== modalLayers.length || resumed === undefined || resumed.release !== null || !resumed.element.isConnected) {
+      return;
+    }
+    resumed.release = markBackground(resumed.element);
+    const focus = resumed.focus;
+    resumed.focus = null;
+    refocusResumed(resumed, focus);
+  };
+}
 
 /** Returns a row's value for an upper-case column key as text, matching the key case-insensitively. */
 function cellText(row: LovRow, column: string): string {
@@ -109,19 +253,112 @@ function wrapFocus(container: HTMLElement, backwards: boolean): boolean {
   return false;
 }
 
-/** Returns each response row's display and filter texts, and each column's share of the table width in percent. */
+/** Inserts `text` into `samples`, which keeps the WIDTH_SAMPLES longest distinct texts, longest first. */
+function addSample(samples: string[], text: string) {
+  if (text === '' || (samples.length === WIDTH_SAMPLES && text.length <= samples[WIDTH_SAMPLES - 1].length)) {
+    return;
+  }
+  if (samples.includes(text)) {
+    return;
+  }
+  const at = samples.findIndex((sample) => sample.length < text.length);
+  samples.splice(at === -1 ? samples.length : at, 0, text);
+  if (samples.length > WIDTH_SAMPLES) {
+    samples.pop();
+  }
+}
+
+/** Returns each response row's display and filter texts, and each column's longest texts and, while all are short, its distinct texts. */
 function prepareRows(response: LovResponse | null, columns: readonly string[]): PreparedRows {
-  const longest = columns.map((column) => column.length);
+  const samples = columns.map((): string[] => []);
+  const shortTexts = columns.map((): Set<string> | null => new Set<string>());
   const rows = (response?.rows ?? []).map((row, index) => {
     const texts = columns.map((column) => cellText(row, column));
     texts.forEach((text, column) => {
-      longest[column] = Math.max(longest[column], text.length);
+      addSample(samples[column], text);
+      const short = shortTexts[column];
+      if (short !== null) {
+        if (text.length > SHORT_VALUE_CHARS) {
+          shortTexts[column] = null;
+        } else if (text !== '') {
+          short.add(text);
+        }
+      }
     });
     return { row, index, texts, needles: texts.map((text) => text.toLowerCase()) };
   });
-  const chars = longest.map((length) => Math.min(MAX_COLUMN_CHARS, length) + COLUMN_PADDING_CHARS);
-  const totalChars = chars.reduce((sum, width) => sum + width, 0);
-  return { rows, widths: chars.map((width) => (width / totalChars) * 100) };
+  return { rows, samples, shortTexts };
+}
+
+/** The 2D canvas context text is measured with: undefined until first needed, null where canvas is unavailable. */
+let measuringContext: CanvasRenderingContext2D | null | undefined;
+
+/** Returns the canvas font string of an element's computed font. */
+function canvasFont(style: CSSStyleDeclaration): string {
+  return `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+}
+
+/** Returns an element's computed horizontal padding and border in pixels. */
+function inlineSpacing(style: CSSStyleDeclaration): number {
+  return [style.paddingInlineStart, style.paddingInlineEnd, style.borderInlineStartWidth, style.borderInlineEndWidth]
+    .map((value) => Number.parseFloat(value))
+    .reduce((sum, value) => sum + (Number.isFinite(value) ? value : 0), 0);
+}
+
+/** Returns each column's width levels from the header cells' fonts and spacing and the body font, or null without a 2D canvas. */
+function measureColumns(
+  headers: readonly HTMLTableCellElement[],
+  body: Element,
+  columns: readonly string[],
+  prepared: PreparedRows,
+): ColumnLevels | null {
+  if (measuringContext === undefined) {
+    measuringContext = document.createElement('canvas').getContext('2d');
+  }
+  const context = measuringContext;
+  if (context === null) {
+    return null;
+  }
+  const measure = (text: string) => Math.ceil(context.measureText(text).width) + TEXT_SLACK_PX;
+  context.font = canvasFont(getComputedStyle(body));
+  const floor = measure('0'.repeat(MIN_COLUMN_CHARS));
+  const widest = prepared.samples.map((texts, column) => {
+    let width = 0;
+    for (const text of prepared.shortTexts[column] ?? texts) {
+      width = Math.max(width, measure(text.slice(0, MAX_COLUMN_CHARS)));
+    }
+    return width;
+  });
+  const levels: ColumnLevels = { hard: [], soft: [], natural: [] };
+  headers.forEach((header, column) => {
+    const style = getComputedStyle(header);
+    const spacing = inlineSpacing(style);
+    context.font = canvasFont(style);
+    const hard = spacing + Math.max(floor, prepared.shortTexts[column] !== null ? widest[column] : 0);
+    const soft = Math.max(hard, spacing + measure(columns[column]));
+    levels.hard.push(hard);
+    levels.soft.push(soft);
+    levels.natural.push(Math.max(soft, spacing + widest[column]));
+  });
+  return levels;
+}
+
+/** Returns column widths that fill `available` pixels, growing every column from its minimum toward its natural width. */
+function layoutColumns(levels: ColumnLevels, available: number): ColumnLayout {
+  const steps = [levels.hard, levels.soft, levels.natural];
+  const totals = steps.map((widths) => widths.reduce((sum, width) => sum + width, 0));
+  if (totals[0] >= available) {
+    return { widths: levels.hard, tableWidth: totals[0] > available ? totals[0] : null };
+  }
+  if (totals[2] <= available) {
+    return { widths: levels.natural.map((width) => (width * available) / totals[2]), tableWidth: null };
+  }
+  const step = totals[1] <= available ? 1 : 0;
+  const share = (available - totals[step]) / (totals[step + 1] - totals[step]);
+  return {
+    widths: steps[step].map((width, column) => width + share * (steps[step + 1][column] - width)),
+    tableWidth: null,
+  };
 }
 
 /** Returns the rendered positions in order, with a gap for each run of unrendered rows. */
@@ -164,20 +401,18 @@ function isOracleUnavailable(reason: unknown): boolean {
   return reason instanceof ApiError && (reason.status === 503 || reason.type === 'oracle-unavailable');
 }
 
-/** Renders a failed getLov call as field-level messages. */
-function LovError({ reason }: { reason: unknown }) {
+/** Messages and mapped Oracle error that a failed getLov call renders. */
+type LovFailureParts = { messages: MessageDto[]; fieldError: { text: string; oracleErrorNumber: number | null } | null };
+
+/** Returns the field-level messages, else the mapped error, of a failed getLov call. */
+function lovFailureParts(reason: unknown): LovFailureParts {
   if (reason instanceof ApiError) {
     if (reason.type === 'field-validation' && reason.messages.length > 0) {
-      return <FieldMessage messages={reason.messages} />;
+      return { messages: reason.messages, fieldError: null };
     }
-    return (
-      <FieldMessage
-        messages={[]}
-        fieldError={{ text: reason.legacyText ?? reason.message, oracleErrorNumber: reason.oracleErrorNumber }}
-      />
-    );
+    return { messages: [], fieldError: { text: reason.legacyText ?? reason.message, oracleErrorNumber: reason.oracleErrorNumber } };
   }
-  return <FieldMessage messages={[]} fieldError={{ text: String(reason), oracleErrorNumber: null }} />;
+  return { messages: [], fieldError: { text: String(reason), oracleErrorNumber: null } };
 }
 
 /** Modal list of values for one served LOV; returns the chosen row to the host. */
@@ -186,6 +421,8 @@ export default function LovPicker({ name, binds = {}, onPick, onClose }: LovPick
   const requestBinds = useMemo(() => JSON.parse(bindsKey) as LovBinds, [bindsKey]);
 
   const [opener] = useState(() => (document.activeElement instanceof HTMLElement ? document.activeElement : null));
+  const [openedAt] = useState(() => performance.now());
+  const backdropPressed = useRef(false);
   const [loading, setLoading] = useState(true);
   const [response, setResponse] = useState<LovResponse | null>(null);
   const [failure, setFailure] = useState<{ reason: unknown } | null>(null);
@@ -194,9 +431,24 @@ export default function LovPicker({ name, binds = {}, onPick, onClose }: LovPick
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
   const [firstVisible, setFirstVisible] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
+  const [viewportWidth, setViewportWidth] = useState(0);
+  const [columnLevels, setColumnLevels] = useState<ColumnLevels | null>(null);
   const [rowHeight, setRowHeight] = useState(FALLBACK_ROW_HEIGHT);
   const [headerHeight, setHeaderHeight] = useState(FALLBACK_ROW_HEIGHT);
   const pendingFocus = useRef<number | null>(null);
+  const listId = useId();
+  const backdropRef = useRef<HTMLDivElement>(null);
+  const releaseBackground = useRef<(() => void) | null>(null);
+
+  // Makes the page behind the dialog inert while it is open.
+  useLayoutEffect(() => {
+    if (backdropRef.current === null) {
+      return undefined;
+    }
+    const release = inertBackground(backdropRef.current);
+    releaseBackground.current = release;
+    return release;
+  }, []);
 
   const reportConnectivity = useContext(LovConnectivityContext);
   const latestReportConnectivity = useRef(reportConnectivity);
@@ -258,20 +510,36 @@ export default function LovPicker({ name, binds = {}, onPick, onClose }: LovPick
   const pinned = selectable && total > 0 && (currentIndex < start || currentIndex >= end) ? currentIndex : null;
   const pageSize = Math.max(1, Math.floor((viewportHeight - headerHeight) / rowHeight));
 
-  // Tracks the scroller's visible height.
+  // Tracks the scroller's visible height and width.
   useLayoutEffect(() => {
     if (scroller === null) {
       return;
     }
     const measure = () => {
       const height = scroller.clientHeight;
+      const width = scroller.clientWidth;
       setViewportHeight((current) => (current === height ? current : height));
+      setViewportWidth((current) => (current === width ? current : width));
     };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(scroller);
     return () => observer.disconnect();
   }, [scroller]);
+
+  // Measures each column's width levels once per response, from the rendered header and body cells.
+  useLayoutEffect(() => {
+    const headers = Array.from(scroller?.querySelectorAll<HTMLTableCellElement>('thead th') ?? []);
+    const body = scroller?.querySelector('tbody > tr.lov-row > td') ?? scroller?.querySelector('tbody') ?? null;
+    setColumnLevels(
+      body !== null && headers.length === columns.length ? measureColumns(headers, body, columns, prepared) : null,
+    );
+  }, [scroller, prepared, columns]);
+
+  const columnLayout = useMemo(
+    () => (columnLevels === null || viewportWidth <= 0 ? null : layoutColumns(columnLevels, viewportWidth)),
+    [columnLevels, viewportWidth],
+  );
 
   // Measures the rendered header and body-row heights.
   useLayoutEffect(() => {
@@ -352,7 +620,23 @@ export default function LovPicker({ name, binds = {}, onPick, onClose }: LovPick
     setFirstVisible(Math.floor(event.currentTarget.scrollTop / rowHeight));
   };
 
+  const tableId = `${listId}-grid`;
+  const failureMessageId = `${listId}-failure-msg`;
+  const responseMessageId = `${listId}-msg`;
+  const failureParts = failure === null ? null : lovFailureParts(failure.reason);
+  const filterDescribedBy =
+    [
+      failureParts === null ? undefined : fieldMessageRefs(failureMessageId, failureParts.messages, failureParts.fieldError).describedBy,
+      response === null ? undefined : fieldMessageRefs(responseMessageId, response.messages).describedBy,
+    ]
+      .filter((ids): ids is string => ids !== undefined)
+      .join(' ') || undefined;
+
+  /** Id of the rendered body row of a response row. */
+  const rowId = (item: PreparedRow): string => `${listId}-row-${item.index}`;
+
   const close = () => {
+    releaseBackground.current?.();
     onClose();
     if (opener !== null && opener.isConnected) {
       opener.focus();
@@ -369,7 +653,7 @@ export default function LovPicker({ name, binds = {}, onPick, onClose }: LovPick
     const item = filtered[position];
     const active = selectable && position === currentIndex;
     const cells = item.texts.map((text, column) => (
-      <td key={columns[column]} title={text === '' ? undefined : text}>
+      <td key={columns[column]} dir="auto" title={text === '' ? undefined : text}>
         {selectable && column === 0 ? (
           <button
             type="button"
@@ -402,8 +686,10 @@ export default function LovPicker({ name, binds = {}, onPick, onClose }: LovPick
     return (
       <tr
         key={item.index}
+        id={rowId(item)}
         className={active ? 'lov-row lov-row-selected' : 'lov-row'}
         aria-rowindex={position + 2}
+        aria-selected={active}
         onClick={() => choose(item.row)}
       >
         {cells}
@@ -413,10 +699,24 @@ export default function LovPicker({ name, binds = {}, onPick, onClose }: LovPick
 
   const table =
     response === null ? null : (
-      <table className="lov-table" aria-rowcount={total + 1}>
+      <table
+        id={tableId}
+        className="lov-table"
+        role={selectable ? 'grid' : undefined}
+        aria-labelledby={titleId}
+        aria-rowcount={total + 1}
+        style={
+          columnLayout === null || columnLayout.tableWidth === null
+            ? undefined
+            : { inlineSize: `${columnLayout.tableWidth}px` }
+        }
+      >
         <colgroup>
           {columns.map((column, index) => (
-            <col key={column} style={{ inlineSize: `${prepared.widths[index]}%` }} />
+            <col
+              key={column}
+              style={columnLayout === null ? undefined : { inlineSize: `${columnLayout.widths[index]}px` }}
+            />
           ))}
         </colgroup>
         <thead>
@@ -443,9 +743,29 @@ export default function LovPicker({ name, binds = {}, onPick, onClose }: LovPick
     );
 
   return (
-    <div className="modal-backdrop" onClick={close}>
+    <div
+      ref={backdropRef}
+      className="modal-backdrop"
+      onMouseDown={(event) => {
+        backdropPressed.current = event.target === event.currentTarget;
+        if (backdropPressed.current) {
+          event.preventDefault();
+        }
+      }}
+      onClick={(event) => {
+        const pressed = backdropPressed.current;
+        backdropPressed.current = false;
+        if (
+          pressed &&
+          event.target === event.currentTarget &&
+          performance.now() - openedAt >= BACKDROP_CLOSE_DELAY_MS
+        ) {
+          close();
+        }
+      }}
+    >
       <div
-        className="modal"
+        className="modal lov-modal"
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -460,9 +780,9 @@ export default function LovPicker({ name, binds = {}, onPick, onClose }: LovPick
           }
         }}
       >
-        <div className="modal-title" id={titleId}>
+        <h2 className="modal-title" id={titleId}>
           {TITLES[name]}
-        </div>
+        </h2>
         <div className="modal-body">
           <input
             className="lov-filter"
@@ -472,6 +792,13 @@ export default function LovPicker({ name, binds = {}, onPick, onClose }: LovPick
             autoComplete="off"
             placeholder="Filter"
             aria-label="Filter"
+            role={selectable ? 'combobox' : undefined}
+            aria-expanded={selectable ? true : undefined}
+            aria-autocomplete={selectable ? 'list' : undefined}
+            aria-haspopup={selectable ? 'grid' : undefined}
+            aria-controls={selectable ? tableId : undefined}
+            aria-activedescendant={selectable && total > 0 ? rowId(filtered[currentIndex]) : undefined}
+            aria-describedby={filterDescribedBy}
             value={filter}
             onChange={(event) => {
               setFilter(event.target.value);
@@ -498,8 +825,10 @@ export default function LovPicker({ name, binds = {}, onPick, onClose }: LovPick
             }}
           />
           {loading && <div role="status">Loading…</div>}
-          {failure !== null && <LovError reason={failure.reason} />}
-          {response !== null && <FieldMessage messages={response.messages} />}
+          {failureParts !== null && (
+            <FieldMessage id={failureMessageId} messages={failureParts.messages} fieldError={failureParts.fieldError} />
+          )}
+          {response !== null && <FieldMessage id={responseMessageId} messages={response.messages} />}
           {response !== null && <OpenItemNotice ids={response.openItems ?? []} />}
           {response !== null && (
             <div
@@ -511,9 +840,13 @@ export default function LovPicker({ name, binds = {}, onPick, onClose }: LovPick
               onScroll={onScroll}
             >
               {table}
+              {total === 0 && (
+                <div className="lov-empty" role="status">
+                  No rows
+                </div>
+              )}
             </div>
           )}
-          {response !== null && total === 0 && <div role="status">No rows</div>}
         </div>
         <div className="modal-actions">
           <button type="button" onClick={close}>

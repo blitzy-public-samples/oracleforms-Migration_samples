@@ -50,7 +50,7 @@ public sealed class PatientsController : ControllerBase
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status500InternalServerError, ProblemJson)]
     public async Task<ActionResult<CoverageResponse>> Coverage(
         string? patientNo,
-        [FromQuery] DateTime? draftDate,
+        [ModelBinder(typeof(DraftDto.DraftDateQueryBinder))] DateTime? draftDate,
         [FromQuery] InvoiceEntryParameters parameters)
     {
         OperatorContext? operatorContext = CurrentOperator();

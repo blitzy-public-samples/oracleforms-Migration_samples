@@ -41,13 +41,21 @@ export interface InvoiceDraftState {
   connectivityDown: boolean;
   idempotencyConflict: { text: string; oracleErrorNumber: number | null } | null;
   discountPrompt: { target: 'FINALDISC_PERC' | 'FINALDISC'; text: string } | null;
-  formError: { text: string; oracleErrorNumber: number | null; package: string | null; kind: string | null } | null;
-  fieldErrors: Record<string, { text: string; oracleErrorNumber: number | null; kind: string | null }>;
+  /** Form-level error and the source whose answer raised it: the request source, or `CLIENT:<clientId>:<TARGET>` for a line. */
+  formError: { text: string; oracleErrorNumber: number | null; package: string | null; kind: string | null; source: string } | null;
+  /** Field errors by error key, each with the source whose answer raised it, named as for `formError`. */
+  fieldErrors: Record<string, { text: string; oracleErrorNumber: number | null; kind: string | null; source: string }>;
   entryErrors: Record<string, string>;
   /** Server judgement of PRICE editability by line client id, with the service, patient and company it was judged on. */
   priceEditable: Record<string, PriceJudgement>;
   /** Patient, sub-company and class the claim's first invoice preloaded into the draft header; null when none was preloaded. */
   claimPreload: ClaimPreload | null;
+  /** Number of operator field edits so far, never reset (D-145). */
+  editCount: number;
+  /** Edit count of each field's last operator edit, keyed by header member, or `<clientId>:<member>` on a line. */
+  editedAt: Record<string, number>;
+  /** Number of successful API outcomes applied; a lookup list that failed to load is re-requested when it changes. */
+  successCount: number;
 }
 
 /** Trimmed patient number, sub-company and class of a claim preload. */
@@ -69,6 +77,8 @@ export interface PriceJudgement {
 export interface RequestOrigin {
   requestId: string;
   patientNo?: string | null;
+  /** Discount-limit choice the request carried; absent when not recorded. */
+  discountLimitChoice?: DiscountLimitChoice | null;
 }
 
 /** Header and line a line validation was sent with. */
@@ -77,7 +87,19 @@ export interface JudgedLine {
   line: InvoiceLineDraft;
 }
 
-/** Actions the screens dispatch after their API calls and operator edits; `origin` names the request a response belongs to; `judged` the inputs a line verdict was sent with. */
+/** Position of a stored message: its source key and its index in that source's list. */
+export interface MessageRef {
+  source: string;
+  index: number;
+}
+
+/** A message shown once, with every stored copy of it. */
+export interface PlacedMessage {
+  message: MessageDto;
+  refs: MessageRef[];
+}
+
+/** Actions the screens dispatch after their API calls and operator edits; `origin` names the request a response belongs to; `judged` the inputs a line verdict was sent with; `editsSince` the edit count when the request was queued, so fields edited after it keep the operator's value. */
 export type InvoiceDraftAction =
   | { type: 'draftLoaded'; response: NewDraftResponse }
   | { type: 'headerFieldChanged'; field: keyof InvoiceHeaderDraft; value: InvoiceHeaderDraft[keyof InvoiceHeaderDraft] }
@@ -86,12 +108,12 @@ export type InvoiceDraftAction =
   | { type: 'lineRemoved'; index: number }
   | { type: 'currentLineSelected'; index: number }
   | { type: 'displaySet'; values: Record<string, string | null>; lineClientId?: string }
-  | { type: 'linesImported'; source: string; response: ImportResponse; origin?: RequestOrigin }
+  | { type: 'linesImported'; source: string; response: ImportResponse; origin?: RequestOrigin; editsSince?: number }
   | { type: 'linesReplaced'; lines: InvoiceLineDraft[]; origin?: RequestOrigin }
-  | { type: 'validationApplied'; target: string; lineIndex: number | null; lineClientId?: string | null; response: ValidateDraftResponse; origin?: RequestOrigin; judged?: JudgedLine }
-  | { type: 'validationFailed'; target: string; lineIndex: number | null; lineClientId?: string | null; error: ApiError; origin?: RequestOrigin; judged?: JudgedLine }
+  | { type: 'validationApplied'; target: string; lineIndex: number | null; lineClientId?: string | null; response: ValidateDraftResponse; origin?: RequestOrigin; judged?: JudgedLine; editsSince?: number }
+  | { type: 'validationFailed'; target: string; lineIndex: number | null; lineClientId?: string | null; error: ApiError; origin?: RequestOrigin; judged?: JudgedLine; editsSince?: number }
   | { type: 'discountChoiceMade'; choice: DiscountLimitChoice }
-  | { type: 'coverageApplied'; response: CoverageResponse | null; origin: RequestOrigin }
+  | { type: 'coverageApplied'; response: CoverageResponse | null; origin: RequestOrigin; editsSince?: number }
   | { type: 'patientContextCleared'; origin: RequestOrigin }
   | { type: 'previewApplied'; response: PreviewResponse; sent?: readonly InvoiceLineDraft[]; origin: RequestOrigin }
   | { type: 'previewCleared' }
@@ -129,6 +151,9 @@ export const initialInvoiceDraftState: InvoiceDraftState = {
   entryErrors: {},
   priceEditable: {},
   claimPreload: null,
+  editCount: 0,
+  editedAt: {},
+  successCount: 0,
 };
 
 /** Operator decimal entry: empty, the trimmed text as entered, or the reason it is rejected. */
@@ -157,6 +182,9 @@ export const ADJUSTED_KEY_MAP: Readonly<Record<AdjustedKey, AdjustedTarget>> = {
   FINALDISC: { scope: 'header', field: 'finalDisc' },
   DISC_T: { scope: 'header', field: 'discT' },
   DOCIDX: { scope: 'header', field: 'docId' },
+  CLINICID: { scope: 'header', field: 'clinicId' },
+  CLINICNAME: { scope: 'display', key: 'CLINICNAME' },
+  DOC_NAME: { scope: 'display', key: 'DOC_NAME' },
   LDISCT: { scope: 'line', field: 'discountType' },
   REUND: { scope: 'display', key: 'REUND' },
 };
@@ -215,6 +243,30 @@ const LINE_ITEMS: ReadonlySet<string> = new Set([
 
 /** Validation targets whose verdict covers the whole line. */
 const LINE_VERDICT_TARGETS: ReadonlySet<string> = new Set(['LINE', 'SERVICEID', 'QTY', 'LDISCT', 'APPROV_REF_NO', 'PRICE', 'DISC', 'MY_DISC']);
+
+/** Header validation targets and the header member holding the value each judges. */
+const HEADER_TARGET_MEMBERS: Readonly<Record<string, keyof InvoiceHeaderDraft>> = {
+  PATIENTNO: 'patientNo',
+  COMP_CODE: 'compCode',
+  DOCIDX: 'docId',
+  CLINICID: 'clinicId',
+  DEPT_WISE: 'deptWise',
+  CALL: 'call',
+  FINALDISC_PERC: 'finalDiscPerc',
+  FINALDISC: 'finalDisc',
+  AMOUNT_1: 'amount1',
+  AMOUNT_2: 'amount2',
+  SUB_PAYTYPE: 'subPayType',
+};
+
+/** Rule id of the form-level 'Invoice without Details' message. */
+const DETAILS_REQUIRED_RULE = 'DR-02';
+
+/** Rule id of the header record check, which reports only its first failing field. */
+const RECORD_RULE = 'DR-01';
+
+/** Sources whose answers carry a complete header record verdict. */
+const RECORD_VERDICT_TARGETS: ReadonlySet<string> = new Set(['SUB_PAYTYPE', 'RECORD', 'CREATE']);
 
 /** Header members a whole-line verdict is judged under: the patient and the payer. */
 const LINE_VERDICT_HEADER_MEMBERS: readonly (keyof InvoiceHeaderDraft)[] = ['patientNo', 'payType', 'compCode', 'subCompCode', 'classCode'];
@@ -320,12 +372,43 @@ function isAdjustedKey(key: string): key is AdjustedKey {
   return Object.prototype.hasOwnProperty.call(ADJUSTED_KEY_MAP, key);
 }
 
-/** Merges server-adjusted values into the draft header, the given line and the display values. */
+/** The text and null display values of a new draft response; any other value, or a display that is not an object, is dropped. */
+function loadedDisplay(display: NewDraftResponse['display']): Record<string, string | null> {
+  const values: Record<string, string | null> = {};
+  if (display == null || typeof display !== 'object' || Array.isArray(display)) {
+    return values;
+  }
+  for (const [key, value] of Object.entries(display)) {
+    if (typeof value === 'string' || value === null) {
+      values[key] = value;
+    }
+  }
+  return values;
+}
+
+/** Edit key of a line member: `<clientId>:<member>`. */
+function lineEditKey(clientId: string | null | undefined, field: string): string {
+  return `${clientId ?? ''}:${field}`;
+}
+
+/** Edit-key predicate of the fields the operator edited after edit count `editsSince`; none when it is absent (D-145). */
+function editedAfter(state: InvoiceDraftState, editsSince: number | undefined): (key: string) => boolean {
+  return (key) => editsSince !== undefined && Object.hasOwn(state.editedAt, key) && state.editedAt[key] > editsSince;
+}
+
+/** The state with one more operator edit, recorded against edit key `key` when given. */
+function withEdit(state: InvoiceDraftState, key: string | null): InvoiceDraftState {
+  const editCount = state.editCount + 1;
+  return { ...state, editCount, editedAt: key === null ? state.editedAt : { ...state.editedAt, [key]: editCount } };
+}
+
+/** Merges server-adjusted values into the draft header, the given line and the display values, skipping fields `edited` names. */
 function applyAdjusted(
   draft: DraftDto,
   display: Record<string, string | null>,
   adjusted: AdjustedValues | null | undefined,
   lineIndex: number | null,
+  edited: (key: string) => boolean = () => false,
 ): { draft: DraftDto; display: Record<string, string | null> } {
   if (adjusted == null) {
     return { draft, display };
@@ -341,10 +424,12 @@ function applyAdjusted(
     const target = ADJUSTED_KEY_MAP[key];
     switch (target.scope) {
       case 'header':
-        header = withField(header, target.field, value as InvoiceHeaderDraft[keyof InvoiceHeaderDraft]);
+        if (!edited(target.field)) {
+          header = withField(header, target.field, value as InvoiceHeaderDraft[keyof InvoiceHeaderDraft]);
+        }
         break;
       case 'line':
-        if (lineIndex !== null && lineIndex >= 0 && lineIndex < lines.length) {
+        if (lineIndex !== null && lineIndex >= 0 && lineIndex < lines.length && !edited(lineEditKey(lines[lineIndex].clientId, target.field))) {
           const updated = withField(lines[lineIndex], target.field, value as InvoiceLineDraft[keyof InvoiceLineDraft]);
           lines = lines.map((line, i) => (i === lineIndex ? updated : line));
         }
@@ -374,6 +459,42 @@ function setSource<T>(record: Lists<T>, key: string, list: readonly T[]): Lists<
   return { ...record, [key]: [...list] };
 }
 
+/** Messages without those `drop` matches; untouched lists stay as they are and emptied sources are removed. */
+function withoutMessages(messages: Lists<MessageDto>, drop: (source: string, message: MessageDto) => boolean): Lists<MessageDto> {
+  let next = messages;
+  for (const [source, list] of Object.entries(messages)) {
+    const kept = list.filter((message) => !drop(source, message));
+    if (kept.length !== list.length) {
+      next = replaceSource(next, source, kept);
+    }
+  }
+  return next;
+}
+
+/** For a header target whose field holds a non-blank value on the draft, the messages without that field's messages, other than record-check ones, in every other non-line source; otherwise the messages. */
+function withoutJudgedFieldMessages(state: InvoiceDraftState, target: string, messages: Lists<MessageDto>): Lists<MessageDto> {
+  const member = Object.hasOwn(HEADER_TARGET_MEMBERS, target) ? HEADER_TARGET_MEMBERS[target] : undefined;
+  const value: unknown = member === undefined || state.draft === null ? null : state.draft.header[member];
+  if (value == null || (typeof value === 'string' && value.trim() === '')) {
+    return messages;
+  }
+  return withoutMessages(
+    messages,
+    (source, message) =>
+      source !== target && !source.startsWith('LINE:') && messageField(message) === target && message.rule !== RECORD_RULE,
+  );
+}
+
+/** Messages without the record-check messages of every non-line source other than `target`. */
+function withoutRecordMessages(messages: Lists<MessageDto>, target: string): Lists<MessageDto> {
+  return withoutMessages(messages, (source, message) => source !== target && !source.startsWith('LINE:') && message.rule === RECORD_RULE);
+}
+
+/** Messages without the 'Invoice without Details' message in every non-line source. */
+function withoutDetailsRequired(messages: Lists<MessageDto>): Lists<MessageDto> {
+  return withoutMessages(messages, (source, message) => !source.startsWith('LINE:') && message.rule === DETAILS_REQUIRED_RULE);
+}
+
 /** Distinct ids in first-seen order, without nulls or empty strings. */
 function uniq(ids: readonly (string | null | undefined)[]): string[] {
   const seen = new Set<string>();
@@ -385,17 +506,65 @@ function uniq(ids: readonly (string | null | undefined)[]): string[] {
   return [...seen];
 }
 
+/** Header fields whose edit drops the discount-limit choice. */
+const DISCOUNT_ENTRY_FIELDS: ReadonlySet<keyof InvoiceHeaderDraft> = new Set<keyof InvoiceHeaderDraft>(['finalDiscPerc', 'finalDisc', 'discT']);
+
 /** True for the two final-discount prompt targets. */
 function isDiscountPromptTarget(value: string | null | undefined): value is DiscountPromptTarget {
   return value === 'FINALDISC_PERC' || value === 'FINALDISC';
 }
 
-/** Builds the DISC_ALERT prompt from a Blocking maximum-discount message, or returns null. */
+/** True when the editable draft carries a discount-limit choice. */
+function hasDiscountChoice(state: InvoiceDraftState): boolean {
+  return state.draft !== null && !state.readOnly && state.draft.discountLimitChoice != null;
+}
+
+/** True when the request behind `origin` carried a discount-limit choice; an origin without a recorded choice counts as carrying the draft's. */
+function carriedDiscountChoice(origin: RequestOrigin | undefined): boolean {
+  return origin?.discountLimitChoice === undefined || origin.discountLimitChoice !== null;
+}
+
+/** True when a response for `origin` may raise the DISC_ALERT prompt: its request carried no choice and no answer is pending. */
+function mayRaiseDiscountPrompt(state: InvoiceDraftState, origin: RequestOrigin | undefined): boolean {
+  return !hasDiscountChoice(state) && (origin?.discountLimitChoice ?? null) === null;
+}
+
+/** The other final-discount target of each final-discount target. */
+const OTHER_DISCOUNT_TARGET: Readonly<Record<DiscountPromptTarget, DiscountPromptTarget>> = {
+  FINALDISC_PERC: 'FINALDISC',
+  FINALDISC: 'FINALDISC_PERC',
+};
+
+/** The state with the draft's discount-limit choice and the other final-discount target's messages dropped when `source` is a final-discount target whose request carried the choice; otherwise the state. */
+function withoutDiscountChoice(state: InvoiceDraftState, source: string, origin: RequestOrigin | undefined): InvoiceDraftState {
+  if (state.draft === null || !hasDiscountChoice(state) || !isDiscountPromptTarget(source) || !carriedDiscountChoice(origin)) {
+    return state;
+  }
+  return {
+    ...state,
+    draft: { ...state.draft, discountLimitChoice: null },
+    messages: replaceSource(state.messages, OTHER_DISCOUNT_TARGET[source], null),
+  };
+}
+
+/** True for an adjusted value that is the number zero or a decimal text equal to zero. */
+function isZeroValue(value: unknown): boolean {
+  if (typeof value === 'number') {
+    return value === 0;
+  }
+  return typeof value === 'string' && DECIMAL_TEXT.test(value.trim()) && Number(value) === 0;
+}
+
+/** Builds the DISC_ALERT prompt from a Blocking maximum-discount message, or returns null, also when `adjusted` zeroes FINALDISC_PERC and FINALDISC. */
 function discountPromptFrom(
   messages: readonly MessageDto[] | null | undefined,
   target: string,
   header: InvoiceHeaderDraft | null | undefined,
+  adjusted: AdjustedValues | null | undefined,
 ): InvoiceDraftState['discountPrompt'] {
+  if (adjusted != null && isZeroValue(adjusted.FINALDISC_PERC) && isZeroValue(adjusted.FINALDISC)) {
+    return null;
+  }
   const message = (messages ?? []).find(
     (m) => m.severity === 'Blocking' && typeof m.text === 'string' && m.text.startsWith(DISCOUNT_LIMIT_TEXT),
   );
@@ -647,16 +816,65 @@ function isVerdictSource(source: string): boolean {
   return source === 'PREVIEW' || LINE_KEY.test(source) || Object.hasOwn(VALIDATE_TARGETS, source);
 }
 
-/** Applies an API failure for `source` to messages, open items, errors or the connectivity flag; `lineClientId` names the line of a `LINE:<i>:<TARGET>` source. */
-function applyError(state: InvoiceDraftState, source: string, error: ApiError, lineClientId: string | null = null): InvoiceDraftState {
+/** Stable source of an error: `CLIENT:<clientId>:<TARGET>` for a `LINE:<i>:<TARGET>` key of a line with a client id, else the key. */
+function errorSource(source: string, lineClientId: string | null): string {
+  const line = LINE_KEY.exec(source);
+  return line !== null && lineClientId !== null && lineClientId !== '' ? errorKey(line[2], lineClientId) : source;
+}
+
+/** True for the kinds of a stale-data refusal: `RequestLinesStale` and `DefinitionStale`. */
+function isStaleKind(kind: string | null): boolean {
+  return kind !== null && STALE_KINDS.has(kind);
+}
+
+/** True for a source whose answer judges the draft: `CREATE`, `PREVIEW`, `COVERAGE`, `IMPORT`, a validation target, or a `LINE:` or `CLIENT:` key. */
+function judgesDraft(source: string): boolean {
+  return (
+    source === 'CREATE' ||
+    source === 'COVERAGE' ||
+    source === 'IMPORT' ||
+    source.startsWith('LINE:') ||
+    source.startsWith('CLIENT:') ||
+    isVerdictSource(source)
+  );
+}
+
+/** The state without the form error and the field errors whose source and kind `drop` matches; the same state when none match. */
+function withoutErrors(state: InvoiceDraftState, drop: (error: { source: string; kind: string | null }) => boolean): InvoiceDraftState {
+  const fieldErrors: InvoiceDraftState['fieldErrors'] = {};
+  let dropped = false;
+  for (const [key, entry] of Object.entries(state.fieldErrors)) {
+    if (drop(entry)) {
+      dropped = true;
+    } else {
+      fieldErrors[key] = entry;
+    }
+  }
+  const formError = state.formError !== null && drop(state.formError) ? null : state.formError;
+  if (!dropped && formError === state.formError) {
+    return state;
+  }
+  return { ...state, formError, fieldErrors: dropped ? fieldErrors : state.fieldErrors };
+}
+
+/** The state without the errors a new answer from `source` replaces: that source's own except stale-kind ones and, for `CREATE`, every stale-kind error. */
+function withoutAnsweredErrors(state: InvoiceDraftState, source: string): InvoiceDraftState {
+  return withoutErrors(state, (error) => (isStaleKind(error.kind) ? source === 'CREATE' : error.source === source));
+}
+
+/** Applies an API failure for `source` to messages, open items, errors or the connectivity flag, a non-outage failure first dropping the errors it supersedes; `lineClientId` names the line of a `LINE:<i>:<TARGET>` source. */
+function applyError(current: InvoiceDraftState, source: string, error: ApiError, lineClientId: string | null = null): InvoiceDraftState {
   const message = error.message ?? '';
   const oracleErrorNumber = error.oracleErrorNumber ?? null;
   const pkg = error.package ?? null;
   const kind = error.kind ?? null;
 
   if (error.status === 503 || error.type === 'oracle-unavailable') {
-    return { ...state, connectivityDown: true };
+    return { ...current, connectivityDown: true };
   }
+
+  const sourceId = errorSource(source, lineClientId);
+  const state = withoutAnsweredErrors(current, sourceId);
 
   // A success body the client rejected leaves a verdict source with one Blocking form-level message until its next result (D-119).
   if (error.type === 'invalid-response' && isVerdictSource(source)) {
@@ -686,18 +904,18 @@ function applyError(state: InvoiceDraftState, source: string, error: ApiError, l
     const fieldErrors = withoutSourceFieldError(state, source, lineClientId);
     if (error.field != null && error.field !== '') {
       const field = error.field.toUpperCase();
-      const entry = { text: error.legacyText ?? message, oracleErrorNumber, kind };
+      const entry = { text: error.legacyText ?? message, oracleErrorNumber, kind, source: sourceId };
       if (!LINE_ITEMS.has(field)) {
         return { ...state, fieldErrors: { ...fieldErrors, [field]: entry } };
       }
       const line = LINE_KEY.exec(source);
       const clientId = line !== null && line[2] === field ? lineClientId : null;
       if (clientId === null) {
-        return { ...state, fieldErrors, formError: { text: entry.text, oracleErrorNumber, package: pkg, kind } };
+        return { ...state, fieldErrors, formError: { text: entry.text, oracleErrorNumber, package: pkg, kind, source: sourceId } };
       }
       return { ...state, fieldErrors: { ...fieldErrors, [errorKey(field, clientId)]: entry } };
     }
-    return { ...state, fieldErrors, formError: { text: message, oracleErrorNumber, package: pkg, kind } };
+    return { ...state, fieldErrors, formError: { text: message, oracleErrorNumber, package: pkg, kind, source: sourceId } };
   }
 
   if (error.type === 'operator-context-missing') {
@@ -706,27 +924,34 @@ function applyError(state: InvoiceDraftState, source: string, error: ApiError, l
       ...state,
       formError:
         missing.length > 0
-          ? { text: 'Operator context missing: ' + missing.join(', '), oracleErrorNumber: null, package: null, kind: null }
-          : { text: message, oracleErrorNumber, package: pkg, kind: null },
+          ? { text: 'Operator context missing: ' + missing.join(', '), oracleErrorNumber: null, package: null, kind: null, source: sourceId }
+          : { text: message, oracleErrorNumber, package: pkg, kind: null, source: sourceId },
     };
   }
 
   if (error.type === 'field-validation') {
     const errorOpenItems = error.openItems ?? [];
-    const prompt = discountPromptFrom(error.messages, source, state.draft?.header);
-    return {
-      ...state,
-      messages: setSource(state.messages, source, error.messages ?? []),
-      openItems: errorOpenItems.length > 0 ? replaceSource(state.openItems, source, errorOpenItems) : state.openItems,
-      discountPrompt: prompt ?? state.discountPrompt,
-    };
+    // No prompt is raised while a discount-limit answer is pending.
+    const prompt = mayRaiseDiscountPrompt(state, undefined)
+      ? discountPromptFrom(error.messages, source, state.draft?.header, error.adjusted)
+      : null;
+    return withoutDiscountChoice(
+      {
+        ...state,
+        messages: setSource(state.messages, source, error.messages ?? []),
+        openItems: errorOpenItems.length > 0 ? replaceSource(state.openItems, source, errorOpenItems) : state.openItems,
+        discountPrompt: prompt ?? state.discountPrompt,
+      },
+      source,
+      undefined,
+    );
   }
 
   if (error.type === 'oracle-error' || error.status === 500) {
-    return { ...state, formError: { text: message, oracleErrorNumber, package: pkg, kind: null } };
+    return { ...state, formError: { text: message, oracleErrorNumber, package: pkg, kind: null, source: sourceId } };
   }
 
-  return { ...state, formError: { text: message, oracleErrorNumber: null, package: null, kind: null } };
+  return { ...state, formError: { text: message, oracleErrorNumber: null, package: null, kind: null, source: sourceId } };
 }
 
 /** Compile-time exhaustiveness guard for the reducer switch. */
@@ -739,8 +964,33 @@ function exhaustive(_action: never, state: InvoiceDraftState): InvoiceDraftState
 // Reducer
 // ---------------------------------------------------------------------------
 
-/** Reduces draft-screen actions into the shared invoice draft state. */
+/** True when the action applies a successful API outcome for the state's current draft. */
+function appliesSuccess(state: InvoiceDraftState, action: InvoiceDraftAction): boolean {
+  switch (action.type) {
+    case 'coverageApplied':
+      return action.response !== null && !isSuperseded(state, action.origin);
+    case 'draftLoaded':
+    case 'linesImported':
+    case 'validationApplied':
+    case 'previewApplied':
+    case 'saved':
+    case 'invoiceLoaded':
+    case 'connectivityRestored':
+      return !('origin' in action && isSuperseded(state, action.origin));
+    default:
+      return false;
+  }
+}
+
+/** Reduces draft-screen actions into the shared invoice draft state and counts the successful outcomes applied. */
 export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDraftAction): InvoiceDraftState {
+  const next = reduceInvoiceDraft(state, action);
+  const successCount = appliesSuccess(state, action) ? state.successCount + 1 : state.successCount;
+  return next.successCount === successCount ? next : { ...next, successCount };
+}
+
+/** Reduces draft-screen actions into the shared invoice draft state. */
+function reduceInvoiceDraft(state: InvoiceDraftState, action: InvoiceDraftAction): InvoiceDraftState {
   // A response for a superseded draft or patient changes nothing but the connectivity flag of a 503.
   if ('origin' in action && isSuperseded(state, action.origin)) {
     return 'error' in action && isUnavailable(action.error) && !state.connectivityDown ? { ...state, connectivityDown: true } : state;
@@ -751,9 +1001,11 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
       return {
         ...initialInvoiceDraftState,
         draft: { ...loaded, lines: (loaded.lines ?? []).map(withClientId) },
+        display: loadedDisplay(action.response.display),
         messages: replaceSource({}, 'NEW', action.response.messages),
         openItems: replaceSource({}, 'NEW', action.response.openItems),
         claimPreload: claimPreloadOf(loaded),
+        editCount: state.editCount,
       };
     }
 
@@ -761,9 +1013,12 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
       if (state.draft === null || state.readOnly) {
         return state;
       }
+      const edited = { ...state.draft, header: withField(state.draft.header, action.field, action.value) };
+      // A changed final-discount entry drops the discount-limit choice.
+      const choiceDropped = DISCOUNT_ENTRY_FIELDS.has(action.field) && !Object.is(state.draft.header[action.field], action.value);
       return {
-        ...state,
-        draft: { ...state.draft, header: withField(state.draft.header, action.field, action.value) },
+        ...withEdit(state, action.field),
+        draft: choiceDropped ? { ...edited, discountLimitChoice: null } : edited,
       };
     }
 
@@ -775,8 +1030,9 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
       const lines = draft.lines.map((line, i) => (i === action.index ? withField(line, action.field, action.value) : line));
       const previous = draft.lines[action.index];
       const clientId = previous.clientId;
+      const edited = withEdit(state, clientId == null || clientId === '' ? null : lineEditKey(clientId, action.field));
       if (action.field !== 'serviceId' || Object.is(action.value, previous.serviceId)) {
-        return { ...state, draft: { ...draft, lines } };
+        return { ...edited, draft: { ...draft, lines } };
       }
       // A changed service discards the stored preview and the line's previewed price and description (D-64).
       let lineDisplay = state.lineDisplay;
@@ -787,7 +1043,7 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
         lineDisplay = { ...lineDisplay, [clientId]: entry };
       }
       return withoutPreview({
-        ...state,
+        ...edited,
         draft: { ...draft, lines: lines.map((line, i) => (i === action.index ? { ...line, price: null } : line)) },
         lineDisplay,
       });
@@ -863,10 +1119,10 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
           ...state.draft,
           lines: [...state.draft.lines, ...(response.lines ?? []).map(withClientId)],
         };
-        const merged = applyAdjusted(appended, state.display, response.adjusted, null);
+        const merged = applyAdjusted(appended, state.display, response.adjusted, null, editedAfter(state, action.editsSince));
         next = { ...next, draft: merged.draft, display: merged.display };
       }
-      return next;
+      return withoutAnsweredErrors(next, action.source);
     }
 
     case 'linesReplaced': {
@@ -903,7 +1159,19 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
       }
       const key = messageKey(action.target, lineIndex);
       const response = action.response;
-      const cleared = judgesCurrentLine(state, lineIndex, action.judged) ? withoutLineVerdicts(state, key, lineClientId) : state;
+      const judgedLine = judgesCurrentLine(state, lineIndex, action.judged);
+      const cleared = judgedLine ? withoutLineVerdicts(state, key, lineClientId) : state;
+      // A header verdict releases its field's messages held by other sources, a record verdict every record-check message;
+      // a judged line releases 'Invoice without Details'.
+      let released = cleared.messages;
+      if (lineIndex === null) {
+        released = withoutJudgedFieldMessages(state, action.target, released);
+        if (RECORD_VERDICT_TARGETS.has(action.target)) {
+          released = withoutRecordMessages(released, action.target);
+        }
+      } else if (judgedLine) {
+        released = withoutDetailsRequired(released);
+      }
       const fieldErrors = { ...cleared.fieldErrors };
       if (lineClientId === null) {
         delete fieldErrors[action.target];
@@ -913,12 +1181,12 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
       let next: InvoiceDraftState = {
         ...state,
         connectivityDown: false,
-        messages: replaceSource(cleared.messages, key, response.messages),
+        messages: replaceSource(released, key, response.messages),
         openItems: replaceSource(cleared.openItems, key, response.openItems),
         fieldErrors,
       };
       if (state.draft !== null && !state.readOnly) {
-        const merged = applyAdjusted(state.draft, state.display, response.adjusted, lineIndex);
+        const merged = applyAdjusted(state.draft, state.display, response.adjusted, lineIndex, editedAfter(state, action.editsSince));
         next = { ...next, draft: merged.draft, display: merged.display };
         if (response.priceEditable != null && lineClientId !== null && lineIndex !== null) {
           next = {
@@ -935,7 +1203,7 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
           };
         }
       }
-      return next;
+      return withoutDiscountChoice(withoutAnsweredErrors(next, errorSource(key, lineClientId)), key, action.origin);
     }
 
     case 'validationFailed': {
@@ -948,24 +1216,42 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
       const key = messageKey(action.target, lineIndex);
       const cleared =
         isLineVerdictFailure(error) && judgesCurrentLine(state, lineIndex, action.judged) ? withoutLineVerdicts(state, key) : state;
+      // A header field-validation answer naming its own field releases that field's messages held by other sources.
+      const judgedField =
+        lineIndex === null &&
+        error.type === 'field-validation' &&
+        (error.messages ?? []).some((message) => messageField(message) === action.target);
+      const fieldReleased = judgedField ? withoutJudgedFieldMessages(state, action.target, cleared.messages) : cleared.messages;
+      // A record verdict carrying a record-check message replaces the record-check messages held by other sources.
+      const recordJudged =
+        lineIndex === null &&
+        error.type === 'field-validation' &&
+        RECORD_VERDICT_TARGETS.has(action.target) &&
+        (error.messages ?? []).some((message) => message.rule === RECORD_RULE);
+      const released = recordJudged ? withoutRecordMessages(fieldReleased, action.target) : fieldReleased;
       let next: InvoiceDraftState = {
         ...state,
-        messages: setSource(cleared.messages, key, error.messages ?? []),
+        messages: setSource(released, key, error.messages ?? []),
         openItems: error.openItems != null ? setSource(cleared.openItems, key, error.openItems) : cleared.openItems,
       };
       if (state.draft !== null && !state.readOnly) {
-        const merged = applyAdjusted(state.draft, state.display, error.adjusted, lineIndex);
+        const merged = applyAdjusted(state.draft, state.display, error.adjusted, lineIndex, editedAfter(state, action.editsSince));
         next = { ...next, draft: merged.draft, display: merged.display };
       }
-      const prompt = discountPromptFrom(error.messages, action.target, next.draft?.header);
+      // A response to a request that carried a discount-limit choice, or one arriving while an answer is pending, raises no prompt.
+      const prompt = mayRaiseDiscountPrompt(state, action.origin)
+        ? discountPromptFrom(error.messages, action.target, next.draft?.header, error.adjusted)
+        : null;
       if (prompt !== null) {
         next = { ...next, discountPrompt: prompt };
       }
-      return error.type === 'field-validation' ? next : applyError(next, key, error, lineClientId);
+      return error.type === 'field-validation'
+        ? withoutDiscountChoice(withoutAnsweredErrors(next, errorSource(key, lineClientId)), key, action.origin)
+        : applyError(next, key, error, lineClientId);
     }
 
     case 'discountChoiceMade': {
-      if (state.draft === null) {
+      if (state.draft === null || state.readOnly || state.discountPrompt === null) {
         return state;
       }
       return { ...state, draft: { ...state.draft, discountLimitChoice: action.choice }, discountPrompt: null };
@@ -983,6 +1269,8 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
           openItems: replaceSource(state.openItems, 'COVERAGE', null),
         };
       }
+      // A coverage response drops the COVERAGE errors; a null response keeps them.
+      const answered = withoutAnsweredErrors(state, 'COVERAGE');
       let next: InvoiceDraftState = {
         ...state,
         connectivityDown: false,
@@ -990,8 +1278,11 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
         coveragePatientNo,
         messages: replaceSource(state.messages, 'COVERAGE', response.messages),
         openItems: replaceSource(state.openItems, 'COVERAGE', response.openItems),
+        formError: answered.formError,
+        fieldErrors: answered.fieldErrors,
       };
-      if (state.draft !== null && !state.readOnly && response.payType != null) {
+      const edited = editedAfter(state, action.editsSince);
+      if (state.draft !== null && !state.readOnly && response.payType != null && !edited('payType')) {
         next = {
           ...next,
           draft: { ...state.draft, header: withField(state.draft.header, 'payType', response.payType) },
@@ -1001,28 +1292,32 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
       const covered = next.draft;
       if (covered !== null && !state.readOnly && snapshot != null) {
         const party = coverageSubCompanyAndClass(snapshot, response.payType, coveragePatientNo, state.claimPreload);
-        next = {
-          ...next,
-          draft: {
-            ...covered,
-            header: {
-              ...covered.header,
-              compCode: snapshot.compCode ?? null,
-              subCompCode: party.subCompCode,
-              classCode: party.classCode,
-            },
-          },
-          display: { ...next.display, COMP_NAME: snapshot.compName ?? null, SUB_COMP_NAME: party.subCompName, CLASS_NAME: party.className },
-        };
+        const header = { ...covered.header };
+        const display = { ...next.display };
+        // A company, sub-company or class the operator picked after the read was queued keeps the pick and its name.
+        if (!edited('compCode')) {
+          header.compCode = snapshot.compCode ?? null;
+          display.COMP_NAME = snapshot.compName ?? null;
+        }
+        if (!edited('subCompCode')) {
+          header.subCompCode = party.subCompCode;
+          display.SUB_COMP_NAME = party.subCompName;
+        }
+        if (!edited('classCode')) {
+          header.classCode = party.classCode;
+          display.CLASS_NAME = party.className;
+        }
+        next = { ...next, draft: { ...covered, header }, display };
       }
       return next;
     }
 
     case 'patientContextCleared': {
-      // Drops the previous patient's coverage, pay type, company, sub-company and class with their names, and PATIENTNO / COVERAGE messages and open items.
+      // Drops the previous patient's coverage, pay type, company, sub-company and class with their names, and PATIENTNO / COVERAGE messages, open items and errors.
       if (state.draft === null || state.readOnly) {
         return state;
       }
+      const errorsKept = withoutErrors(state, (error) => error.source === 'COVERAGE' || error.source === 'PATIENTNO');
       return {
         ...state,
         draft: { ...state.draft, header: { ...state.draft.header, payType: null, compCode: null, subCompCode: null, classCode: null } },
@@ -1031,6 +1326,8 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
         coveragePatientNo: null,
         messages: replaceSource(replaceSource(state.messages, 'COVERAGE', null), 'PATIENTNO', null),
         openItems: replaceSource(replaceSource(state.openItems, 'COVERAGE', null), 'PATIENTNO', null),
+        formError: errorsKept.formError,
+        fieldErrors: errorsKept.fieldErrors,
       };
     }
 
@@ -1067,20 +1364,17 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
           }
         }
       }
-      const fieldErrors: InvoiceDraftState['fieldErrors'] = {};
-      for (const [field, entry] of Object.entries(state.fieldErrors)) {
-        if (entry.kind === null || !STALE_KINDS.has(entry.kind)) {
-          fieldErrors[field] = entry;
-        }
-      }
+      const answered = withoutAnsweredErrors(state, 'PREVIEW');
+      // A preview that priced lines of the editable draft releases 'Invoice without Details'.
+      const priced = state.draft !== null && !state.readOnly && (response.lines ?? []).length > 0;
       let next: InvoiceDraftState = {
         ...state,
         connectivityDown: false,
         preview: response,
-        messages: replaceSource(state.messages, 'PREVIEW', response.messages),
+        messages: replaceSource(priced ? withoutDetailsRequired(state.messages) : state.messages, 'PREVIEW', response.messages),
         openItems: replaceSource(state.openItems, 'PREVIEW', response.openItems),
-        formError: state.formError?.kind != null && STALE_KINDS.has(state.formError.kind) ? null : state.formError,
-        fieldErrors,
+        formError: answered.formError,
+        fieldErrors: answered.fieldErrors,
       };
       const draft = state.draft;
       if (draft !== null && !state.readOnly) {
@@ -1118,6 +1412,12 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
         });
         next = { ...next, draft: { ...draft, lines }, lineDisplay, priceEditable };
       }
+      // The preview's refund replaces a refund an earlier validation returned (D-148).
+      if (Object.hasOwn(next.display, 'REUND')) {
+        const display = { ...next.display };
+        delete display.REUND;
+        next = { ...next, display };
+      }
       return next;
     }
 
@@ -1126,6 +1426,7 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
 
     case 'saved': {
       const response = action.response;
+      const errorsKept = withoutErrors(state, (error) => judgesDraft(error.source) || isStaleKind(error.kind));
       return {
         ...state,
         connectivityDown: false,
@@ -1135,6 +1436,8 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
         entryErrors: {},
         messages: replaceSource(state.messages, 'CREATE', response.messages),
         openItems: replaceSource(replaceSource(state.openItems, 'CREATE', response.openItems), 'SAVED', ['OI-56']),
+        formError: errorsKept.formError,
+        fieldErrors: errorsKept.fieldErrors,
       };
     }
 
@@ -1150,12 +1453,15 @@ export function invoiceDraftReducer(state: InvoiceDraftState, action: InvoiceDra
         entryErrors: {},
       };
       if (sameInvoice) {
-        // Reloading the invoice on screen keeps its messages and open items.
+        // Reloading the invoice on screen keeps its messages and open items and drops the errors of the sources that judged its draft.
+        const errorsKept = withoutErrors(state, (error) => judgesDraft(error.source));
         return {
           ...loaded,
           saved: { invNo: action.invNo, view: action.response, createResponse: state.saved?.createResponse ?? null },
           openItems: replaceSource(state.openItems, 'SAVED', savedOpenItems),
           currentLineIndex: clampIndex(state.currentLineIndex, lineCount),
+          formError: errorsKept.formError,
+          fieldErrors: errorsKept.fieldErrors,
         };
       }
       // Another invoice starts on its first line with only its own open items.
@@ -1298,14 +1604,17 @@ export function fieldErrorFor(
     return null;
   }
   if (Object.hasOwn(state.entryErrors, key)) {
-    return { text: state.entryErrors[key], oracleErrorNumber: null, kind: null };
+    return { text: state.entryErrors[key], oracleErrorNumber: null, kind: null, source: key };
   }
   return Object.hasOwn(state.fieldErrors, key) ? state.fieldErrors[key] : null;
 }
 
-/** Origin of a request sent for `draft`; `withPatient` also binds it to the draft's patient number. */
+/** Origin of a request sent for `draft`, with the discount-limit choice it carries; `withPatient` also binds it to the draft's patient number. */
 export function requestOrigin(draft: DraftDto, withPatient = false): RequestOrigin {
-  return withPatient ? { requestId: draft.requestId, patientNo: draft.header.patientNo } : { requestId: draft.requestId };
+  const discountLimitChoice = draft.discountLimitChoice ?? null;
+  return withPatient
+    ? { requestId: draft.requestId, patientNo: draft.header.patientNo, discountLimitChoice }
+    : { requestId: draft.requestId, discountLimitChoice };
 }
 
 /** True when a response for `origin` no longer belongs to the state's draft or, for a patient-bound origin, its patient. */
@@ -1326,4 +1635,49 @@ export function currentCoverage(state: InvoiceDraftState): CoverageResponse | nu
     return null;
   }
   return state.coveragePatientNo === trimmedPatientNo(state.draft.header.patientNo) ? state.coverage : null;
+}
+
+/** Upper-case trimmed field a message names, or null when it names none. */
+export function messageField(message: MessageDto): string | null {
+  const field = typeof message.field === 'string' ? message.field.trim().toUpperCase() : '';
+  return field === '' ? null : field;
+}
+
+/** True when `target` is a header item target and a non-line source other than the target holds a record-check message, so the record check must judge the header again. */
+export function recordRecheckNeeded(state: InvoiceDraftState, target: string): boolean {
+  if (!Object.hasOwn(HEADER_TARGET_MEMBERS, target) || RECORD_VERDICT_TARGETS.has(target)) {
+    return false;
+  }
+  return Object.entries(state.messages).some(
+    ([source, list]) => source !== target && !source.startsWith('LINE:') && list.some((message) => message.rule === RECORD_RULE),
+  );
+}
+
+
+/** Messages of every `LINE:<lineIndex>:*` source, each distinct field, severity and text once in first-seen order, with every stored copy. */
+export function lineMessages(state: InvoiceDraftState, lineIndex: number): PlacedMessage[] {
+  const placed: PlacedMessage[] = [];
+  const positions = new Map<string, number>();
+  for (const [source, list] of Object.entries(state.messages)) {
+    const line = LINE_KEY.exec(source);
+    if (line === null || Number(line[1]) !== lineIndex) {
+      continue;
+    }
+    list.forEach((message, index) => {
+      const key = `${messageField(message) ?? ''}\u0000${message.severity}\u0000${message.text}`;
+      const position = positions.get(key);
+      if (position === undefined) {
+        positions.set(key, placed.length);
+        placed.push({ message, refs: [{ source, index }] });
+      } else {
+        placed[position].refs.push({ source, index });
+      }
+    });
+  }
+  return placed;
+}
+
+/** Dismissal order of stored copies: by source, highest index first within each source. */
+export function dismissalOrder(refs: readonly MessageRef[]): MessageRef[] {
+  return [...refs].sort((a, b) => (a.source === b.source ? b.index - a.index : a.source < b.source ? -1 : 1));
 }

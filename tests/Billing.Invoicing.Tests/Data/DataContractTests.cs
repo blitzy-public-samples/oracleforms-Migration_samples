@@ -26,6 +26,11 @@ public sealed class DataContractTests
     private const string PayTypeBind = "payType";
     private const string ListBind = "listId";
     private const string ServiceIdsBind = "serviceIds";
+    private const string InvDateBind = "invDate";
+    private const string DocBind = "docId";
+    private const string ReservationSystemBind = "reservSystem500";
+    private const string InvDateEchoSql = "SELECT :" + InvDateBind;
+    private const string AddDateName = "AddDate";
 
     private const string ServicesSource = "FROMSERVICES" + WhereKeyword;
 
@@ -115,7 +120,12 @@ public sealed class DataContractTests
         + "PAY_TYPES (PAY_TYPE_ID, PAY_TYPE_NAME_en, PAY_TYPE_NAME_ar, PAY_TYPE_ACC_NO, PAY_COMM_RATE, PAY_COMM_ACC, RECEP_USe) AS (VALUES "
         + "(1, 'Mada', 'Mada AR', '4001', 1.5, '4002', 1), "
         + "(2, 'Visa', 'Visa AR', '4003', 2.5, '4004', 1), "
-        + "(3, 'Internal', 'Internal AR', '4005', 0, '4006', 0)) ";
+        + "(3, 'Internal', 'Internal AR', '4005', 0, '4006', 0)), "
+        + "OFFERS (OFERID, OFFER_NAME, offer_type, START_DATE, ENDDATE, OFFER_INFO_CENTER) AS (VALUES "
+        + "(21, 'Ends on the day', 0, '2026-03-01 00:00:00', '2026-03-31 00:00:00', '7'), "
+        + "(22, 'Starts on the day', 0, '2026-03-31 00:00:00', '2026-04-30 00:00:00', '7'), "
+        + "(23, 'Ended the day before', 0, '2026-03-01 00:00:00', '2026-03-30 00:00:00', '7'), "
+        + "(24, 'Starts the day after', 0, '2026-04-01 00:00:00', '2026-04-30 00:00:00', '7')) ";
 
     private static readonly DateTime ReservationDate = new(2026, 3, 31);
 
@@ -829,6 +839,60 @@ public sealed class DataContractTests
     }
 
     [Theory]
+    [Trait("Decision", "D-49")]
+    [InlineData(0, 0, 0, 0, DateTimeKind.Unspecified)]
+    [InlineData(10, 15, 0, 0, DateTimeKind.Unspecified)]
+    [InlineData(23, 59, 59, 999, DateTimeKind.Utc)]
+    public async Task LovDateBind_DraftDateWithATimeOfDay_IsADateInputOfItsDatePart(int hour, int minute, int second, int millisecond, DateTimeKind kind)
+    {
+        var draftDate = new DateTime(2026, 3, 31, hour, minute, second, millisecond, kind);
+
+        DynamicParameters parameters = LovDateParameters(draftDate);
+
+        DateTime bound = parameters.Get<DateTime>(InvDateBind);
+        Assert.Equal(ReservationDate, bound);
+        Assert.Equal(kind, bound.Kind);
+
+        SqliteParameter added = await AddedInvDateParameter(parameters);
+        Assert.Equal(DbType.Date, added.DbType);
+        Assert.Equal(ParameterDirection.Input, added.Direction);
+        Assert.Equal(ReservationDate, Assert.IsType<DateTime>(added.Value));
+    }
+
+    [Theory]
+    [Trait("Decision", "D-49")]
+    [Trait("Decision", "D-129")]
+    [InlineData(10, 15, 0)]
+    [InlineData(23, 59, 59)]
+    public async Task ReservNoSql_InSqlite_ListsTheDayReservationsForADraftDateWithATimeOfDay(int hour, int minute, int second)
+    {
+        DateTime draftDate = ReservationDate.Add(new TimeSpan(hour, minute, second));
+
+        var dateOnly = await LovRows(LovQueries.ReservNoSql, WithReservationBinds(LovDateParameters(draftDate)));
+        var timed = await LovRows(LovQueries.ReservNoSql, WithReservationBinds(TimedDateParameters(draftDate)));
+
+        Assert.Equal(new object?[] { 1L, 2L }, dateOnly.Select(row => row["RESERV_NO"]).Order());
+        Assert.Empty(timed);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-49")]
+    [Trait("Decision", "D-129")]
+    [InlineData(10, 15, 0)]
+    [InlineData(23, 59, 59)]
+    public async Task OffersSql_InSqlite_ListsAnOfferOnItsLastDayForADraftDateWithATimeOfDay(int hour, int minute, int second)
+    {
+        DateTime draftDate = ReservationDate.Add(new TimeSpan(hour, minute, second));
+
+        var dateOnly = await LovRows(LovQueries.OffersSql, WithOfferBinds(LovDateParameters(draftDate)));
+        var timed = await LovRows(LovQueries.OffersSql, WithOfferBinds(TimedDateParameters(draftDate)));
+
+        Assert.Equal(new object?[] { 21L, 22L }, dateOnly.Select(row => row["OFERID"]).Order());
+        Assert.All(dateOnly, row => Assert.Equal(new[] { "OFERID", "OFFER_NAME" }, row.Keys));
+        Assert.Equal(new object?[] { 22L }, timed.Select(row => row["OFERID"]));
+    }
+
+    [Theory]
     [Trait("Decision", "D-107")]
     [InlineData("12345678901", "compCode has 11 characters; at most 10 can be bound.")]
     [InlineData("\u00E9\u00E9\u00E9\u00E9\u00E9\u00E9", "compCode has 12 bytes in UTF-8; at most 10 can be bound.")]
@@ -869,6 +933,30 @@ public sealed class DataContractTests
 
         Assert.Equal(paramName, failure.ParamName);
         Assert.Equal(text, failure.Data[OracleFailureTranslator.BindingRejectionKey]);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-138")]
+    public void DoctorClinic_SelectsTheClinicIdClinicNameAndDoctorNameAndBindsOnlyTheDoctor()
+    {
+        Assert.StartsWith("SELECTC.CLINICID,C.CLINICNAME,D.DOC_NAMEFROM", Squash(LookupQueries.GetDoctorClinicSql), StringComparison.Ordinal);
+        Assert.Equal(new[] { "docId" }, Binds(LookupQueries.GetDoctorClinicSql));
+        Assert.Empty(OrKeyword.Matches(LookupQueries.GetDoctorClinicSql));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-138")]
+    public async Task DoctorClinicSql_InSqlite_ReturnsTheDoctorsClinicWithBothNamesAndNoRowForAnUnknownDoctor()
+    {
+        var known = await LovRows(LookupQueries.GetDoctorClinicSql, new { docId = ActiveDoctor });
+        var unknown = await LovRows(LookupQueries.GetDoctorClinicSql, new { docId = 99 });
+
+        var row = Assert.Single(known);
+        Assert.Equal(new[] { "CLINICID", "CLINICNAME", "DOC_NAME" }, row.Keys);
+        Assert.Equal(5L, row["CLINICID"]);
+        Assert.Equal("Clinic five", row["CLINICNAME"]);
+        Assert.Equal("Own active", row["DOC_NAME"]);
+        Assert.Empty(unknown);
     }
 
     /// <summary>Maps a private InvoiceHeaderRow holding only INVDATE with the private ToHeaderDraft.</summary>
@@ -996,6 +1084,59 @@ public sealed class DataContractTests
         infoCenterId,
     };
 
+    /// <summary>Parameters holding the invDate bind the private <see cref="LovQueries"/> AddDate builds from a draft date.</summary>
+    private static DynamicParameters LovDateParameters(DateTime draftDate)
+    {
+        MethodInfo? addDate = typeof(LovQueries).GetMethod(AddDateName, BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(addDate);
+
+        var parameters = new DynamicParameters();
+        addDate.Invoke(null, BindingFlags.DoNotWrapExceptions, null, [parameters, InvDateBind, draftDate], CultureInfo.InvariantCulture);
+
+        return parameters;
+    }
+
+    /// <summary>Parameters holding invDate as a DATE input that keeps the draft date's time of day.</summary>
+    private static DynamicParameters TimedDateParameters(DateTime draftDate)
+    {
+        var parameters = new DynamicParameters();
+        parameters.Add(InvDateBind, draftDate, DbType.Date, ParameterDirection.Input);
+
+        return parameters;
+    }
+
+    /// <summary>Adds the RESERV_NO binds other than invDate for the active doctor of the centre and patient P1.</summary>
+    private static DynamicParameters WithReservationBinds(DynamicParameters parameters)
+    {
+        parameters.Add(DocBind, ActiveDoctor);
+        parameters.Add(ReservationSystemBind, 0);
+        parameters.Add(PatientBind, PatientHolding);
+        parameters.Add(InfoCenterBind, OwnCentre);
+
+        return parameters;
+    }
+
+    /// <summary>Adds the OFFERS binds other than invDate for pay type 1 at the centre.</summary>
+    private static DynamicParameters WithOfferBinds(DynamicParameters parameters)
+    {
+        parameters.Add(PayTypeBind, 1);
+        parameters.Add(InfoCenterBind, OwnCentre);
+
+        return parameters;
+    }
+
+    /// <summary>The invDate parameter Dapper adds to the SQLite command of a SELECT of that bind.</summary>
+    private static async Task<SqliteParameter> AddedInvDateParameter(DynamicParameters parameters)
+    {
+        await using var connection = new CommandRecordingConnection();
+        await connection.OpenAsync();
+
+        _ = await connection.ExecuteScalarAsync(InvDateEchoSql, parameters);
+
+        SqliteCommand command = Assert.Single(connection.Commands);
+        return Assert.Single(command.Parameters.Cast<SqliteParameter>(), parameter => parameter.ParameterName == InvDateBind);
+    }
+
     /// <summary>Nearest directory at or above the test output directory that holds the solution file.</summary>
     private static string FindRepositoryRoot()
     {
@@ -1008,5 +1149,22 @@ public sealed class DataContractTests
         }
 
         throw new InvalidOperationException($"No directory containing {SolutionFileName} was found at or above {AppContext.BaseDirectory}.");
+    }
+
+    /// <summary>In-memory SQLite connection that keeps every command created on it.</summary>
+    private sealed class CommandRecordingConnection() : SqliteConnection("Data Source=:memory:")
+    {
+        /// <summary>Commands created on the connection, in creation order.</summary>
+        public List<SqliteCommand> Commands { get; } = [];
+
+        /// <summary>Creates a command on the connection and records it.</summary>
+        /// <returns>The new command.</returns>
+        public override SqliteCommand CreateCommand()
+        {
+            SqliteCommand command = base.CreateCommand();
+            Commands.Add(command);
+
+            return command;
+        }
     }
 }

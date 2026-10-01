@@ -12,6 +12,24 @@
       "expected": { "outcome": "Blocking", "messages": [{ "field": "SERVICEID", "text": "You Must Select Value", "severity": "Blocking" }] }
     },
     {
+      "name": "service-empty-blocks",
+      "status": "derivable",
+      "input": { "serviceId": "" },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "SERVICEID", "text": "You Must Select Value", "severity": "Blocking" }] }
+    },
+    {
+      "name": "service-blank-blocks",
+      "status": "derivable",
+      "input": { "serviceId": " " },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "SERVICEID", "text": "You Must Select Value", "severity": "Blocking" }] }
+    },
+    {
+      "name": "service-tab-blocks",
+      "status": "derivable",
+      "input": { "serviceId": "\t" },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "SERVICEID", "text": "You Must Select Value", "severity": "Blocking" }] }
+    },
+    {
       "name": "service-present-passes",
       "status": "derivable",
       "input": { "serviceId": "1001" },

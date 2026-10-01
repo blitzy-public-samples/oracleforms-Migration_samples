@@ -1,10 +1,19 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import type { ChangeEvent, Dispatch, FocusEvent } from 'react';
+import type { ChangeEvent, Dispatch, FocusEvent, SetStateAction, SyntheticEvent } from 'react';
 import { ApiError, getMoreDetails, previewInvoice, transferStock, validateDraft } from '../api/client';
 import type { InvoiceLineDraft, MessageDto, MoreDetailsLineKey, MoreDetailsResponse } from '../api/types';
-import { currentCoverage, fieldErrorFor, requestOrigin, sameDraftInputs } from '../state/invoiceDraft';
+import {
+  currentCoverage,
+  dismissalOrder,
+  fieldErrorFor,
+  lineMessages,
+  messageField,
+  requestOrigin,
+  sameDraftInputs,
+} from '../state/invoiceDraft';
 import type { InvoiceDraftAction, InvoiceDraftState } from '../state/invoiceDraft';
-import FieldMessage from '../components/FieldMessage';
+import FieldMessage, { fieldMessageRefs, SeverityLabel } from '../components/FieldMessage';
+import { readOnlyTextProps } from '../components/LovPicker';
 import OpenItemNotice from '../components/OpenItemNotice';
 
 /** Editable `D_INV` item of the MORE canvas and the draft line field it edits. */
@@ -22,6 +31,16 @@ interface ReadOnlyLineField {
   label: string;
   draftKey: keyof InvoiceLineDraft | null;
   labels?: Readonly<Record<string, string>>;
+  freeText?: boolean;
+}
+
+/** Text and selection of a number field under its entry key. */
+interface EntrySnapshot {
+  key: string;
+  text: string;
+  start: number;
+  end: number;
+  direction: 'forward' | 'backward' | 'none';
 }
 
 /** State of the saved-details load of the selected invoice. */
@@ -33,10 +52,16 @@ const NUMBER_LITERAL = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
 
 const NUMBER_ENTRY_ERROR = 'FRM-50016: Legal characters are 0-9 - + E .';
 
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})/;
+
+const DATE_ENTRY = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
+
+const DATE_ENTRY_ERROR = 'FRM-50026: Date must be entered in a format like dd/mm/yyyy.';
+
 const EDITABLE_FIELDS: readonly EditableLineField[] = [
   { key: 'teethNo', item: 'TEETH_NO', label: 'Teeth No', kind: 'text', maxLength: 2 },
   { key: 'toothSurface', item: 'TOOTH_SURFACE', label: 'Tooth Surface', kind: 'text', maxLength: 7 },
-  { key: 'approvDate', item: 'APPROV_DATE', label: 'Approval Date', kind: 'date' },
+  { key: 'approvDate', item: 'APPROV_DATE', label: 'Approval Date', kind: 'date', maxLength: 11 },
   { key: 'approvValidity', item: 'APPROV_VALIDITY', label: 'Approval Validity', kind: 'number', maxLength: 4 },
   { key: 'approvRefNo', item: APPROV_REF_NO, label: 'Approval Ref No', kind: 'text', maxLength: 20 },
 ];
@@ -57,13 +82,13 @@ const STATUS_FIELDS: readonly ReadOnlyLineField[] = [
 ];
 
 const NOT_SAVED_FIELDS: readonly ReadOnlyLineField[] = [
-  { item: 'REGULAR_LENSES_TYPE', label: 'Regular Lenses Type', draftKey: 'regularLensesType' },
-  { item: 'LENS_SPECIFICATIONS', label: 'Lens Specifications', draftKey: 'lensSpecifications' },
-  { item: 'CONTACT_LENSES_TYPE', label: 'Contact Lenses Type', draftKey: 'contactLensesType' },
+  { item: 'REGULAR_LENSES_TYPE', label: 'Regular Lenses Type', draftKey: 'regularLensesType', freeText: true },
+  { item: 'LENS_SPECIFICATIONS', label: 'Lens Specifications', draftKey: 'lensSpecifications', freeText: true },
+  { item: 'CONTACT_LENSES_TYPE', label: 'Contact Lenses Type', draftKey: 'contactLensesType', freeText: true },
   { item: 'F_L_INDICATOR', label: 'F L Indicator', draftKey: 'flIndicator' },
   { item: 'NUMBER_OF_PAIRS', label: 'Number Of Pairs', draftKey: 'numberOfPairs' },
   { item: 'INS_EMP', label: 'Insurance Emp', draftKey: 'insEmp' },
-  { item: 'INS_EMP_NAME', label: 'Insurance Employe', draftKey: null },
+  { item: 'INS_EMP_NAME', label: 'Insurance Employe', draftKey: null, freeText: true },
 ];
 
 /** Text shown for a value as returned; null and undefined show as empty. */
@@ -80,10 +105,45 @@ function displayText(value: unknown): string {
   return JSON.stringify(value);
 }
 
-/** The `yyyy-MM-dd` part of an ISO date-time text, or the text unchanged. */
-function datePart(value: unknown): string {
+/** `dd/mm/yyyy` text of an ISO date or date-time value without time-zone conversion, or the text unchanged. */
+function dateText(value: unknown): string {
   const text = displayText(value);
-  return /^\d{4}-\d{2}-\d{2}/.test(text) ? text.slice(0, 10) : text;
+  const match = ISO_DATE.exec(text);
+  return match === null ? text : `${match[3]}/${match[2]}/${match[1]}`;
+}
+
+/** First 10 characters of a draft date value, its `yyyy-mm-dd` part when ISO; null when empty. */
+function draftDateOf(value: unknown): string | null {
+  const text = displayText(value);
+  return text === '' ? null : text.slice(0, 10);
+}
+
+/** Number of days in `month` (1-12) of Gregorian `year`. */
+function daysInMonth(year: number, month: number): number {
+  if (month === 2) {
+    return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0 ? 29 : 28;
+  }
+  return month === 4 || month === 6 || month === 9 || month === 11 ? 30 : 31;
+}
+
+/** ISO `yyyy-mm-dd` of `d/m/yyyy` entry text naming a real date in years 0001-9999, or null. */
+function parseDateEntry(text: string): string | null {
+  const match = DATE_ENTRY.exec(text);
+  if (match === null) {
+    return null;
+  }
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  if (year < 1 || month < 1 || month > 12 || day < 1 || day > daysInMonth(year, month)) {
+    return null;
+  }
+  return `${match[3]}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+/** True when date entry text was typed over draft value `value`, which has not changed since. */
+function dateEntryCurrent(entry: { text: string; draftDate?: string | null }, value: unknown): boolean {
+  return (entry.draftDate ?? null) === draftDateOf(value);
 }
 
 /** The list-element label of a list item value, or the value itself. */
@@ -94,7 +154,7 @@ function listLabel(value: unknown, labels: Readonly<Record<string, string>> | un
 
 /** Input value text for an editable line field. */
 function inputText(field: EditableLineField, value: unknown): string {
-  return field.kind === 'date' ? datePart(value) : displayText(value);
+  return field.kind === 'date' ? dateText(value) : displayText(value);
 }
 
 /** Draft value for an editable line field from its input text; empty text is null. */
@@ -114,6 +174,18 @@ function numberEntryError(field: EditableLineField, text: string): string | null
     return `${field.label} accepts at most ${field.maxLength} characters.`;
   }
   return null;
+}
+
+/** Current text and selection of `input` under entry key `key`; a missing selection is a caret at the end. */
+function snapshotOf(key: string, input: HTMLInputElement): EntrySnapshot {
+  const length = input.value.length;
+  return {
+    key,
+    text: input.value,
+    start: input.selectionStart ?? length,
+    end: input.selectionEnd ?? length,
+    direction: input.selectionDirection ?? 'none',
+  };
 }
 
 /** Element at `index`, or undefined when the index is outside the list. */
@@ -176,12 +248,27 @@ function oraText(oracleErrorNumber: number): string {
   return `ORA-${String(Math.abs(oracleErrorNumber)).padStart(5, '0')}`;
 }
 
+/** Title and tab-stop props of a read-only input: free text stays a tab stop, a short value does not. */
+function readOnlyProps(value: string, freeText: boolean) {
+  return freeText ? readOnlyTextProps(value) : { tabIndex: -1, title: value === '' ? undefined : value };
+}
+
 /** One labelled read-only text field. */
-function ReadOnlyField({ id, label, value }: { id: string; label: string; value: string }) {
+function ReadOnlyField({
+  id,
+  label,
+  value,
+  freeText = false,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  freeText?: boolean;
+}) {
   return (
     <div className="field">
       <label htmlFor={id}>{label}</label>
-      <input id={id} type="text" className="read-only" value={value} readOnly />
+      <input id={id} type="text" className="read-only" value={value} readOnly {...readOnlyProps(value, freeText)} />
     </div>
   );
 }
@@ -206,12 +293,49 @@ export default function MoreDetailsScreen({
   const failedInvNo = useRef<number | null>(null);
   const failedLoadText = useRef<string | null>(null);
   const [failedInvNoShown, setFailedInvNoShown] = useState<number | null>(null);
-  const [entryText, setEntryText] = useState<{ key: string; text: string } | null>(null);
+  const [entryText, setEntryText] = useState<{ key: string; text: string; draftDate?: string | null } | null>(null);
   const [entryError, setEntryError] = useState<{ key: string; text: string } | null>(null);
+  const entrySnapshot = useRef<EntrySnapshot | null>(null);
   const refNoOnFocus = useRef('');
   const actionsRef = useRef<HTMLDivElement>(null);
   const [previewRequests, setPreviewRequests] = useState(0);
   const baseId = useId();
+  const pointerHeld = useRef(false);
+  const heldEntryError = useRef<(() => void) | null>(null);
+
+  // Tracks a pointer press in progress and applies an entry-error change held during it once the press has completed.
+  useEffect(() => {
+    const press = () => {
+      pointerHeld.current = true;
+    };
+    const release = () => {
+      pointerHeld.current = false;
+      const apply = heldEntryError.current;
+      heldEntryError.current = null;
+      if (apply !== null) {
+        window.setTimeout(apply, 0);
+      }
+    };
+    document.addEventListener('pointerdown', press, true);
+    document.addEventListener('pointerup', release, true);
+    document.addEventListener('pointercancel', release, true);
+    window.addEventListener('blur', release);
+    return () => {
+      document.removeEventListener('pointerdown', press, true);
+      document.removeEventListener('pointerup', release, true);
+      document.removeEventListener('pointercancel', release, true);
+      window.removeEventListener('blur', release);
+    };
+  }, []);
+
+  /** Sets the entry error now, or once the pointer press in progress has completed. */
+  function setEntryErrorAfterPress(next: SetStateAction<{ key: string; text: string } | null>) {
+    if (pointerHeld.current) {
+      heldEntryError.current = () => setEntryError(next);
+    } else {
+      setEntryError(next);
+    }
+  }
 
   const invNo = state.saved?.invNo;
   const isSaved = invNo != null;
@@ -327,20 +451,62 @@ export default function MoreDetailsScreen({
     return `${index}:${draftLine?.clientId ?? ''}:${field.item}`;
   }
 
-  /** Writes an edited line field into the current draft line; number text that is not a number or is too long is rejected. */
-  function changeLineField(field: EditableLineField, event: ChangeEvent<HTMLInputElement>) {
-    const text = event.target.value;
+  /** Writes an edited line field into the current draft line; number text that is not a number or is too long is rejected, keeping the `shown` text and its selection. */
+  function changeLineField(field: EditableLineField, event: ChangeEvent<HTMLInputElement>, shown: string) {
+    const input = event.target;
+    const text = input.value;
     if (field.kind === 'number') {
       const key = entryKey(field);
       const error = text === '' ? null : numberEntryError(field, text);
       if (error !== null) {
+        const before = entrySnapshot.current;
+        const kept = before !== null && before.key === key && before.text === shown ? before : null;
+        input.value = shown;
+        input.setSelectionRange(kept?.start ?? shown.length, kept?.end ?? shown.length, kept?.direction ?? 'none');
+        entrySnapshot.current = snapshotOf(key, input);
         setEntryError({ key, text: error });
         return;
       }
+      entrySnapshot.current = snapshotOf(key, input);
       setEntryError((current) => (current?.key === key ? null : current));
       setEntryText(text === '' ? null : { key, text });
     }
     dispatch({ type: 'lineFieldChanged', index, field: field.key, value: parseInput(field, text) });
+  }
+
+  /** Keeps date entry text over the draft date it is typed on; the draft line is written when the field is left. */
+  function changeDateField(field: EditableLineField, event: ChangeEvent<HTMLInputElement>) {
+    setEntryText({ key: entryKey(field), text: event.target.value, draftDate: draftDateOf(draftLine?.[field.key]) });
+  }
+
+  /** On leaving the field writes empty entry text (null) or a valid date (ISO) to the draft line; other text sets the FRM-50026 entry error and is dropped. */
+  function blurDateField(field: EditableLineField, event: FocusEvent<HTMLInputElement>) {
+    const key = entryKey(field);
+    if (entryText?.key !== key) {
+      return;
+    }
+    setEntryText(null);
+    const text = event.target.value;
+    const parsed = parseDateEntry(text);
+    if (text !== '' && parsed === null) {
+      setEntryErrorAfterPress({ key, text: DATE_ENTRY_ERROR });
+      return;
+    }
+    setEntryErrorAfterPress((current) => (current?.key === key ? null : current));
+    if (parsed !== draftDateOf(draftLine?.[field.key])) {
+      dispatch({ type: 'lineFieldChanged', index, field: field.key, value: parsed });
+    }
+  }
+
+  /** Remembers the text and selection of a number field before its next change. */
+  function selectNumberField(field: EditableLineField, event: SyntheticEvent<HTMLInputElement>) {
+    entrySnapshot.current = snapshotOf(entryKey(field), event.currentTarget);
+  }
+
+  /** Clears the entry error of a number field when it loses focus, once the pointer press in progress, if any, has completed. */
+  function blurNumberField(field: EditableLineField) {
+    const key = entryKey(field);
+    setEntryErrorAfterPress((current) => (current?.key === key ? null : current));
   }
 
   /** Remembers the approval reference held when the field gains focus. */
@@ -435,42 +601,76 @@ export default function MoreDetailsScreen({
   /** One editable line item with its messages. */
   function renderEditable(field: EditableLineField) {
     const id = `${baseId}-${field.item}`;
-    const source = lineKey(index, field.item);
-    const messages: MessageDto[] = state.messages[source] ?? [];
+    // The current line's messages naming this field, whichever line source holds them.
+    const placed = lineMessages(state, index).filter((entry) => messageField(entry.message) === field.item);
+    const messages: MessageDto[] = placed.map((entry) => entry.message);
     const fieldError = isSaved ? null : fieldErrorFor(state, field.item, draftLine?.clientId ?? null);
     const invalid = fieldError !== null || messages.some((message) => message.severity === 'Blocking');
     const isRefNo = field.item === APPROV_REF_NO;
+    const isNumber = field.kind === 'number';
     const value = isSaved ? savedLine?.[field.item] : draftLine?.[field.key];
     const key = entryKey(field);
     const entryInvalid = lineEditable && entryError?.key === key;
-    const typed = lineEditable && entryText?.key === key && Number(entryText.text) === value ? entryText.text : null;
+    const typed =
+      lineEditable &&
+      entryText?.key === key &&
+      (field.kind === 'date' ? dateEntryCurrent(entryText, value) : Number(entryText.text) === value)
+        ? entryText.text
+        : null;
+    const shown = typed ?? inputText(field, value);
+    const ariaInvalid = lineEditable && (invalid || entryInvalid);
+    const entryErrorId = entryInvalid ? `${id}-entry-error` : undefined;
+    const refs = fieldMessageRefs(`${id}-msg`, messages, fieldError);
+    const describedBy = [entryErrorId, refs.describedBy].filter((part) => part !== undefined).join(' ');
+    const errorMessage = [entryErrorId, invalid ? refs.errorMessage : undefined].filter((part) => part !== undefined).join(' ');
     return (
       <div className="field" key={field.item}>
         <label htmlFor={id}>{field.label}</label>
         <input
           id={id}
-          type={field.kind === 'number' ? 'text' : field.kind}
+          type="text"
           inputMode={field.kind === 'number' ? 'decimal' : undefined}
           className={lineEditable ? (invalid || entryInvalid ? 'invalid' : undefined) : 'read-only'}
-          value={typed ?? inputText(field, value)}
+          value={shown}
           maxLength={field.kind === 'number' ? undefined : field.maxLength}
           readOnly={!lineEditable}
-          aria-invalid={lineEditable && (invalid || entryInvalid) ? true : undefined}
-          aria-describedby={entryInvalid ? `${id}-entry-error` : undefined}
-          onChange={lineEditable ? (event) => changeLineField(field, event) : undefined}
+          aria-invalid={ariaInvalid ? true : undefined}
+          aria-describedby={describedBy === '' ? undefined : describedBy}
+          aria-errormessage={ariaInvalid && errorMessage !== '' ? errorMessage : undefined}
+          onChange={
+            lineEditable
+              ? (event) => (field.kind === 'date' ? changeDateField(field, event) : changeLineField(field, event, shown))
+              : undefined
+          }
+          onSelect={lineEditable && isNumber ? (event) => selectNumberField(field, event) : undefined}
           onFocus={lineEditable && isRefNo ? focusRefNo : undefined}
-          onBlur={lineEditable && isRefNo ? blurRefNo : undefined}
+          onBlur={
+            !lineEditable
+              ? undefined
+              : isRefNo
+                ? blurRefNo
+                : field.kind === 'date'
+                  ? (event) => blurDateField(field, event)
+                  : isNumber
+                    ? () => blurNumberField(field)
+                    : undefined
+          }
+          {...(lineEditable ? {} : readOnlyProps(shown, isRefNo))}
         />
         {entryInvalid && (
           <div id={`${id}-entry-error`} className="msg msg-blocking" role="alert">
-            {entryError?.text}
+            <SeverityLabel severity="Blocking" />{' '}
+            <span>{entryError?.text}</span>
           </div>
         )}
         <FieldMessage
+          id={`${id}-msg`}
           messages={messages}
           fieldError={fieldError}
           onDismiss={(messageIndex) => {
-            dispatch({ type: 'messageDismissed', source, index: messageIndex });
+            for (const ref of dismissalOrder(placed[messageIndex]?.refs ?? [])) {
+              dispatch({ type: 'messageDismissed', source: ref.source, index: ref.index });
+            }
             document.getElementById(id)?.focus();
           }}
         />
@@ -495,12 +695,22 @@ export default function MoreDetailsScreen({
           <div className="panel-title" role="heading" aria-level={2} id={insuranceTitleId}>
             Insurance
           </div>
-          <ReadOnlyField id={`${baseId}-INS_NUMBER`} label="Insurance Number" value={displayText(insurance?.insNumber)} />
-          <ReadOnlyField id={`${baseId}-CARD_END`} label="Card Expire Date" value={datePart(insurance?.cardEnd)} />
-          <ReadOnlyField id={`${baseId}-PAT_POLICY_NO`} label="Policy No" value={displayText(insurance?.patPolicyNo)} />
+          <ReadOnlyField
+            id={`${baseId}-INS_NUMBER`}
+            label="Insurance Number"
+            value={displayText(insurance?.insNumber)}
+            freeText
+          />
+          <ReadOnlyField id={`${baseId}-CARD_END`} label="Card Expire Date" value={dateText(insurance?.cardEnd)} />
+          <ReadOnlyField
+            id={`${baseId}-PAT_POLICY_NO`}
+            label="Policy No"
+            value={displayText(insurance?.patPolicyNo)}
+            freeText
+          />
         </section>
 
-        <section aria-labelledby={lineTitleId}>
+        <section className="more-current-line" aria-labelledby={lineTitleId}>
           <div className="panel-title" role="heading" aria-level={2} id={lineTitleId}>
             {serviceId === '' ? 'Current Line' : `Current Line · Service ${serviceId}`}
           </div>
@@ -519,6 +729,7 @@ export default function MoreDetailsScreen({
               id={`${baseId}-${field.item}`}
               label={field.label}
               value={displayText(readOnlyValue(field))}
+              freeText={field.freeText}
             />
           ))}
           <OpenItemNotice ids={['OI-33']} />
@@ -541,6 +752,7 @@ export default function MoreDetailsScreen({
                 value={rowId}
                 aria-labelledby={transferLabelId}
                 readOnly
+                {...readOnlyTextProps(rowId)}
               />
             ))}
           </div>

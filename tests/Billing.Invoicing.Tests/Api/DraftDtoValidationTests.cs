@@ -295,6 +295,74 @@ public sealed class DraftDtoValidationTests
         Assert.ThrowsAny<JsonException>(() => JsonSerializer.Deserialize<CreateInvoiceRequest>($$"""{"draft":{{json}}}""", Json));
     }
 
+    public static TheoryData<string, DateTime> WallClockDraftDates => new()
+    {
+        { "2026-09-29T23:59:59", new DateTime(2026, 9, 29, 23, 59, 59) },
+        { "2026-09-29T23:59:59.1234567", new DateTime(2026, 9, 29, 23, 59, 59).AddTicks(1234567) },
+        { "2026-03-31", new DateTime(2026, 3, 31) },
+    };
+
+    [Theory]
+    [MemberData(nameof(WallClockDraftDates))]
+    public void DraftDate_WithoutTimeZoneDesignator_IsReadAsItsWallClock(string text, DateTime expected)
+    {
+        var draft = JsonSerializer.Deserialize<DraftDto>($$"""{"draftDate":"{{text}}"}""", Json);
+        var request = JsonSerializer.Deserialize<CreateInvoiceRequest>($$$"""{"draft":{"draftDate":"{{{text}}}"}}""", Json);
+
+        Assert.NotNull(draft);
+        Assert.Equal(expected.Ticks, draft.DraftDate.Ticks);
+        Assert.Equal(DateTimeKind.Unspecified, draft.DraftDate.Kind);
+        Assert.NotNull(request);
+        Assert.Equal(expected.Ticks, request.Draft.DraftDate.Ticks);
+        Assert.Equal(DateTimeKind.Unspecified, request.Draft.DraftDate.Kind);
+    }
+
+    [Theory]
+    [InlineData("\"2026-09-29T23:59:59+03:00\"")]
+    [InlineData("\"2026-09-29T23:59:59-05:00\"")]
+    [InlineData("\"2026-09-29T23:59:59+00:00\"")]
+    [InlineData("\"2026-09-29T23:59:59Z\"")]
+    [InlineData("\"2026-09-29T23:59:59.1234567Z\"")]
+    [InlineData("null")]
+    [InlineData("\"\"")]
+    [InlineData("\"29/09/2026\"")]
+    [InlineData("1790000000")]
+    public void DraftDate_WithATimeZoneDesignatorOrNoIsoText_FailsAsJsonOnDraftDate(string value)
+    {
+        var error = Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<DraftDto>($$"""{"draftDate":{{value}}}""", Json));
+        var nested = Assert.Throws<JsonException>(() =>
+            JsonSerializer.Deserialize<ValidateDraftRequest>($$$"""{"draft":{"draftDate":{{{value}}}}}""", Json));
+
+        Assert.Equal("$.draftDate", error.Path);
+        Assert.Equal("$.draft.draftDate", nested.Path);
+    }
+
+    [Theory]
+    [MemberData(nameof(WallClockDraftDates))]
+    public void DraftDate_IsWrittenAsTheDefaultIsoTextAndRoundTrips(string text, DateTime value)
+    {
+        var draft = new DraftDto { DraftDate = value };
+
+        var written = JsonSerializer.SerializeToElement(draft, Json).GetProperty("draftDate");
+        var response = JsonSerializer.SerializeToElement(new NewDraftResponse { Draft = draft }, Json);
+        var back = JsonSerializer.Deserialize<DraftDto>(JsonSerializer.Serialize(draft, Json), Json);
+
+        Assert.Equal(JsonSerializer.Serialize(value, Json), written.GetRawText());
+        Assert.StartsWith(text, written.GetString(), StringComparison.Ordinal);
+        Assert.Equal(written.GetRawText(), response.GetProperty("draft").GetProperty("draftDate").GetRawText());
+        Assert.NotNull(back);
+        Assert.Equal(value.Ticks, back.DraftDate.Ticks);
+        Assert.Equal(DateTimeKind.Unspecified, back.DraftDate.Kind);
+    }
+
+    [Fact]
+    public void DraftDate_WallClockIsWrittenWithoutADesignator()
+    {
+        var written = JsonSerializer.SerializeToElement(new DraftDto { DraftDate = new DateTime(2026, 9, 29, 23, 59, 59) }, Json);
+
+        Assert.Equal("2026-09-29T23:59:59", written.GetProperty("draftDate").GetString());
+    }
+
     private static void AssertOmitted(JsonElement draft)
     {
         string[] omittedHeader = ["preAuthorization", "oferId", "docId1", "seqNo"];

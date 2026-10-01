@@ -45,6 +45,32 @@
       }
     },
     {
+      "name": "patient-blank-blocks",
+      "status": "derivable",
+      "input": {
+        "header": { "payType": 1, "compCode": "0", "patientNo": "   ", "docId": 10 }
+      },
+      "expected": {
+        "outcome": "Blocking",
+        "messages": [
+          { "field": "PATIENTNO", "text": "Select Patient No is required ", "severity": "Blocking" }
+        ]
+      }
+    },
+    {
+      "name": "patient-tab-blocks",
+      "status": "derivable",
+      "input": {
+        "header": { "payType": 1, "compCode": "0", "patientNo": "\t", "docId": 10 }
+      },
+      "expected": {
+        "outcome": "Blocking",
+        "messages": [
+          { "field": "PATIENTNO", "text": "Select Patient No is required ", "severity": "Blocking" }
+        ]
+      }
+    },
+    {
       "name": "patient-missing-stops-before-doctor-check",
       "status": "derivable",
       "input": {

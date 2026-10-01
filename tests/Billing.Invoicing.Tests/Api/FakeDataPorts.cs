@@ -70,6 +70,9 @@ public sealed class FakeOracleSession : IOracleSession
     /// <summary>Failure of a savepoint call by its event name, Save:name or Rollback:name, raised after the event is recorded; null, or a null result, lets the call succeed.</summary>
     public Func<string, Exception?>? SavepointFailure { get; set; }
 
+    /// <summary>Failure the whole-transaction rollback throws after its event is recorded; null, or a null result, lets it succeed.</summary>
+    public Func<Exception?>? RollbackFailure { get; set; }
+
     public Task Commit(CancellationToken cancellationToken = default)
     {
         Log(CommitEvent);
@@ -79,7 +82,9 @@ public sealed class FakeOracleSession : IOracleSession
     public Task Rollback(CancellationToken cancellationToken = default)
     {
         Log(RollbackEvent);
-        return Task.CompletedTask;
+        return RollbackFailure?.Invoke() is { } failure
+            ? Task.FromException(failure)
+            : Task.CompletedTask;
     }
 
     public Task Rollback(string savepointName, CancellationToken cancellationToken = default) =>
@@ -130,10 +135,13 @@ public sealed class FakeOracleSessionFactory : IOracleSessionFactory
     /// <summary><see cref="FakeOracleSession.SavepointFailure"/> of every session opened.</summary>
     public Func<string, Exception?>? SavepointFailure { get; set; }
 
+    /// <summary><see cref="FakeOracleSession.RollbackFailure"/> of every session opened.</summary>
+    public Func<Exception?>? RollbackFailure { get; set; }
+
     public Task<IOracleSession> Open(CancellationToken cancellationToken = default)
     {
         FakeRecorder.Record(_journal, Calls, nameof(IOracleSessionFactory), nameof(Open), []);
-        var session = new FakeOracleSession(_journal) { SavepointFailure = SavepointFailure };
+        var session = new FakeOracleSession(_journal) { SavepointFailure = SavepointFailure, RollbackFailure = RollbackFailure };
         Sessions.Add(session);
         return Task.FromResult<IOracleSession>(session);
     }
@@ -219,6 +227,9 @@ public sealed class FakeLookupQueries : ILookupQueries
 
     /// <summary>DISC_CLASSES.USE_ADVANCED of any class.</summary>
     public int? ClassAdvancedMode { get; set; }
+
+    /// <summary>Clinic id, clinic name and doctor name by doctor id; null when the doctor has no single clinic row.</summary>
+    public Func<int, (int ClinicId, string? ClinicName, string? DocName)?> DoctorClinic { get; set; } = _ => null;
 
     public Task<IReadOnlyDictionary<int, string?>> GetPreferences(CancellationToken cancellationToken = default)
     {
@@ -335,6 +346,12 @@ public sealed class FakeLookupQueries : ILookupQueries
     {
         Record(nameof(GetClassAdvancedMode), [subCompCode, classCode]);
         return Task.FromResult(ClassAdvancedMode);
+    }
+
+    public Task<(int ClinicId, string? ClinicName, string? DocName)?> GetDoctorClinic(int docId, CancellationToken cancellationToken = default)
+    {
+        Record(nameof(GetDoctorClinic), [docId]);
+        return Task.FromResult(DoctorClinic(docId));
     }
 
     private IReadOnlyDictionary<string, int> QueueFlagsFromProfiles(IReadOnlyCollection<string> serviceIds)

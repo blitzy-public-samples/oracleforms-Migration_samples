@@ -8,13 +8,14 @@ using Billing.Invoicing.Data.Errors;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Oracle.ManagedDataAccess.Client;
 
 namespace Billing.Invoicing.Tests.Api;
 
-/// <summary>Responses and log records of <see cref="ProblemDetailsExceptionHandler"/> behind the Api's exception-handler middleware.</summary>
+/// <summary>Responses and log records of <see cref="ProblemDetailsExceptionHandler"/> behind the Api's exception-handler middleware, and the log levels the shipped Api configuration allows.</summary>
 [Trait("Category", "Orchestration")]
 public sealed class ProblemDetailsExceptionHandlerTests
 {
@@ -25,9 +26,12 @@ public sealed class ProblemDetailsExceptionHandlerTests
     private const string InvoiceNo = "778899";
     private const string RequestId = "A1B2C3D4E5F60718293A4B5C6D7E8F90";
     private const string Secret = "SECRET";
+    private const string SolutionFileName = "SmallCashInvoice.sln";
 
     private const string HandlerCategory = "Billing.Invoicing.Api.Errors.ProblemDetailsExceptionHandler";
     private const string MiddlewareCategory = "Microsoft.AspNetCore.Diagnostics.ExceptionHandlerMiddleware";
+    private const string ActionInvokerCategory = "Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker";
+    private const string HostingCategory = "Microsoft.AspNetCore.Hosting.Diagnostics";
     private const string HandledExceptionEvent = "Microsoft.AspNetCore.Diagnostics.HandledException";
 
     private const string IdempotencyText = "Invoice request " + RequestId + " refers to unavailable invoice " + InvoiceNo + ".";
@@ -239,6 +243,38 @@ public sealed class ProblemDetailsExceptionHandlerTests
         Assert.Equal("logger", Assert.Throws<ArgumentNullException>(() => new ProblemDetailsExceptionHandler(writer, translator, null!)).ParamName);
     }
 
+    [Fact]
+    public void ShippedLogging_DefaultTraceOverride_CapsTheActionInvokerAtDebug()
+    {
+        using var logs = new CapturingLoggerProvider();
+        using ServiceProvider provider = ShippedLogging(logs, LogLevel.Trace);
+        ILogger logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger(ActionInvokerCategory);
+
+        Assert.False(logger.IsEnabled(LogLevel.Trace));
+        Assert.True(logger.IsEnabled(LogLevel.Debug));
+    }
+
+    [Fact]
+    public void ShippedLogging_DefaultTraceOverride_EnablesTraceInOtherCategories()
+    {
+        using var logs = new CapturingLoggerProvider();
+        using ServiceProvider provider = ShippedLogging(logs, LogLevel.Trace);
+        ILogger logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger(HandlerCategory);
+
+        Assert.True(logger.IsEnabled(LogLevel.Trace));
+    }
+
+    [Fact]
+    public void ShippedLogging_WithoutOverride_KeepsFrameworkRequestLinesAtInformation()
+    {
+        using var logs = new CapturingLoggerProvider();
+        using ServiceProvider provider = ShippedLogging(logs, defaultLevel: null);
+        ILoggerFactory factory = provider.GetRequiredService<ILoggerFactory>();
+
+        Assert.True(factory.CreateLogger(HostingCategory).IsEnabled(LogLevel.Information));
+        Assert.True(factory.CreateLogger(ActionInvokerCategory).IsEnabled(LogLevel.Information));
+    }
+
     /// <summary>Sends a GET that throws the exception through routing, the Api's exception-handler delegate and, when registered, the handler, in-process.</summary>
     /// <param name="error">Exception the matched endpoint throws.</param>
     /// <param name="registerHandler">Whether <see cref="ProblemDetailsExceptionHandler"/> is registered.</param>
@@ -295,6 +331,43 @@ public sealed class ProblemDetailsExceptionHandlerTests
             new ProblemDetailsWriter(translator),
             translator,
             factory.CreateLogger<ProblemDetailsExceptionHandler>());
+    }
+
+    /// <summary>Builds a logging container over the Logging section of the shipped Api appsettings.json, layering a default level over it as an environment variable would.</summary>
+    /// <param name="logs">Provider receiving the records.</param>
+    /// <param name="defaultLevel">Value of <c>Logging:LogLevel:Default</c>; none when null.</param>
+    /// <returns>The service provider owning the logger factory.</returns>
+    private static ServiceProvider ShippedLogging(CapturingLoggerProvider logs, LogLevel? defaultLevel)
+    {
+        var overrides = new Dictionary<string, string?>();
+        if (defaultLevel is LogLevel level)
+        {
+            overrides["Logging:LogLevel:Default"] = level.ToString();
+        }
+
+        IConfigurationRoot configuration = new ConfigurationBuilder()
+            .AddJsonFile(Path.Combine(FindRepositoryRoot(), "src", "Billing.Invoicing.Api", "appsettings.json"), optional: false, reloadOnChange: false)
+            .AddInMemoryCollection(overrides)
+            .Build();
+        var services = new ServiceCollection();
+        services.AddLogging(logging => logging.AddConfiguration(configuration.GetSection("Logging")).AddProvider(logs));
+        return services.BuildServiceProvider();
+    }
+
+    /// <summary>Returns the nearest directory at or above the test output directory that holds the solution file.</summary>
+    /// <returns>The repository root path.</returns>
+    private static string FindRepositoryRoot()
+    {
+        var start = AppContext.BaseDirectory;
+        for (var directory = new DirectoryInfo(start); directory is not null; directory = directory.Parent)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, SolutionFileName)))
+            {
+                return directory.FullName;
+            }
+        }
+
+        throw new InvalidOperationException($"No directory containing {SolutionFileName} was found at or above {start}.");
     }
 
     /// <summary>Parses a written response body, or returns null when nothing was written.</summary>

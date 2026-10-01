@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Billing.Invoicing.Domain.Model;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 
 namespace Billing.Invoicing.Api.Contracts;
 
@@ -28,7 +29,8 @@ public sealed record DraftDto : IValidatableObject
     /// <summary>32-character upper-case hexadecimal request id, kept for the life of the draft.</summary>
     public string RequestId { get; init; } = string.Empty;
 
-    /// <summary>Database time read when the draft was created.</summary>
+    /// <summary>Database time read when the draft was created; its JSON is ISO 8601 text without a time-zone designator.</summary>
+    [JsonConverter(typeof(DraftDateContract))]
     public DateTime DraftDate { get; init; }
 
     /// <summary>Seal of the request id and draft date issued with the draft.</summary>
@@ -170,4 +172,65 @@ public sealed record DraftDto : IValidatableObject
         nameof(InvoiceLineDraft.FLIndicator),
         nameof(InvoiceLineDraft.NumberOfPairs),
         nameof(InvoiceLineDraft.InsEmp));
+
+    /// <summary>JSON contract of the draft date that reads ISO 8601 text without a time-zone designator as its wall clock and writes the date unchanged.</summary>
+    private sealed class DraftDateContract : JsonConverter<DateTime>
+    {
+        /// <summary>Reads the draft date with <see cref="DateTimeKind.Unspecified"/>; a value with an offset or <c>Z</c>, a non-string or malformed value throws <see cref="JsonException"/>.</summary>
+        public override DateTime Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+            reader.TokenType == JsonTokenType.String
+            && reader.TryGetDateTime(out var value)
+            && value.Kind == DateTimeKind.Unspecified
+                ? value
+                : throw new JsonException();
+
+        /// <summary>Writes the draft date as ISO 8601 text.</summary>
+        public override void Write(Utf8JsonWriter writer, DateTime value, JsonSerializerOptions options) =>
+            writer.WriteStringValue(value);
+    }
+
+    /// <summary>Binds a <c>draftDate</c> query value as its wall clock, refusing a value with a time-zone designator.</summary>
+    internal sealed class DraftDateQueryBinder : IModelBinder
+    {
+        /// <summary>Binds the query-string value with <see cref="DateTimeKind.Unspecified"/>; null for a blank value; a model error for a malformed value or one with an offset or <c>Z</c>; no result when the query string has none.</summary>
+        /// <param name="bindingContext">Context of the bound parameter.</param>
+        /// <returns>A completed task.</returns>
+        public Task BindModelAsync(ModelBindingContext bindingContext)
+        {
+            ArgumentNullException.ThrowIfNull(bindingContext);
+
+            var modelName = bindingContext.ModelName;
+            // Reads only the query-string value providers; form and route values are ignored.
+            var queryValues = bindingContext.ValueProvider is IBindingSourceValueProvider sources
+                ? sources.Filter(BindingSource.Query)
+                : null;
+            var result = queryValues?.GetValue(modelName) ?? ValueProviderResult.None;
+            if (result == ValueProviderResult.None)
+            {
+                return Task.CompletedTask;
+            }
+
+            bindingContext.ModelState.SetModelValue(modelName, result);
+
+            var text = result.FirstValue;
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                bindingContext.Result = ModelBindingResult.Success(null);
+                return Task.CompletedTask;
+            }
+
+            if (DateTime.TryParse(text, result.Culture, DateTimeStyles.AllowWhiteSpaces, out var value)
+                && value.Kind == DateTimeKind.Unspecified)
+            {
+                bindingContext.Result = ModelBindingResult.Success(value);
+                return Task.CompletedTask;
+            }
+
+            var metadata = bindingContext.ModelMetadata;
+            bindingContext.ModelState.TryAddModelError(
+                modelName,
+                metadata.ModelBindingMessageProvider.AttemptedValueIsInvalidAccessor(text, metadata.GetDisplayName()));
+            return Task.CompletedTask;
+        }
+    }
 }

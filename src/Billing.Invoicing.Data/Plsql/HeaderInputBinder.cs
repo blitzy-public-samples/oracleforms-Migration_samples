@@ -1,6 +1,4 @@
 using System.Data;
-using System.Text;
-using Billing.Invoicing.Data.Errors;
 using Billing.Invoicing.Domain.Model;
 using Oracle.ManagedDataAccess.Client;
 
@@ -38,7 +36,7 @@ public static class HeaderInputBinder
         var parameters = new List<OracleParameter>(21);
         try
         {
-            parameters.Add(Text("h_patientno", header.PatientNo, PatientNoWidth, nameof(header)));
+            parameters.Add(Text("h_patientno", "PATIENTNO", header.PatientNo, PatientNoWidth, nameof(header)));
             // invdate is the draft date, never InvDate.
             parameters.Add(Date("h_invdate", header.DraftDate));
             parameters.Add(Number("h_invtypeid", header.InvTypeId));
@@ -47,12 +45,12 @@ public static class HeaderInputBinder
             parameters.Add(Number("h_sub_paytype2", header.SubPayType2));
             parameters.Add(Number("h_clinicid", header.ClinicId));
             parameters.Add(Number("h_docid", header.DocId));
-            parameters.Add(Text("h_curr_code", header.CurrCode, CurrCodeWidth, nameof(header)));
+            parameters.Add(Text("h_curr_code", "CURR_CODE", header.CurrCode, CurrCodeWidth, nameof(header)));
             // pre_authorization is always null, whatever the header holds.
-            parameters.Add(Text("h_pre_authorization", null, PreAuthorizationWidth, nameof(header)));
-            parameters.Add(Text("h_claim_no", header.ClaimNo, ClaimNoWidth, nameof(header)));
-            parameters.Add(Text("h_claim_flag", header.ClaimFlag, ClaimFlagWidth, nameof(header)));
-            parameters.Add(Text("h_note_no", header.NoteNo, NoteNoWidth, nameof(header)));
+            parameters.Add(Text("h_pre_authorization", "PRE_AUTHORIZATION", null, PreAuthorizationWidth, nameof(header)));
+            parameters.Add(Text("h_claim_no", "CLAIM_NO", header.ClaimNo, ClaimNoWidth, nameof(header)));
+            parameters.Add(Text("h_claim_flag", "CLAIM_FLAG", header.ClaimFlag, ClaimFlagWidth, nameof(header)));
+            parameters.Add(Text("h_note_no", "NOTE_NO", header.NoteNo, NoteNoWidth, nameof(header)));
             parameters.Add(Number("h_finaldisc_perc", percentMode ? header.FinalDiscPerc : null));
             parameters.Add(Number("h_finaldisc", percentMode ? null : header.FinalDisc));
             parameters.Add(Number("h_amount_1", header.Amount1));
@@ -60,8 +58,8 @@ public static class HeaderInputBinder
             parameters.Add(Number("h_add_to_list", header.AddToList));
             // user_no, machine_n and info_center_id come from the operator context, never from the header.
             parameters.Add(Number("h_user_no", operatorContext.UserNo));
-            parameters.Add(Text("h_machine_n", operatorContext.MachineName, MachineNWidth, nameof(operatorContext)));
-            parameters.Add(Text("h_info_center_id", operatorContext.InfoCenterId, InfoCenterIdWidth, nameof(operatorContext)));
+            parameters.Add(Text("h_machine_n", "MACHINE_N", operatorContext.MachineName, MachineNWidth, nameof(operatorContext)));
+            parameters.Add(Text("h_info_center_id", "INFO_CENTER_ID", operatorContext.InfoCenterId, InfoCenterIdWidth, nameof(operatorContext)));
         }
         catch
         {
@@ -83,28 +81,13 @@ public static class HeaderInputBinder
     /// <summary>Numeric input bound as <see cref="OracleDbType.Decimal"/>.</summary>
     private static OracleParameter Number(string name, decimal? value) => Input(name, OracleDbType.Decimal, value);
 
-    /// <summary>Text input bound as <see cref="OracleDbType.Varchar2"/> with <c>Size</c> set to its destination width, rejecting a longer value.</summary>
-    private static OracleParameter Text(string name, string? value, int maxLength, string paramName)
+    /// <summary>Text input bound as <see cref="OracleDbType.Varchar2"/> with <c>Size</c> set to its destination width, rejecting a longer value on its Form item.</summary>
+    private static OracleParameter Text(string name, string item, string? value, int maxLength, string paramName)
     {
-        if (value is not null)
+        // A value over the field width in characters or UTF-8 bytes is rejected on its Form item, never truncated to fit (D-109).
+        if (value is not null && BoundedVarchar2.Rejection(item, item, value, maxLength, paramName) is { } rejection)
         {
-            // A value over the field width in characters or UTF-8 bytes is rejected, never truncated to fit (D-109).
-            string? rejection = null;
-            if (value.Length > maxLength)
-            {
-                rejection = $"Invoice header: {name} has {value.Length} characters; at most {maxLength} can be bound.";
-            }
-            else if (Encoding.UTF8.GetByteCount(value) is var bytes && bytes > maxLength)
-            {
-                rejection = $"Invoice header: {name} has {bytes} bytes in UTF-8; at most {maxLength} can be bound.";
-            }
-
-            if (rejection is not null)
-            {
-                var error = new ArgumentException(rejection, paramName);
-                error.Data[OracleFailureTranslator.BindingRejectionKey] = rejection;
-                throw error;
-            }
+            throw rejection;
         }
 
         var parameter = Input(name, OracleDbType.Varchar2, value);

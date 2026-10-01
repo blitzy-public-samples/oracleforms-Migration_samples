@@ -35,7 +35,9 @@ builder.Services
     })
     {
         ContentTypes = { "application/problem+json" },
-    });
+    })
+    // Leaves 4xx status-code results bodiless for the status-code pages below.
+    .ConfigureApiBehaviorOptions(o => o.SuppressMapClientErrors = true);
 
 builder.Services.AddInvoicingData(builder.Configuration);
 builder.Services.AddSingleton<ProblemDetailsWriter>();
@@ -59,6 +61,8 @@ var app = builder.Build();
 
 app.UseExceptionHandler(handler => handler.Run(context =>
     context.RequestServices.GetRequiredService<ProblemDetailsWriter>().WriteAsync(context)));
+// Writes the error-contract body of a bodiless 404, 405 or 415 under /api.
+app.UseStatusCodePages(status => status.HttpContext.RequestServices.GetRequiredService<ProblemDetailsWriter>().WriteAsync(status));
 app.UseCors();
 app.UseMiddleware<OperatorContextMiddleware>();
 app.MapControllers();

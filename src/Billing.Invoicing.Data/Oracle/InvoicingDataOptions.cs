@@ -23,6 +23,10 @@ public sealed record InvoicingDataOptions
     /// <summary>Base64 secret of at least 32 bytes that seals the draft date issued with each draft; empty uses a key of this instance only.</summary>
     public string DraftSealKey { get; init; } = "";
 
+    /// <summary>Whether <see cref="ConnectionString"/> holds an attribute: false when it is null, empty, or only white space and semicolons (D-162).</summary>
+    public bool HasConnectionString =>
+        ConnectionString is { } connectionString && !connectionString.All(character => char.IsWhiteSpace(character) || character == ';');
+
     /// <summary>Throws when <see cref="CommandTimeoutSeconds"/> is below 1 or above <see cref="MaxCommandTimeoutSeconds"/>.</summary>
     /// <param name="paramName">Name of the caller's options parameter, reported in the exception.</param>
     /// <exception cref="ArgumentOutOfRangeException"><see cref="CommandTimeoutSeconds"/> is below 1 or above <see cref="MaxCommandTimeoutSeconds"/>.</exception>

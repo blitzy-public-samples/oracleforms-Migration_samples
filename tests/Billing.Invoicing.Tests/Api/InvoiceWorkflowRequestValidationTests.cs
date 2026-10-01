@@ -332,14 +332,19 @@ public sealed class InvoiceWorkflowRequestValidationTests
     }
 
     [Fact]
-    public async Task GetLov_ReservNoWithoutDoctorOrDate_ReportsTheDoctorBindFirst()
+    [Trait("Decision", "D-49")]
+    public async Task GetLov_ReservNoWithoutDoctorOrDate_ReportsTheDoctorThenTheDateBind()
     {
         var ports = new FakePorts();
 
         var response = await Service(ports).GetLov("RESERV_NO", new Dictionary<string, string?> { ["PATIENTNO"] = "P1" }, null, Operator);
 
         Assert.NotNull(response);
-        AssertBlocking(response.Messages, "DOCIDX", "DOCIDX is required for the RESERV_NO list.");
+        Assert.Empty(response.Rows);
+        Assert.Collection(
+            response.Messages,
+            message => AssertBlocking(new[] { message }, "DOCIDX", "DOCIDX is required for the RESERV_NO list."),
+            message => AssertBlocking(new[] { message }, "INVDATE", "INVDATE is required for the RESERV_NO list."));
         Assert.Empty(ports.Calls);
     }
 
@@ -886,6 +891,258 @@ public sealed class InvoiceWorkflowRequestValidationTests
         await Service(ports).Create(request, Operator);
 
         Assert.Contains(nameof(IInvoiceQueries.GetClaimPreload), ports.Calls);
+    }
+
+    /// <summary>Header items over their Form widths in characters and in UTF-8 bytes, for validate and preview.</summary>
+    public static TheoryData<string, string, string, string> HeaderItemsOverTheirWidths => DraftOperations(
+        ("CURR_CODE", "SARX", "CURR_CODE has 4 characters; at most 3 can be bound."),
+        ("CURR_CODE", "\u00E9\u00E9", "CURR_CODE has 4 bytes in UTF-8; at most 3 can be bound."),
+        ("CLAIM_FLAG", "OOO", "CLAIM_FLAG has 3 characters; at most 2 can be bound."),
+        ("CLAIM_FLAG", "\u00E9\u00E9", "CLAIM_FLAG has 4 bytes in UTF-8; at most 2 can be bound."),
+        ("NOTE_NO", new string('N', 41), "NOTE_NO has 41 characters; at most 40 can be bound."),
+        ("NOTE_NO", new string('\u0627', 21), "NOTE_NO has 42 bytes in UTF-8; at most 40 can be bound."));
+
+    /// <summary>Line items over their Form widths in characters and in UTF-8 bytes, for validate and preview.</summary>
+    public static TheoryData<string, string, string, string> LineItemsOverTheirWidths => DraftOperations(
+        ("LDISCT", "VV", "LDISCT on line 1 has 2 characters; at most 1 can be bound."),
+        ("LDISCT", "\u00E9", "LDISCT on line 1 has 2 bytes in UTF-8; at most 1 can be bound."),
+        ("TEETH_NO", new string('1', 500), "TEETH_NO on line 1 has 500 characters; at most 2 can be bound."),
+        ("TEETH_NO", "\u00E9\u00E9", "TEETH_NO on line 1 has 4 bytes in UTF-8; at most 2 can be bound."),
+        ("TOOTH_SURFACE", "MODBLFXY", "TOOTH_SURFACE on line 1 has 8 characters; at most 7 can be bound."),
+        ("TOOTH_SURFACE", "\u00E9\u00E9\u00E9\u00E9", "TOOTH_SURFACE on line 1 has 8 bytes in UTF-8; at most 7 can be bound."),
+        ("TEETH_NO2", "123", "TEETH_NO2 on line 1 has 3 characters; at most 2 can be bound."),
+        ("TEETH_NO2", "\u00E9\u00E9", "TEETH_NO2 on line 1 has 4 bytes in UTF-8; at most 2 can be bound."),
+        ("APPROV_REF_NO", new string('R', 5000), "APPROV_REF_NO on line 1 has 5000 characters; at most 20 can be bound."),
+        ("APPROV_REF_NO", new string('\u00E9', 11), "APPROV_REF_NO on line 1 has 22 bytes in UTF-8; at most 20 can be bound."));
+
+    [Theory]
+    [Trait("Decision", "D-108")]
+    [MemberData(nameof(HeaderItemsOverTheirWidths))]
+    public async Task DraftRequest_HeaderItemOverItsWidth_WritesFieldValidation422OnTheItemWithoutReads(
+        string operation,
+        string item,
+        string value,
+        string text)
+    {
+        var ports = new FakePorts();
+        var draft = new DraftDto { Header = HeaderWith(item, value) };
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() => DraftRequest(Service(ports), operation, draft));
+        var written = await ProblemDetailsWriterTests.WriteHandled(error);
+
+        AssertWidthRefused(written, (item, text));
+        Assert.Empty(ports.Calls);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-108")]
+    [MemberData(nameof(LineItemsOverTheirWidths))]
+    public async Task DraftRequest_LineItemOverItsWidth_WritesFieldValidation422OnTheItemNamingTheLineWithoutReads(
+        string operation,
+        string item,
+        string value,
+        string text)
+    {
+        var ports = new FakePorts();
+        var draft = new DraftDto
+        {
+            Header = new InvoiceHeaderDraft { PatientNo = "P1" },
+            Lines = new[] { LineWith(item, value) },
+        };
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() => DraftRequest(Service(ports), operation, draft));
+        var written = await ProblemDetailsWriterTests.WriteHandled(error);
+
+        AssertWidthRefused(written, (item, text));
+        Assert.Empty(ports.Calls);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-108")]
+    [InlineData("validate")]
+    [InlineData("preview")]
+    public async Task DraftRequest_LineItemOverItsWidthAfterALineWithoutService_NamesTheDraftLine(string operation)
+    {
+        var ports = new FakePorts();
+        var draft = new DraftDto
+        {
+            Header = new InvoiceHeaderDraft { PatientNo = "P1" },
+            Lines = new[]
+            {
+                new InvoiceLineDraft { ServiceId = " ", Qty = 1m, ClientId = "C0" },
+                LineWith("TEETH_NO", "123"),
+            },
+        };
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() => DraftRequest(Service(ports), operation, draft));
+        var written = await ProblemDetailsWriterTests.WriteHandled(error);
+
+        AssertWidthRefused(written, ("TEETH_NO", "TEETH_NO on line 2 has 3 characters; at most 2 can be bound."));
+        Assert.Empty(ports.Calls);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-108")]
+    [InlineData('A')]
+    [InlineData('\u00E9')]
+    public async Task Preview_HeaderAndLineItemsAtTheirWidths_ProceedToTheReads(char character)
+    {
+        var ports = new FakePorts();
+        var draft = new DraftDto
+        {
+            Header = new InvoiceHeaderDraft
+            {
+                PatientNo = "P1",
+                CurrCode = AtWidth(character, 3),
+                ClaimFlag = AtWidth(character, 2),
+                NoteNo = AtWidth(character, 40),
+            },
+            Lines = new[]
+            {
+                new InvoiceLineDraft
+                {
+                    ServiceId = "S1",
+                    Qty = 1m,
+                    ClientId = "C1",
+                    DiscountType = AtWidth(character, 1),
+                    TeethNo = AtWidth(character, 2),
+                    ToothSurface = AtWidth(character, 7),
+                    TeethNo2 = AtWidth(character, 2),
+                    ApprovRefNo = AtWidth(character, 20),
+                },
+            },
+        };
+
+        var failure = await Record.ExceptionAsync(() => Service(ports).Preview(draft, Operator));
+
+        Assert.False(failure is ArgumentException { Data: var data } && data.Contains(ProblemDetailsWriter.MessagesDataKey));
+        Assert.NotEmpty(ports.Calls);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-108")]
+    public async Task Validate_EveryHeldItemOverItsWidth_WritesTheHeaderMessagesThenEachLineInItemOrder()
+    {
+        var ports = new FakePorts();
+        var overWidthLine = new InvoiceLineDraft
+        {
+            ServiceId = new string('S', 21),
+            Qty = 1m,
+            DiscountType = "VV",
+            TeethNo = "123",
+            ToothSurface = "MODBLFXY",
+            TeethNo2 = "123",
+            ApprovRefNo = new string('R', 21),
+        };
+        var request = new ValidateDraftRequest
+        {
+            Target = "RECORD",
+            Draft = new DraftDto
+            {
+                Header = new InvoiceHeaderDraft
+                {
+                    PatientNo = "P123456789012",
+                    CompCode = new string('C', 11),
+                    CurrCode = "SARX",
+                    ClaimFlag = "OOO",
+                    NoteNo = new string('N', 41),
+                },
+                Parameters = new InvoiceEntryParameters { ClaimNo = new string('C', 41), VisitUnique = new string('9', 40) },
+                Lines = new[] { overWidthLine with { ClientId = "C1" }, overWidthLine with { ClientId = "C2" } },
+            },
+        };
+        static (string Field, string Text)[] LineMessages(int line) =>
+        [
+            ("SERVICEID", $"SERVICEID on line {line} has 21 characters; at most 20 can be bound."),
+            ("LDISCT", $"LDISCT on line {line} has 2 characters; at most 1 can be bound."),
+            ("TEETH_NO", $"TEETH_NO on line {line} has 3 characters; at most 2 can be bound."),
+            ("TOOTH_SURFACE", $"TOOTH_SURFACE on line {line} has 8 characters; at most 7 can be bound."),
+            ("TEETH_NO2", $"TEETH_NO2 on line {line} has 3 characters; at most 2 can be bound."),
+            ("APPROV_REF_NO", $"APPROV_REF_NO on line {line} has 21 characters; at most 20 can be bound."),
+        ];
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() => Service(ports).Validate(request, Operator));
+        var written = await ProblemDetailsWriterTests.WriteHandled(error);
+
+        (string Field, string Text)[] header =
+        [
+            ("PATIENTNO", "PATIENTNO has 13 characters; at most 12 can be bound."),
+            ("CLAIM_NO", "CLAIM_NO has 41 characters; at most 40 can be bound."),
+            ("VISIT_UNIQUE", "VISIT_UNIQUE has 40 characters; at most 39 can be bound."),
+            ("COMP_CODE", "COMP_CODE has 11 characters; at most 10 can be bound."),
+            ("CURR_CODE", "CURR_CODE has 4 characters; at most 3 can be bound."),
+            ("CLAIM_FLAG", "CLAIM_FLAG has 3 characters; at most 2 can be bound."),
+            ("NOTE_NO", "NOTE_NO has 41 characters; at most 40 can be bound."),
+        ];
+        AssertWidthRefused(written, [.. header, .. LineMessages(1), .. LineMessages(2)]);
+        Assert.Empty(ports.Calls);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-108")]
+    [InlineData("CURR_CODE", 'C', 4, "CURR_CODE has 4 characters; at most 3 can be bound.")]
+    [InlineData("CLAIM_FLAG", 'O', 3, "CLAIM_FLAG has 3 characters; at most 2 can be bound.")]
+    [InlineData("NOTE_NO", 'N', 41, "NOTE_NO has 41 characters; at most 40 can be bound.")]
+    [InlineData("NOTE_NO", '\u0627', 21, "NOTE_NO has 42 bytes in UTF-8; at most 40 can be bound.")]
+    public async Task Create_HeaderItemOverItsWidth_WritesFieldValidation422OnTheItemBeforeAnyDraftRead(string item, char character, int length, string text)
+    {
+        var ports = new FakePorts();
+        var request = CreateRequest(HeaderWith(item, new string(character, length)), new InvoiceEntryParameters());
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() => Service(ports).Create(request, Operator));
+        var written = await ProblemDetailsWriterTests.WriteHandled(error);
+
+        AssertWidthRefused(written, (item, text));
+        Assert.Equal(nameof(IInvoiceQueries.GetCreateRequest), ports.Calls[0]);
+        Assert.DoesNotContain(nameof(IInvoiceQueries.GetClaimPreload), ports.Calls);
+        Assert.DoesNotContain(nameof(ILookupQueries.GetPatientCoverage), ports.Calls);
+        Assert.DoesNotContain(nameof(ILookupQueries.GetCompanyType), ports.Calls);
+        Assert.DoesNotContain(nameof(ILookupQueries.GetVisitDoctor), ports.Calls);
+        Assert.DoesNotContain(nameof(IOracleSessionFactory.Open), ports.Calls);
+    }
+
+    /// <summary>Returns each (item, value, text) case once per draft-carrying operation, validate first.</summary>
+    private static TheoryData<string, string, string, string> DraftOperations(params (string Item, string Value, string Text)[] cases)
+    {
+        var data = new TheoryData<string, string, string, string>();
+        foreach (var operation in new[] { "validate", "preview" })
+        {
+            foreach (var (item, value, text) in cases)
+            {
+                data.Add(operation, item, value, text);
+            }
+        }
+
+        return data;
+    }
+
+    private static InvoiceHeaderDraft HeaderWith(string item, string value) => item switch
+    {
+        "CURR_CODE" => new InvoiceHeaderDraft { PatientNo = "P1", CurrCode = value },
+        "CLAIM_FLAG" => new InvoiceHeaderDraft { PatientNo = "P1", ClaimFlag = value },
+        "NOTE_NO" => new InvoiceHeaderDraft { PatientNo = "P1", NoteNo = value },
+        _ => throw new ArgumentOutOfRangeException(nameof(item), item, null),
+    };
+
+    private static InvoiceLineDraft LineWith(string item, string value)
+    {
+        var line = new InvoiceLineDraft { ServiceId = "S1", Qty = 1m, ClientId = "C1" };
+        return item switch
+        {
+            "LDISCT" => line with { DiscountType = value },
+            "TEETH_NO" => line with { TeethNo = value },
+            "TOOTH_SURFACE" => line with { ToothSurface = value },
+            "TEETH_NO2" => line with { TeethNo2 = value },
+            "APPROV_REF_NO" => line with { ApprovRefNo = value },
+            _ => throw new ArgumentOutOfRangeException(nameof(item), item, null),
+        };
+    }
+
+    /// <summary>Returns a value of exactly <paramref name="width"/> UTF-8 bytes: the character repeated, completed with 'A' where it cannot fill the width.</summary>
+    private static string AtWidth(char character, int width)
+    {
+        var size = System.Text.Encoding.UTF8.GetByteCount(character.ToString());
+        return new string(character, width / size) + new string('A', width % size);
     }
 
     private static CreateInvoiceRequest CreateRequest(InvoiceHeaderDraft header, InvoiceEntryParameters parameters) => new()

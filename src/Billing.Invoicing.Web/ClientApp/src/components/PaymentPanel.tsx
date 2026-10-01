@@ -1,15 +1,19 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { Dispatch, KeyboardEvent } from 'react';
+import { decimalText } from '../api/client';
 import type { DecimalValue, DiscountLimitChoice, InvoiceHeaderDraft, MessageDto, ValidateTarget } from '../api/types';
 import { entryErrorFor, fieldErrorFor, parseDecimalEntry } from '../state/invoiceDraft';
 import type { InvoiceDraftAction, InvoiceDraftState } from '../state/invoiceDraft';
-import FieldMessage from './FieldMessage';
-import LovPicker from './LovPicker';
+import FieldMessage, { fieldMessageRefs } from './FieldMessage';
+import type { FieldMessageRefs } from './FieldMessage';
+import LovPicker, { inertBackground, readOnlyTextProps } from './LovPicker';
 
 type PaymentPanelProps = {
   state: InvoiceDraftState;
   dispatch: Dispatch<InvoiceDraftAction>;
   onValidate: (target: ValidateTarget) => void;
+  /** Validation targets queued or in flight; their fields are marked pending. */
+  busyTargets?: ReadonlySet<string>;
 };
 
 type PaymentLov = 'PAY_TYPE1' | 'PAY_TYPE2';
@@ -33,12 +37,17 @@ const DISC_T_VALUE = 0;
 
 const DISCOUNT_LIMIT_TITLE = 'Maximum Discount';
 
+const NO_TARGETS: ReadonlySet<string> = new Set();
+
 // Method-row size classes: a narrow three-character code, then name and amount sharing the rest and wrapping when narrow (D-124).
 const METHOD_CODE_CLASS = 'method-code';
 const METHOD_FILL_CLASS = 'method-fill';
 
-// Text shown for a value: '' for null or undefined, otherwise the value as returned.
+// Text shown for a value: '' for null or undefined, a number or text as returned (decimalText), otherwise the value as text.
 function show(value: unknown): string {
+  if (typeof value === 'number' || typeof value === 'string') {
+    return decimalText(value);
+  }
   return value == null ? '' : String(value);
 }
 
@@ -86,15 +95,17 @@ function feedbackFor(state: InvoiceDraftState, target: string): FieldFeedback {
 }
 
 type FeedbackProps = {
+  id: string;
   feedback: FieldFeedback;
   locked: boolean;
   dispatch: Dispatch<InvoiceDraftAction>;
 };
 
 // FieldMessage wired to dismiss each message at its originating source; no dismissal while locked.
-function Feedback({ feedback, locked, dispatch }: FeedbackProps) {
+function Feedback({ id, feedback, locked, dispatch }: FeedbackProps) {
   return (
     <FieldMessage
+      id={id}
       messages={feedback.messages}
       fieldError={feedback.fieldError}
       onDismiss={
@@ -115,9 +126,13 @@ type NumberInputProps = {
   id: string;
   ariaLabel?: string;
   value: DecimalValue | null;
+  /** Shown while the record holds no value and no operator text is shown; never written to the record. */
+  fallback?: unknown;
   locked: boolean;
   invalid: boolean;
   rejected: boolean;
+  messageRefs?: FieldMessageRefs;
+  pending?: boolean;
   sizeClass?: string;
   onEntry: (value: DecimalValue | null) => void;
   onRejected: (message: string) => void;
@@ -125,14 +140,17 @@ type NumberInputProps = {
   onChangedBlur?: () => void;
 };
 
-// Decimal text input that keeps the operator's text while focused or rejected, keeps a non-decimal entry out of the record, rejects it on blur and reports a changed value.
+// Decimal text input that keeps the operator's text while focused or rejected, keeps a non-decimal entry out of the record, rejects it on blur, reports a changed value and is marked while its validation is pending.
 function NumberInput({
   id,
   ariaLabel,
   value,
+  fallback,
   locked,
   invalid,
   rejected,
+  messageRefs,
+  pending = false,
   sizeClass,
   onEntry,
   onRejected,
@@ -141,20 +159,39 @@ function NumberInput({
 }: NumberInputProps) {
   const [text, setText] = useState<string | null>(null);
   const [focused, setFocused] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
   const focusValue = useRef<DecimalValue | null>(null);
   const editBase = useRef<{ value: DecimalValue | null } | null>(null);
-  const shown = !locked && (focused || rejected) && text !== null ? text : show(value);
+  const shown = !locked && (focused || rejected) && text !== null ? text : show(value != null ? value : fallback);
+
+  // A record value replaced while the field is focused and not yet typed into becomes the blur baseline and is selected for overtyping (D-145).
+  useLayoutEffect(() => {
+    const element = input.current;
+    if (!focused || locked || text !== null || element === null || Object.is(focusValue.current, value)) {
+      return;
+    }
+    focusValue.current = value;
+    if (document.activeElement === element) {
+      element.select();
+    }
+  }, [value, focused, locked, text]);
 
   return (
     <input
+      ref={input}
       id={id}
       type="text"
       inputMode="decimal"
       autoComplete="off"
       aria-label={ariaLabel}
       aria-invalid={invalid || undefined}
-      className={classes(sizeClass ?? false, locked && 'read-only', invalid && 'invalid')}
+      aria-describedby={messageRefs?.describedBy}
+      aria-errormessage={invalid ? messageRefs?.errorMessage : undefined}
+      aria-busy={pending || undefined}
+      className={classes(sizeClass ?? false, locked && 'read-only', invalid && 'invalid', pending && 'is-pending')}
       readOnly={locked}
+      tabIndex={locked ? -1 : undefined}
+      title={locked && shown !== '' ? shown : undefined}
       value={shown}
       onFocus={() => {
         focusValue.current = value;
@@ -210,11 +247,15 @@ type ReadOnlyTextProps = {
   ariaLabel?: string;
   value: unknown;
   invalid?: boolean;
+  messageRefs?: FieldMessageRefs;
+  pending?: boolean;
   sizeClass?: string;
+  freeText?: boolean;
 };
 
-// Read-only display of a value as held by the record.
-function ReadOnlyText({ id, ariaLabel, value, invalid = false, sizeClass }: ReadOnlyTextProps) {
+// Read-only display of a value as held by the record, marked while its validation is pending; a free-text value is a tab stop.
+function ReadOnlyText({ id, ariaLabel, value, invalid = false, messageRefs, pending = false, sizeClass, freeText = false }: ReadOnlyTextProps) {
+  const text = show(value);
   return (
     <input
       id={id}
@@ -222,8 +263,12 @@ function ReadOnlyText({ id, ariaLabel, value, invalid = false, sizeClass }: Read
       readOnly
       aria-label={ariaLabel}
       aria-invalid={invalid || undefined}
-      className={classes(sizeClass ?? false, 'read-only', invalid && 'invalid')}
-      value={show(value)}
+      aria-describedby={messageRefs?.describedBy}
+      aria-errormessage={invalid ? messageRefs?.errorMessage : undefined}
+      aria-busy={pending || undefined}
+      className={classes(sizeClass ?? false, 'read-only', invalid && 'invalid', pending && 'is-pending')}
+      value={text}
+      {...(freeText ? readOnlyTextProps(text) : { tabIndex: -1, title: text === '' ? undefined : text })}
     />
   );
 }
@@ -240,20 +285,36 @@ function DiscountPrompt({ text, returnFocusId, onChoose }: DiscountPromptProps) 
   const bodyId = useId();
   const maximumRef = useRef<HTMLButtonElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const backdropRef = useRef<HTMLDivElement>(null);
+  const releaseBackground = useRef<(() => void) | null>(null);
   const [opener] = useState(() =>
     document.activeElement instanceof HTMLElement && document.activeElement !== document.body
       ? document.activeElement
       : null,
   );
 
+  // Makes the page behind the alert inert while it is open.
+  useLayoutEffect(() => {
+    if (backdropRef.current === null) {
+      return undefined;
+    }
+    const release = inertBackground(backdropRef.current);
+    releaseBackground.current = release;
+    return release;
+  }, []);
+
   useEffect(() => {
     maximumRef.current?.focus();
   }, []);
 
-  // Returns focus to the control focused before the alert, else to the discount field the alert concerns.
+  // Returns focus to the discount field the alert concerns, else to the control focused before the alert.
   useEffect(
     () => () => {
-      const target = opener !== null && opener.isConnected ? opener : document.getElementById(returnFocusId);
+      if (backdropRef.current === null || !backdropRef.current.isConnected) {
+        releaseBackground.current?.();
+      }
+      const field = document.getElementById(returnFocusId);
+      const target = field !== null ? field : opener !== null && opener.isConnected ? opener : null;
       target?.focus();
     },
     [opener, returnFocusId],
@@ -280,6 +341,7 @@ function DiscountPrompt({ text, returnFocusId, onChoose }: DiscountPromptProps) 
 
   return (
     <div
+      ref={backdropRef}
       className="modal-backdrop"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) {
@@ -295,9 +357,9 @@ function DiscountPrompt({ text, returnFocusId, onChoose }: DiscountPromptProps) 
         aria-describedby={bodyId}
         onKeyDown={onKeyDown}
       >
-        <div className="modal-title" id={titleId}>
+        <h2 className="modal-title" id={titleId}>
           {DISCOUNT_LIMIT_TITLE}
-        </div>
+        </h2>
         <div className="modal-body" id={bodyId}>
           <span>{text}</span>
         </div>
@@ -315,7 +377,7 @@ function DiscountPrompt({ text, returnFocusId, onChoose }: DiscountPromptProps) 
 }
 
 /** Payment methods, amounts, final discount and the discount-limit prompt of the invoice. */
-export default function PaymentPanel({ state, dispatch, onValidate }: PaymentPanelProps) {
+export default function PaymentPanel({ state, dispatch, onValidate, busyTargets = NO_TARGETS }: PaymentPanelProps) {
   const baseId = useId();
   const [lov, setLov] = useState<PaymentLov | null>(null);
   const [pending, setPending] = useState<ValidateTarget[]>([]);
@@ -388,15 +450,18 @@ export default function PaymentPanel({ state, dispatch, onValidate }: PaymentPan
     queueValidation(prompt.target);
   };
 
-  // A saved or queried invoice shows only its saved view's refund; an unsaved draft falls back to its preview.
+  // A saved or queried invoice shows only its saved view's refund; an unsaved draft shows its preview's refund, else the validated one.
   const refund =
     state.saved !== null
       ? view !== null
         ? names.REUND
         : undefined
-      : names.REUND != null
-        ? names.REUND
-        : state.preview?.refund;
+      : state.preview !== null
+        ? state.preview.refund
+        : names.REUND;
+
+  // Amounts an unsaved draft's preview defaulted, shown while the operator has entered none (D-148).
+  const previewTotals = state.saved === null && state.preview !== null ? state.preview.totals : null;
 
   const discTFeedback = feedbackFor(state, 'DISC_T');
   const finalDiscPercFeedback = feedbackFor(state, 'FINALDISC_PERC');
@@ -423,15 +488,27 @@ export default function PaymentPanel({ state, dispatch, onValidate }: PaymentPan
     refund: `${baseId}-reund`,
   };
 
+  /** Base id of the messages shown for the field with id `fieldId`. */
+  const messageId = (fieldId: string): string => `${fieldId}-msg`;
+
+  /** Message ids the field with id `fieldId` references for `feedback`. */
+  const refsOf = (feedback: FieldFeedback, fieldId: string): FieldMessageRefs =>
+    fieldMessageRefs(messageId(fieldId), feedback.messages, feedback.fieldError);
+
   return (
     <div className="payment-panel" role="group" aria-labelledby={ids.title}>
-      <div className="panel-title" id={ids.title}>
+      <div className="panel-title" role="heading" aria-level={2} id={ids.title}>
         Payment
       </div>
 
       <div className="field">
         <span id={ids.discT} className="field-caption">Discount Type</span>
-        <div className="field-row" role="radiogroup" aria-labelledby={ids.discT}>
+        <div
+          className="field-row choice-group"
+          role="radiogroup"
+          aria-labelledby={ids.discT}
+          aria-describedby={refsOf(discTFeedback, ids.discT).describedBy}
+        >
           <label>
             <input
               type="radio"
@@ -457,7 +534,7 @@ export default function PaymentPanel({ state, dispatch, onValidate }: PaymentPan
             Value Disc
           </label>
         </div>
-        <Feedback feedback={discTFeedback} locked={locked} dispatch={dispatch} />
+        <Feedback id={messageId(ids.discT)} feedback={discTFeedback} locked={locked} dispatch={dispatch} />
       </div>
 
       <div className="field">
@@ -470,6 +547,8 @@ export default function PaymentPanel({ state, dispatch, onValidate }: PaymentPan
             locked={locked}
             invalid={finalDiscPercFeedback.invalid}
             rejected={finalDiscPercFeedback.rejected}
+            messageRefs={refsOf(finalDiscPercFeedback, ids.finalDiscPerc)}
+            pending={busyTargets.has('FINALDISC_PERC')}
             onEntry={(value) => setField('finalDiscPerc', value)}
             onRejected={rejectEntry('FINALDISC_PERC')}
             onAccepted={acceptEntry('FINALDISC_PERC')}
@@ -482,14 +561,16 @@ export default function PaymentPanel({ state, dispatch, onValidate }: PaymentPan
             locked={locked}
             invalid={finalDiscFeedback.invalid}
             rejected={finalDiscFeedback.rejected}
+            messageRefs={refsOf(finalDiscFeedback, ids.finalDisc)}
+            pending={busyTargets.has('FINALDISC')}
             onEntry={(value) => setField('finalDisc', value)}
             onRejected={rejectEntry('FINALDISC')}
             onAccepted={acceptEntry('FINALDISC')}
             onChangedBlur={() => onValidate('FINALDISC')}
           />
         </div>
-        <Feedback feedback={finalDiscPercFeedback} locked={locked} dispatch={dispatch} />
-        <Feedback feedback={finalDiscFeedback} locked={locked} dispatch={dispatch} />
+        <Feedback id={messageId(ids.finalDiscPerc)} feedback={finalDiscPercFeedback} locked={locked} dispatch={dispatch} />
+        <Feedback id={messageId(ids.finalDisc)} feedback={finalDiscFeedback} locked={locked} dispatch={dispatch} />
       </div>
 
       <div className="field">
@@ -499,6 +580,8 @@ export default function PaymentPanel({ state, dispatch, onValidate }: PaymentPan
             id={ids.subPayType}
             value={header?.subPayType}
             invalid={subPayTypeFeedback.invalid}
+            messageRefs={refsOf(subPayTypeFeedback, ids.subPayType)}
+            pending={busyTargets.has('SUB_PAYTYPE')}
             sizeClass={METHOD_CODE_CLASS}
           />
           <ReadOnlyText
@@ -506,6 +589,7 @@ export default function PaymentPanel({ state, dispatch, onValidate }: PaymentPan
             ariaLabel="Method 1 name"
             value={names.SUB_PAYTYPE_NAME}
             sizeClass={METHOD_FILL_CLASS}
+            freeText
           />
           <button
             type="button"
@@ -520,9 +604,12 @@ export default function PaymentPanel({ state, dispatch, onValidate }: PaymentPan
             id={ids.amount1}
             ariaLabel="Amount 1"
             value={header?.amount1 ?? null}
+            fallback={previewTotals?.amount1}
             locked={locked}
             invalid={amount1Feedback.invalid}
             rejected={amount1Feedback.rejected}
+            messageRefs={refsOf(amount1Feedback, ids.amount1)}
+            pending={busyTargets.has('AMOUNT_1')}
             sizeClass={METHOD_FILL_CLASS}
             onEntry={(value) => setField('amount1', value)}
             onRejected={rejectEntry('AMOUNT_1')}
@@ -530,8 +617,8 @@ export default function PaymentPanel({ state, dispatch, onValidate }: PaymentPan
             onChangedBlur={() => onValidate('AMOUNT_1')}
           />
         </div>
-        <Feedback feedback={subPayTypeFeedback} locked={locked} dispatch={dispatch} />
-        <Feedback feedback={amount1Feedback} locked={locked} dispatch={dispatch} />
+        <Feedback id={messageId(ids.subPayType)} feedback={subPayTypeFeedback} locked={locked} dispatch={dispatch} />
+        <Feedback id={messageId(ids.amount1)} feedback={amount1Feedback} locked={locked} dispatch={dispatch} />
       </div>
 
       <div className="field">
@@ -541,6 +628,7 @@ export default function PaymentPanel({ state, dispatch, onValidate }: PaymentPan
             id={ids.subPayType2}
             value={header?.subPayType2}
             invalid={subPayType2Feedback.invalid}
+            messageRefs={refsOf(subPayType2Feedback, ids.subPayType2)}
             sizeClass={METHOD_CODE_CLASS}
           />
           <ReadOnlyText
@@ -548,6 +636,7 @@ export default function PaymentPanel({ state, dispatch, onValidate }: PaymentPan
             ariaLabel="Method 2 name"
             value={names.SUB_PAYTYPE2_NAME}
             sizeClass={METHOD_FILL_CLASS}
+            freeText
           />
           <button
             type="button"
@@ -562,9 +651,12 @@ export default function PaymentPanel({ state, dispatch, onValidate }: PaymentPan
             id={ids.amount2}
             ariaLabel="Amount 2"
             value={header?.amount2 ?? null}
+            fallback={previewTotals?.amount2}
             locked={locked}
             invalid={amount2Feedback.invalid}
             rejected={amount2Feedback.rejected}
+            messageRefs={refsOf(amount2Feedback, ids.amount2)}
+            pending={busyTargets.has('AMOUNT_2')}
             sizeClass={METHOD_FILL_CLASS}
             onEntry={(value) => setField('amount2', value)}
             onRejected={rejectEntry('AMOUNT_2')}
@@ -572,8 +664,8 @@ export default function PaymentPanel({ state, dispatch, onValidate }: PaymentPan
             onChangedBlur={() => onValidate('AMOUNT_2')}
           />
         </div>
-        <Feedback feedback={subPayType2Feedback} locked={locked} dispatch={dispatch} />
-        <Feedback feedback={amount2Feedback} locked={locked} dispatch={dispatch} />
+        <Feedback id={messageId(ids.subPayType2)} feedback={subPayType2Feedback} locked={locked} dispatch={dispatch} />
+        <Feedback id={messageId(ids.amount2)} feedback={amount2Feedback} locked={locked} dispatch={dispatch} />
       </div>
 
       <div className="field">
@@ -584,17 +676,23 @@ export default function PaymentPanel({ state, dispatch, onValidate }: PaymentPan
           locked={locked}
           invalid={cashPayedFeedback.invalid}
           rejected={cashPayedFeedback.rejected}
+          messageRefs={refsOf(cashPayedFeedback, ids.cashPayed)}
           onEntry={(value) => setField('cashPayed', value)}
           onRejected={rejectEntry('CASH_PAYED')}
           onAccepted={acceptEntry('CASH_PAYED')}
         />
-        <Feedback feedback={cashPayedFeedback} locked={locked} dispatch={dispatch} />
+        <Feedback id={messageId(ids.cashPayed)} feedback={cashPayedFeedback} locked={locked} dispatch={dispatch} />
       </div>
 
       <div className="field">
         <label htmlFor={ids.refund}>Refund</label>
-        <ReadOnlyText id={ids.refund} value={refund} invalid={refundFeedback.invalid} />
-        <Feedback feedback={refundFeedback} locked={locked} dispatch={dispatch} />
+        <ReadOnlyText
+          id={ids.refund}
+          value={refund}
+          invalid={refundFeedback.invalid}
+          messageRefs={refsOf(refundFeedback, ids.refund)}
+        />
+        <Feedback id={messageId(ids.refund)} feedback={refundFeedback} locked={locked} dispatch={dispatch} />
       </div>
 
       {lov !== null && !locked && (

@@ -34,7 +34,7 @@ public static class PatientEligibilityRules
     /// <summary>Evaluates the contract, company, card, policy and class checks of the patient's coverage.</summary>
     /// <param name="coverage">Coverage snapshot read from <c>V_PAT_DATA</c> for a nonblank patient; null when <c>V_PAT_DATA</c> has no row.</param>
     /// <param name="parameters">Entry parameters; <c>INV_DATE_ADMIN</c> and <c>CASH_OR_CREDIT</c> are read.</param>
-    /// <param name="draftDate">The draft's invoice date and time (<c>INVDATE</c>).</param>
+    /// <param name="draftDate">The draft's invoice date (<c>INVDATE</c>); its time of day is not compared.</param>
     /// <returns>The single blocking FRM-40735 message when the row is missing; otherwise messages on <c>PATIENTNO</c> in legacy order, ending at the first blocking message; no adjusted values.</returns>
     public static RuleResult Evaluate(PatientCoverageSnapshot? coverage, InvoiceEntryParameters parameters, DateTime draftDate)
     {
@@ -50,9 +50,10 @@ public static class PatientEligibilityRules
             return RuleResult.Empty;
         }
 
+        var date = draftDate.Date;
         var messages = new List<ValidationMessage>();
 
-        if (coverage.ContractEnd is { } contractEnd && contractEnd < draftDate)
+        if (coverage.ContractEnd is { } contractEnd && contractEnd < date)
         {
             var text = ContractEnded + Format(contractEnd);
             if (parameters.InvDateAdmin == NormalUser)
@@ -75,7 +76,7 @@ public static class PatientEligibilityRules
 
         if (coverage.CardEnd is { } cardEnd)
         {
-            if (cardEnd < draftDate)
+            if (cardEnd < date)
             {
                 var text = CardExpired + Format(cardEnd);
                 if (parameters.InvDateAdmin == NormalUser)
@@ -85,7 +86,7 @@ public static class PatientEligibilityRules
 
                 messages.Add(Warning(text + DateAdminSuffix));
             }
-            else if (cardEnd == draftDate)
+            else if (cardEnd == date)
             {
                 messages.Add(Warning(CardExpired + Format(cardEnd) + TodayLastDate));
             }
@@ -93,7 +94,7 @@ public static class PatientEligibilityRules
 
         if (!string.IsNullOrEmpty(coverage.SubCompCode))
         {
-            if (coverage.SubCompanyContractEnd is { } policyEnd && policyEnd < draftDate)
+            if (coverage.SubCompanyContractEnd is { } policyEnd && policyEnd < date)
             {
                 var text = PolicyEnded + Format(policyEnd);
                 if (parameters.InvDateAdmin != DateAdminUser)

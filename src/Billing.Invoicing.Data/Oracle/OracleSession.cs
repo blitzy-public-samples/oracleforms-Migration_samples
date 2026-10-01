@@ -259,20 +259,23 @@ public sealed class OracleSession : IOracleSession
     /// <param name="operation">Name of the call, used in the timeout message.</param>
     /// <param name="deadline">Time the call may take.</param>
     /// <param name="call">Starts the call with a token that is cancelled when the deadline expires or the caller cancels.</param>
-    /// <param name="onAbandoned">Receives the call's task when it is still running after its token was cancelled.</param>
+    /// <param name="onAbandoned">Receives the call's task when it is still running after its token was cancelled or <paramref name="released"/> completed.</param>
     /// <param name="cancellationToken">Cancels the call.</param>
+    /// <param name="released">Completes with another call's failure to stop waiting for this call, leaving its token uncancelled; null waits only for the call, the deadline and the caller.</param>
     /// <exception cref="ArgumentException"><paramref name="operation"/> is null, empty or white space.</exception>
     /// <exception cref="ArgumentNullException"><paramref name="call"/> or <paramref name="onAbandoned"/> is null.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="deadline"/> is not above zero or exceeds <see cref="MaxDeadline"/>.</exception>
     /// <exception cref="InvalidOperationException"><paramref name="call"/> returned no task.</exception>
     /// <exception cref="TimeoutException">The call did not complete within <paramref name="deadline"/>.</exception>
     /// <exception cref="OperationCanceledException">The caller cancelled while the call was still running.</exception>
+    /// <exception cref="OracleOpenReleasedException"><paramref name="released"/> completed while the call was still running; its inner exception is the failure it completed with.</exception>
     internal static async Task RunWithinDeadline(
         string operation,
         TimeSpan deadline,
         Func<CancellationToken, Task> call,
         Action<Task> onAbandoned,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Task<Exception>? released = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(operation);
         EnsureDeadline(deadline, nameof(deadline));
@@ -285,7 +288,18 @@ public sealed class OracleSession : IOracleSession
 
         try
         {
-            await pending.WaitAsync(deadline, cancellationToken).ConfigureAwait(false);
+            if (released is null)
+            {
+                await pending.WaitAsync(deadline, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            await Task.WhenAny(pending, released).WaitAsync(deadline, cancellationToken).ConfigureAwait(false);
+            if (pending.IsCompleted)
+            {
+                await pending.ConfigureAwait(false);
+                return;
+            }
         }
         catch (Exception waitFailure)
         {
@@ -318,6 +332,9 @@ public sealed class OracleSession : IOracleSession
 
             ExceptionDispatchInfo.Throw(outcome);
         }
+
+        onAbandoned(pending);
+        throw new OracleOpenReleasedException(released.IsCompletedSuccessfully ? released.Result : FailureOf(released));
     }
 
     /// <summary>Attempts rollback and releases the transaction and connection within deadlines, deferring unfinished operations (D-89).</summary>
@@ -431,7 +448,8 @@ public sealed class OracleSession : IOracleSession
     /// <summary>Throws when a deadline is not above zero or exceeds <see cref="MaxDeadline"/>.</summary>
     /// <param name="deadline">The deadline to check.</param>
     /// <param name="paramName">Name of the caller's deadline parameter, reported in the exception.</param>
-    private static void EnsureDeadline(TimeSpan deadline, string paramName)
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="deadline"/> is not above zero or exceeds <see cref="MaxDeadline"/>.</exception>
+    internal static void EnsureDeadline(TimeSpan deadline, string paramName)
     {
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(deadline, TimeSpan.Zero, paramName);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(deadline, MaxDeadline, paramName);
@@ -502,5 +520,16 @@ public sealed class OracleSession : IOracleSession
                 // A disposal failure is dropped.
             }
         }
+    }
+}
+
+/// <summary>Ends a connection open that stopped waiting because another open of the same connection string failed; that failure is the inner exception (D-161).</summary>
+internal sealed class OracleOpenReleasedException : InvalidOperationException
+{
+    /// <summary>Wraps the failure of the other open.</summary>
+    /// <param name="peerFailure">The failure that released this open.</param>
+    internal OracleOpenReleasedException(Exception peerFailure)
+        : base("The Oracle connection open stopped waiting because another open of the same connection string failed.", peerFailure)
+    {
     }
 }

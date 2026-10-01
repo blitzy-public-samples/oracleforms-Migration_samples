@@ -1,19 +1,29 @@
 import { useEffect, useRef } from 'react';
-import type { MessageDto } from '../api/types';
+import type { MessageDto, MessageSeverity } from '../api/types';
+
+type FieldError = { text: string; oracleErrorNumber: number | null };
 
 type FieldMessageProps = {
+  /** Base of the rendered message ids that `fieldMessageRefs` returns. */
+  id?: string;
   messages: MessageDto[];
-  fieldError?: { text: string; oracleErrorNumber: number | null } | null;
+  fieldError?: FieldError | null;
   onDismiss?: (index: number) => void;
 };
+
+/** Ids a control references for its messages: every message's label and text, and the blocking messages with the field error. */
+export type FieldMessageRefs = { describedBy: string | undefined; errorMessage: string | undefined };
 
 const ANNOUNCE_DELAY_MS = 100;
 const ANNOUNCE_CLEAR_MS = 7000;
 
+/** Visible severity word of each message severity. */
+const SEVERITY_WORDS: Record<MessageSeverity, string> = { Blocking: 'Error', Warning: 'Warning' };
+
 /** Enabled entry controls a dismissal can return focus to. */
 const CONTROL = 'input:not(:disabled):not([type="hidden"]), select:not(:disabled), textarea:not(:disabled)';
 
-/** The page-level polite region that announces warnings. */
+/** The page-level polite region that announces warnings and other `announce` texts. */
 let politeRegion: HTMLDivElement | null = null;
 
 /** Warning messages already announced by any rendered copy. */
@@ -38,12 +48,12 @@ function liveRegion(): HTMLDivElement {
 function announceOnce(message: MessageDto): void {
   if (!announcedMessages.has(message)) {
     announcedMessages.add(message);
-    announce(message.text);
+    announce(`${SEVERITY_WORDS[message.severity]}: ${message.text}`);
   }
 }
 
 /** Adds the text to the polite region after a short delay and removes it again after a few seconds. */
-function announce(text: string): void {
+export function announce(text: string): void {
   const region = liveRegion();
   window.setTimeout(() => {
     for (const child of Array.from(region.children)) {
@@ -94,8 +104,37 @@ function returnFocusAfterDismiss(button: HTMLElement): void {
   }, 0);
 }
 
+/** Severity word badge shown before a message's text. */
+export function SeverityLabel({ severity, id }: { severity: MessageSeverity; id?: string }) {
+  return (
+    <span id={id} className={severity === 'Blocking' ? 'msg-severity msg-severity-blocking' : 'msg-severity msg-severity-warning'}>
+      {SEVERITY_WORDS[severity]}
+    </span>
+  );
+}
+
+/** Returns the message ids FieldMessage renders under `id` for a control's aria-describedby and aria-errormessage. */
+export function fieldMessageRefs(id: string, messages: readonly MessageDto[], fieldError?: FieldError | null): FieldMessageRefs {
+  const described: string[] = [];
+  const errors: string[] = [];
+  messages.forEach((message, index) => {
+    described.push(`${id}-${index}-severity`, `${id}-${index}-text`);
+    if (message.severity === 'Blocking') {
+      errors.push(`${id}-${index}`);
+    }
+  });
+  if (fieldError != null) {
+    described.push(`${id}-error`);
+    errors.push(`${id}-error`);
+  }
+  return {
+    describedBy: described.length === 0 ? undefined : described.join(' '),
+    errorMessage: errors.length === 0 ? undefined : errors.join(' '),
+  };
+}
+
 /** Renders one field's blocking and warning messages and its mapped Oracle error. */
-export default function FieldMessage({ messages, fieldError, onDismiss }: FieldMessageProps) {
+export default function FieldMessage({ id, messages, fieldError, onDismiss }: FieldMessageProps) {
   const seen = useRef(new Set<string>());
   const warningNodes = useRef(new Map<number, HTMLDivElement>());
 
@@ -154,17 +193,23 @@ export default function FieldMessage({ messages, fieldError, onDismiss }: FieldM
     return null;
   }
 
+  /** The element id `${id}-${suffix}`, or undefined without an id. */
+  const partId = (suffix: string): string | undefined => (id === undefined ? undefined : `${id}-${suffix}`);
+
   return (
     <>
       {messages.map((message, index) =>
         message.severity === 'Blocking' ? (
-          <div key={index} className="msg msg-blocking" role="alert">
-            <span>{message.text}</span>
+          <div key={index} id={partId(String(index))} className="msg msg-blocking" role="alert">
+            <SeverityLabel severity="Blocking" id={partId(`${index}-severity`)} />{' '}
+            <span id={partId(`${index}-text`)}>{message.text}</span>
           </div>
         ) : (
           <div
             key={index}
+            id={partId(String(index))}
             className="msg msg-warning"
+            role="note"
             ref={(node) => {
               if (node === null) {
                 warningNodes.current.delete(index);
@@ -173,7 +218,8 @@ export default function FieldMessage({ messages, fieldError, onDismiss }: FieldM
               }
             }}
           >
-            <span>{message.text}</span>
+            <SeverityLabel severity="Warning" id={partId(`${index}-severity`)} />{' '}
+            <span id={partId(`${index}-text`)}>{message.text}</span>
             {onDismiss !== undefined && (
               <button
                 type="button"
@@ -191,7 +237,8 @@ export default function FieldMessage({ messages, fieldError, onDismiss }: FieldM
         ),
       )}
       {fieldError != null && (
-        <div className="msg msg-blocking" role="alert">
+        <div id={partId('error')} className="msg msg-blocking" role="alert">
+          <SeverityLabel severity="Blocking" />{' '}
           {fieldError.oracleErrorNumber != null && (
             <span className="oracle-number">
               {`ORA-${String(Math.abs(fieldError.oracleErrorNumber)).padStart(5, '0')}`}

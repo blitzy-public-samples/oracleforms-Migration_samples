@@ -1,6 +1,6 @@
 /** JSON shapes sent to and received from the Billing.Invoicing.Api host; dates are ISO 8601 strings. */
 
-/** A decimal returned as a number or entered as numeric text. */
+/** A decimal as a number, or as its exact text when returned or entered as text (D-149). */
 export type DecimalValue = number | string;
 
 /** Invoice header draft: the T_INV fields of BIL_INVOICE_ENGINE.t_header_input in spec order, then the Form-only header items. */
@@ -142,9 +142,9 @@ export interface InvoiceLineDraft {
   /** D_INV.OFFER_PARENT_LINE_ID. */
   offerParentLineId: number | null;
   /** D_INV.OFFER_PRICE_APPLIED. */
-  offerPriceApplied: number | null;
+  offerPriceApplied: DecimalValue | null;
   /** D_INV.OFFER_DIS_APPLIED. */
-  offerDisApplied: number | null;
+  offerDisApplied: DecimalValue | null;
   /** D_INV.OFFER_NAME_SNAPSHOT. */
   offerNameSnapshot: string | null;
   /** D_INV.OFFER_OBJECT_VERSION_NUMBER. */
@@ -154,13 +154,13 @@ export interface InvoiceLineDraft {
   /** Client-side line id; t_client_id_tab entry. */
   clientId: string | null;
   /** D_INV.PRICE as displayed from an LOV, an import or a preview. */
-  price: number | null;
+  price: DecimalValue | null;
   /** D_INV.CATID; selectable in a draft and returned by preview, but omitted from package input (OI-33). */
   catId?: number | null;
   /** D_INV.FIXPAY. Display only; not saved (OI-33). Absent from a DraftDto line. */
-  fixPay?: number | null;
+  fixPay?: DecimalValue | null;
   /** D_INV.PAYRATE. Display only; not saved (OI-33). Absent from a DraftDto line. */
-  payRate?: number | null;
+  payRate?: DecimalValue | null;
   /** D_INV.REGULAR_LENSES_TYPE. Display only; not saved (OI-33). Absent from a DraftDto line. */
   regularLensesType?: string | null;
   /** D_INV.LENS_SPECIFICATIONS. Display only; not saved (OI-33). Absent from a DraftDto line. */
@@ -208,11 +208,11 @@ export interface InvoiceEntryParameters {
   /** PARAMETER.X422_APPROV_CHECK. */
   x422ApprovCheck: number | null;
   /** PARAMETER.DEDUCT_RATE. */
-  deductRate: number | null;
+  deductRate: DecimalValue | null;
   /** PARAMETER.DEDUCT_FIXED. */
-  deductFixed: number | null;
+  deductFixed: DecimalValue | null;
   /** PARAMETER.DIRECT_COMP_SHARE. */
-  directCompShare: number | null;
+  directCompShare: DecimalValue | null;
   /** PARAMETER.LOCAL_DOC_TYPE. */
   localDocType: number;
   /** PARAMETER.VISIT_UNIQUE. */
@@ -264,9 +264,9 @@ export interface PatientCoverageSnapshot {
   /** Patient VAT flag. */
   payVat: string | null;
   /** Maximum deductible amount. */
-  maxDeductable: number | null;
+  maxDeductable: DecimalValue | null;
   /** Approval level. */
-  approvLvl: number | null;
+  approvLvl: DecimalValue | null;
   /** Patient policy number (PAT_POLICY_NO). */
   patPolicyNo: string | null;
   /** Insurance number (INS_NUMBER). */
@@ -299,27 +299,27 @@ export interface PreviewTotals {
   /** line_count. */
   lineCount: number | null;
   /** total_gross. */
-  totalGross: number | null;
+  totalGross: DecimalValue | null;
   /** total_discount. */
-  totalDiscount: number | null;
+  totalDiscount: DecimalValue | null;
   /** total_net. */
-  totalNet: number | null;
+  totalNet: DecimalValue | null;
   /** pat_pay, patient share before VAT. */
-  patPay: number | null;
+  patPay: DecimalValue | null;
   /** comp_pay, company share before VAT. */
-  compPay: number | null;
+  compPay: DecimalValue | null;
   /** vat_total_pat. */
-  vatTotalPat: number | null;
+  vatTotalPat: DecimalValue | null;
   /** vat_total_co. */
-  vatTotalCo: number | null;
+  vatTotalCo: DecimalValue | null;
   /** cash_collected, amount due from the patient. */
-  cashCollected: number | null;
+  cashCollected: DecimalValue | null;
   /** amount_1. */
-  amount1: number | null;
+  amount1: DecimalValue | null;
   /** amount_2. */
-  amount2: number | null;
+  amount2: DecimalValue | null;
   /** remaining_amount; negative when overpaid. */
-  remainingAmount: number | null;
+  remainingAmount: DecimalValue | null;
   /** payment_status. */
   paymentStatus: PaymentStatus | string | null;
 }
@@ -351,45 +351,45 @@ export interface EditablePreviewLine {
   /** catid. */
   catId: number | null;
   /** list_id, the line's price list. */
-  listId: number | null;
+  listId: DecimalValue | null;
   /** curr_code. */
   currCode: string | null;
   /** qty. */
-  qty: number | null;
+  qty: DecimalValue | null;
   /** price. */
-  price: number | null;
+  price: DecimalValue | null;
   /** plan_discount_pct. */
-  planDiscountPct: number | null;
+  planDiscountPct: DecimalValue | null;
   /** plan_discount_amount. */
-  planDiscountAmount: number | null;
+  planDiscountAmount: DecimalValue | null;
   /** manual_discount_type. */
   manualDiscountType: string | null;
   /** manual_discount_pct. */
-  manualDiscountPct: number | null;
+  manualDiscountPct: DecimalValue | null;
   /** manual_discount_amount. */
-  manualDiscountAmount: number | null;
+  manualDiscountAmount: DecimalValue | null;
   /** discount_source. */
   discountSource: string | null;
   /** disc. */
-  disc: number | null;
+  disc: DecimalValue | null;
   /** my_disc. */
-  myDisc: number | null;
+  myDisc: DecimalValue | null;
   /** my_price. */
-  myPrice: number | null;
+  myPrice: DecimalValue | null;
   /** my_net. */
-  myNet: number | null;
+  myNet: DecimalValue | null;
   /** the_pay, patient share. */
-  thePay: number | null;
+  thePay: DecimalValue | null;
   /** the_comp, company share. */
-  theComp: number | null;
+  theComp: DecimalValue | null;
   /** vat_rate. */
-  vatRate: number | null;
+  vatRate: DecimalValue | null;
   /** vat_val_pat. */
-  vatValPat: number | null;
+  vatValPat: DecimalValue | null;
   /** vat_val_co. */
-  vatValCo: number | null;
+  vatValCo: DecimalValue | null;
   /** vat_val_pat_ex. */
-  vatValPatEx: number | null;
+  vatValPatEx: DecimalValue | null;
   /** req_need_a. */
   reqNeedA: number | null;
   /** req_a_status. */
@@ -425,9 +425,9 @@ export interface EditablePreviewLine {
   /** offer_parent_line_id. */
   offerParentLineId: number | null;
   /** offer_price_applied. */
-  offerPriceApplied: number | null;
+  offerPriceApplied: DecimalValue | null;
   /** offer_dis_applied. */
-  offerDisApplied: number | null;
+  offerDisApplied: DecimalValue | null;
   /** offer_name_snapshot. */
   offerNameSnapshot: string | null;
   /** offer_object_version_number. */
@@ -613,6 +613,9 @@ export type AdjustedKey =
   | 'FINALDISC'
   | 'DISC_T'
   | 'DOCIDX'
+  | 'CLINICID'
+  | 'CLINICNAME'
+  | 'DOC_NAME'
   | 'LDISCT';
 
 /** Item values changed by the server, keyed by upper-case legacy item name. */
@@ -626,6 +629,8 @@ export interface NewDraftResponse {
   messages: MessageDto[];
   /** Advisory open-item ids. */
   openItems: string[];
+  /** Display names of the preset doctor and clinic by upper-case item name. */
+  display?: Readonly<Record<string, string | null>> | null;
 }
 
 /** Response of POST /api/drafts/validate. */
@@ -669,9 +674,9 @@ export interface PreviewResponse {
   /** Package totals and payment status. */
   totals: PreviewTotals;
   /** Refund to the patient (REUND). */
-  refund: number;
+  refund: DecimalValue;
   /** Amount 1 plus amount 2 (CASH_COLLECTED item). */
-  totalCollected: number;
+  totalCollected: DecimalValue;
   /** Messages returned with the preview. */
   messages: MessageDto[];
   /** Advisory open-item ids. */

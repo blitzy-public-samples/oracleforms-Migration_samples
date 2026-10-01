@@ -64,12 +64,17 @@ public sealed class HeaderRecordRulesTests
         Assert.False(result.IsBlocking);
     }
 
-    /// <summary>An empty patient number yields the T014 PATIENTNO blocking message, as a null one does.</summary>
-    [Fact]
+    /// <summary>An empty or white-space patient number yields the T014 PATIENTNO blocking message, as a null one does.</summary>
+    /// <param name="patientNo">Empty or white-space patient number.</param>
+    [Theory]
     [Trait("Rule", RecordRuleId)]
-    public void ValidateRecord_treats_an_empty_patient_number_as_missing()
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("   ")]
+    [InlineData("\t")]
+    public void ValidateRecord_treats_an_empty_or_white_space_patient_number_as_missing(string patientNo)
     {
-        var header = new InvoiceHeaderDraft { PayType = 1, CompCode = "0", PatientNo = string.Empty, DocId = 10 };
+        var header = new InvoiceHeaderDraft { PayType = 1, CompCode = "0", PatientNo = patientNo, DocId = 10 };
 
         var result = HeaderRecordRules.ValidateRecord(header);
 

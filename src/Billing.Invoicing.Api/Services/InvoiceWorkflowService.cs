@@ -36,6 +36,9 @@ public sealed class InvoiceWorkflowService
     private const string PayTypeItem = "PAYTYPE";
     private const string SubPayTypeItem = "SUB_PAYTYPE";
     private const string DocIdItem = "DOCIDX";
+    private const string ClinicIdItem = "CLINICID";
+    private const string ClinicNameItem = "CLINICNAME";
+    private const string DocNameItem = "DOC_NAME";
     private const string ClaimNoItem = "CLAIM_NO";
     private const string AddToListItem = "ADD_TO_LIST";
     private const string Amount2Item = "AMOUNT_2";
@@ -52,6 +55,22 @@ public sealed class InvoiceWorkflowService
     private const int CompCodeBytes = 10;
     private const int SubCompCodeBytes = 10;
     private const int ServiceIdBytes = 20;
+    private const string CurrCodeItem = "CURR_CODE";
+    private const string ClaimFlagItem = "CLAIM_FLAG";
+    private const string NoteNoItem = "NOTE_NO";
+    private const string DiscountTypeItem = "LDISCT";
+    private const string TeethNoItem = "TEETH_NO";
+    private const string ToothSurfaceItem = "TOOTH_SURFACE";
+    private const string TeethNo2Item = "TEETH_NO2";
+    private const string ApprovRefNoItem = "APPROV_REF_NO";
+    private const int CurrCodeBytes = 3;
+    private const int ClaimFlagBytes = 2;
+    private const int NoteNoBytes = 40;
+    private const int DiscountTypeBytes = 1;
+    private const int TeethNoBytes = 2;
+    private const int ToothSurfaceBytes = 7;
+    private const int TeethNo2Bytes = 2;
+    private const int ApprovRefNoBytes = 20;
     private const string InvDateItem = "INVDATE";
     private const string ServiceIdItem = "SERVICEID";
     private const string VisitUniqueItem = "VISIT_UNIQUE";
@@ -147,7 +166,7 @@ public sealed class InvoiceWorkflowService
     /// <param name="parameters">Entry parameters set by the calling module.</param>
     /// <param name="operatorContext">Operator identity written into the draft header.</param>
     /// <param name="cancellationToken">Cancels the reads.</param>
-    /// <returns>The new draft with no lines.</returns>
+    /// <returns>The new draft with no lines, carrying a preset doctor's clinic, with the doctor and clinic names.</returns>
     public async Task<NewDraftResponse> NewDraft(
         InvoiceEntryParameters parameters,
         OperatorContext operatorContext,
@@ -177,6 +196,14 @@ public sealed class InvoiceWorkflowService
             operatorContext);
         header = header with { PayType = await DecideDraftPayType(header.CompCode, null, parameters, preload, cancellationToken) };
 
+        var display = new Dictionary<string, string?>(StringComparer.Ordinal);
+        if (await ReadDoctorClinic(header, cancellationToken) is { } doctor)
+        {
+            header = doctor.Header;
+            display[DocNameItem] = doctor.DocName;
+            display[ClinicNameItem] = doctor.ClinicName;
+        }
+
         if (ClaimNumberFromParameter(parameters))
         {
             header = header with { ClaimNo = ClaimNumberRule.Build(header, parameters) };
@@ -195,6 +222,7 @@ public sealed class InvoiceWorkflowService
                 Parameters = parameters,
                 DiscountLimitChoice = null,
             },
+            Display = display,
         };
     }
 
@@ -348,10 +376,12 @@ public sealed class InvoiceWorkflowService
             gate.UseAdvanced,
             parameters);
 
+        var amount1 = preview.Totals.Amount1 ?? header.Amount1;
+        var amount2 = preview.Totals.Amount2 ?? header.Amount2;
         var refund = PaymentAllocationRules.Refund(new PaymentAllocation
         {
-            Amount1 = preview.Totals.Amount1 ?? header.Amount1,
-            Amount2 = preview.Totals.Amount2 ?? header.Amount2,
+            Amount1 = amount1,
+            Amount2 = amount2,
             CashPayed = header.CashPayed,
             SubPayType = header.SubPayType,
             SubPayType2 = header.SubPayType2,
@@ -362,7 +392,7 @@ public sealed class InvoiceWorkflowService
             Lines = preview.Lines,
             Totals = ToTotals(preview.Totals),
             Refund = refund,
-            TotalCollected = PaymentAllocationRules.TotalCollected(preview.Totals.Amount1, preview.Totals.Amount2),
+            TotalCollected = PaymentAllocationRules.TotalCollected(amount1, amount2),
             Messages = findings.Messages,
             OpenItems = openItems,
             PriceEditableClientIds = priceEditableClientIds,
@@ -426,15 +456,16 @@ public sealed class InvoiceWorkflowService
 
         var context = await DecideServerContext(draft, preload, coverage, patientCompanyFirst: false, cancellationToken);
         var gate = await ReadGateInputs(context.Header, context.Coverage, context.Preload, readCard: true, cancellationToken);
-        var clinic = await ReadClinic(context.Header, cancellationToken);
         var maxDisc = await _lookups.GetUserMaxDiscount(operatorContext.UserNo, cancellationToken);
         var x422 = await ReadX422(parameters, cancellationToken);
 
         var findings = new Findings();
         var header = await ApplyVisitDoctor(context.Header, parameters, cancellationToken);
-        header = header with { ClaimNo = ClaimNumberRule.Build(header, parameters) };
         header = ApplySubPayType(header, findings.Add(HeaderRecordRules.ApplyPaymentTypeDefault(header)));
         header = ApplyDoctor(header, findings.Add(DoctorSelectionRules.Validate(header, parameters)));
+        header = (await ReadDoctorClinic(header, cancellationToken))?.Header ?? header;
+        header = header with { ClaimNo = ClaimNumberRule.Build(header, parameters) };
+        var clinic = await ReadClinic(header, cancellationToken);
 
         findings.Add(HeaderRecordRules.ValidateRecord(header));
         findings.Add(InvoiceDetailRules.RequireDetails(lines.Count));
@@ -826,14 +857,21 @@ public sealed class InvoiceWorkflowService
         (IReadOnlyList<EngineLineInput> Lines, ImportResultRow Result) imported;
         await using (var session = await _sessionFactory.Open(cancellationToken))
         {
-            imported = await _import.ImportRequestLines(
-                session,
-                header,
-                operatorContext,
-                parameters.VisitUnique!,
-                rows.Select(row => row.PatServReqRowId).ToArray(),
-                approvalMode,
-                cancellationToken);
+            try
+            {
+                imported = await _import.ImportRequestLines(
+                    session,
+                    header,
+                    operatorContext,
+                    parameters.VisitUnique!,
+                    rows.Select(row => row.PatServReqRowId).ToArray(),
+                    approvalMode,
+                    cancellationToken);
+            }
+            finally
+            {
+                await TryRollback(session);
+            }
         }
 
         return new ImportResponse
@@ -880,7 +918,14 @@ public sealed class InvoiceWorkflowService
         (EngineLineInput? Line, ImportResultRow Result) visit;
         await using (var session = await _sessionFactory.Open(cancellationToken))
         {
-            visit = await _import.GetVisitLine(session, header, operatorContext, choice, cancellationToken);
+            try
+            {
+                visit = await _import.GetVisitLine(session, header, operatorContext, choice, cancellationToken);
+            }
+            finally
+            {
+                await TryRollback(session);
+            }
         }
 
         return new ImportResponse
@@ -941,8 +986,15 @@ public sealed class InvoiceWorkflowService
         (IReadOnlyList<EngineLineInput> Lines, ImportResultRow Result) package;
         await using (var session = await _sessionFactory.Open(cancellationToken))
         {
-            package = await _invoiceApi.GetPackageLines(
-                session, packageServiceId, listId, request.ParentSourceId, cancellationToken);
+            try
+            {
+                package = await _invoiceApi.GetPackageLines(
+                    session, packageServiceId, listId, request.ParentSourceId, cancellationToken);
+            }
+            finally
+            {
+                await TryRollback(session);
+            }
         }
 
         var imported = package.Lines.Select(ToLine).ToArray();
@@ -985,8 +1037,15 @@ public sealed class InvoiceWorkflowService
         IReadOnlyList<EditablePreviewLine> lines;
         await using (var session = await _sessionFactory.Open(cancellationToken))
         {
-            lines = await _invoiceApi.GetBundledOfferLines(
-                session, header, operatorContext, request.OfferId, request.BundleQty, cancellationToken);
+            try
+            {
+                lines = await _invoiceApi.GetBundledOfferLines(
+                    session, header, operatorContext, request.OfferId, request.BundleQty, cancellationToken);
+            }
+            finally
+            {
+                await TryRollback(session);
+            }
         }
 
         return new ImportResponse
@@ -1002,7 +1061,7 @@ public sealed class InvoiceWorkflowService
     /// <param name="draftDate">Draft date bound as INVDATE by the date-filtered lists RESERV_NO and OFFERS; null returns their missing INVDATE message.</param>
     /// <param name="operatorContext">Operator identity supplying the information centre.</param>
     /// <param name="cancellationToken">Cancels the read.</param>
-    /// <returns>The rows, a blocking message naming a missing or refused item, or null.</returns>
+    /// <returns>The rows, the blocking messages naming every missing or refused item, or null.</returns>
     public async Task<LovResponse?> GetLov(
         string name,
         IReadOnlyDictionary<string, string?> binds,
@@ -1048,29 +1107,35 @@ public sealed class InvoiceWorkflowService
             case "DOC":
                 return Rows(lov, await _lovs.Doc(operatorContext.InfoCenterId, cancellationToken));
             case "RESERV_NO":
-                if (BindPositiveInt(values, DocIdItem) is not (true, var doctor))
+                var reservationRefusals = new List<MessageDto>();
+                var (doctorPresent, doctor) = BindPositiveInt(values, DocIdItem);
+                if (!doctorPresent)
                 {
-                    return MissingBind(lov, DocIdItem);
+                    reservationRefusals.Add(RequiredBind(lov, DocIdItem));
+                }
+                else if (doctor is null)
+                {
+                    reservationRefusals.Add(Blocking(DocIdItem, $"{DocIdItem} must be a positive whole number."));
                 }
 
-                if (doctor is not { } docId)
+                var patientNo = BindText(values, PatientNoItem);
+                if (patientNo is null)
                 {
-                    return BindRejected(lov, Blocking(DocIdItem, $"{DocIdItem} must be a positive whole number."));
+                    reservationRefusals.Add(RequiredBind(lov, PatientNoItem));
+                }
+                else if (PatientNoTooLong(patientNo) is { } tooLong)
+                {
+                    reservationRefusals.Add(tooLong);
                 }
 
-                if (BindText(values, PatientNoItem) is not { } patientNo)
+                if (draftDate is null)
                 {
-                    return MissingBind(lov, PatientNoItem);
+                    reservationRefusals.Add(RequiredBind(lov, InvDateItem));
                 }
 
-                if (PatientNoTooLong(patientNo) is { } tooLong)
+                if (reservationRefusals.Count > 0 || doctor is not { } docId || patientNo is null || draftDate is not { } reservationDate)
                 {
-                    return BindRejected(lov, tooLong);
-                }
-
-                if (draftDate is not { } reservationDate)
-                {
-                    return MissingBind(lov, InvDateItem);
+                    return BindRejected(lov, reservationRefusals.ToArray());
                 }
 
                 return Rows(lov, await _lovs.ReservNo(reservationDate, docId, patientNo, operatorContext.InfoCenterId, cancellationToken)) with
@@ -1079,19 +1144,25 @@ public sealed class InvoiceWorkflowService
                     OpenItems = new[] { OpenItemIds.OI42 },
                 };
             case "OFFERS":
-                if (BindPositiveInt(values, PayTypeItem) is not (true, var payTypeNumber))
+                var offerRefusals = new List<MessageDto>();
+                var (payTypePresent, payTypeNumber) = BindPositiveInt(values, PayTypeItem);
+                if (!payTypePresent)
                 {
-                    return MissingBind(lov, PayTypeItem);
+                    offerRefusals.Add(RequiredBind(lov, PayTypeItem));
+                }
+                else if (payTypeNumber is not (CashPayType or CreditPayType))
+                {
+                    offerRefusals.Add(Blocking(PayTypeItem, $"{PayTypeItem} must be 1 (Cash) or 2 (Credit)."));
                 }
 
-                if (payTypeNumber is not { } payType || payType is not (CashPayType or CreditPayType))
+                if (draftDate is null)
                 {
-                    return BindRejected(lov, Blocking(PayTypeItem, $"{PayTypeItem} must be 1 (Cash) or 2 (Credit)."));
+                    offerRefusals.Add(RequiredBind(lov, InvDateItem));
                 }
 
-                if (draftDate is not { } offerDate)
+                if (offerRefusals.Count > 0 || payTypeNumber is not { } payType || draftDate is not { } offerDate)
                 {
-                    return MissingBind(lov, InvDateItem);
+                    return BindRejected(lov, offerRefusals.ToArray());
                 }
 
                 return Rows(lov, await _lovs.Offers(payType, offerDate, operatorContext.InfoCenterId, cancellationToken));
@@ -1358,7 +1429,15 @@ public sealed class InvoiceWorkflowService
         var parameters = draft.Parameters;
         var findings = new Findings();
         var header = ApplyDoctor(draft.Header, findings.Add(DoctorSelectionRules.Validate(draft.Header, parameters)));
-        findings.Adjust(ClaimNoItem, ClaimNumberRule.Build(header, parameters));
+        if (await ReadDoctorClinic(header, cancellationToken) is { } doctor)
+        {
+            header = doctor.Header;
+            findings.Adjust(ClinicIdItem, header.ClinicId);
+            findings.Adjust(ClinicNameItem, doctor.ClinicName);
+            findings.Adjust(DocNameItem, doctor.DocName);
+            findings.Adjust(ClaimNoItem, ClaimNumberRule.Build(header, parameters));
+        }
+
         var visitLine = VisitLineRule.Choose(parameters.DoReview, parameters.ClaimNo, header.CompCode, header.ClinicId);
 
         var profiles = ProfileSet.Empty(draft.Lines.Count);
@@ -2061,6 +2140,12 @@ public sealed class InvoiceWorkflowService
             ? await _lookups.GetClinicProfile(clinicId, header.PatientNo, cancellationToken)
             : null;
 
+    /// <summary>Returns the header carrying its doctor's clinic, with the clinic and doctor names, or null when the header has no doctor or the doctor has no single clinic row.</summary>
+    private async Task<DoctorClinic?> ReadDoctorClinic(InvoiceHeaderDraft header, CancellationToken cancellationToken) =>
+        header.DocId is int docId && await _lookups.GetDoctorClinic(docId, cancellationToken) is { } doctor
+            ? new DoctorClinic(header with { ClinicId = doctor.ClinicId }, doctor.ClinicName, doctor.DocName)
+            : null;
+
     private async Task<GateInputs> ReadGateInputs(
         InvoiceHeaderDraft header,
         PatientCoverageSnapshot? coverage,
@@ -2183,6 +2268,10 @@ public sealed class InvoiceWorkflowService
         {
             failure.Data[PreviewRefusalKey] = true;
             throw;
+        }
+        finally
+        {
+            await TryRollback(session);
         }
     }
 
@@ -2679,7 +2768,7 @@ public sealed class InvoiceWorkflowService
         Trimmed(serviceId) is { } id
         && requestedServices.Contains(id);
 
-    /// <summary>Returns the draft with the operator identity and the server-owned fields reset; refuses a null line, or a PATIENTNO, CLAIM_NO, VISIT_UNIQUE, COMP_CODE or line SERVICEID wider than its item, before any read.</summary>
+    /// <summary>Returns the draft with the operator identity and the server-owned fields reset; refuses a null line, or a PATIENTNO, CLAIM_NO, VISIT_UNIQUE, COMP_CODE, CURR_CODE, CLAIM_FLAG, NOTE_NO or line SERVICEID, LDISCT, TEETH_NO, TOOTH_SURFACE, TEETH_NO2 or APPROV_REF_NO wider than its item, before any read.</summary>
     private static DraftDto Sanitize(DraftDto draft, OperatorContext operatorContext)
     {
         ArgumentNullException.ThrowIfNull(draft);
@@ -2696,9 +2785,17 @@ public sealed class InvoiceWorkflowService
         AddIfTooWide(tooWide, PatientNoItem, draft.Header?.PatientNo, PatientNoBytes);
         tooWide.AddRange(ParameterWidthMessages(draft.Parameters));
         AddIfTooWide(tooWide, CompCodeItem, draft.Header?.CompCode, CompCodeBytes);
+        AddIfTooWide(tooWide, CurrCodeItem, draft.Header?.CurrCode, CurrCodeBytes);
+        AddIfTooWide(tooWide, ClaimFlagItem, draft.Header?.ClaimFlag, ClaimFlagBytes);
+        AddIfTooWide(tooWide, NoteNoItem, draft.Header?.NoteNo, NoteNoBytes);
         for (var index = 0; index < lines.Count; index++)
         {
             AddIfTooWide(tooWide, ServiceIdItem, lines[index].ServiceId, ServiceIdBytes, index + 1);
+            AddIfTooWide(tooWide, DiscountTypeItem, lines[index].DiscountType, DiscountTypeBytes, index + 1);
+            AddIfTooWide(tooWide, TeethNoItem, lines[index].TeethNo, TeethNoBytes, index + 1);
+            AddIfTooWide(tooWide, ToothSurfaceItem, lines[index].ToothSurface, ToothSurfaceBytes, index + 1);
+            AddIfTooWide(tooWide, TeethNo2Item, lines[index].TeethNo2, TeethNo2Bytes, index + 1);
+            AddIfTooWide(tooWide, ApprovRefNoItem, lines[index].ApprovRefNo, ApprovRefNoBytes, index + 1);
         }
 
         if (tooWide.Count > 0)
@@ -2900,28 +2997,17 @@ public sealed class InvoiceWorkflowService
         Rows = rows,
     };
 
-    private static LovResponse MissingBind(string lov, string item) => new()
-    {
-        Name = lov,
-        Rows = Array.Empty<IReadOnlyDictionary<string, object?>>(),
-        Messages = new[]
-        {
-            new MessageDto
-            {
-                Field = item,
-                Text = $"{item} is required for the {lov} list.",
-                Severity = ValidationMessage.Blocking,
-                Rule = null,
-            },
-        },
-    };
+    private static LovResponse MissingBind(string lov, string item) => BindRejected(lov, RequiredBind(lov, item));
 
-    /// <summary>Returns the list with no rows and the blocking message refusing one of its binds.</summary>
-    private static LovResponse BindRejected(string lov, MessageDto message) => new()
+    /// <summary>Returns the blocking message on <paramref name="item"/> that the list <paramref name="lov"/> requires.</summary>
+    private static MessageDto RequiredBind(string lov, string item) => Blocking(item, $"{item} is required for the {lov} list.");
+
+    /// <summary>Returns the list with no rows and the blocking messages refusing its binds, in the order given.</summary>
+    private static LovResponse BindRejected(string lov, params MessageDto[] messages) => new()
     {
         Name = lov,
         Rows = Array.Empty<IReadOnlyDictionary<string, object?>>(),
-        Messages = new[] { message },
+        Messages = messages,
     };
 
     /// <summary>Returns the blocking PATIENTNO message when the patient number exceeds the item's width in characters or UTF-8 bytes, else null.</summary>
@@ -3201,6 +3287,8 @@ public sealed class InvoiceWorkflowService
     private sealed record ServerContext(InvoiceHeaderDraft Header, PatientCoverageSnapshot? Coverage, ClaimPreloadData? Preload);
 
     private sealed record GateInputs(decimal? MaxDeductable, int? UseAdvanced, int? CardId);
+
+    private sealed record DoctorClinic(InvoiceHeaderDraft Header, string? ClinicName, string? DocName);
 
     private sealed record PreviewResult(IReadOnlyList<EditablePreviewLine> Lines, PreviewTotalsRow Totals)
     {

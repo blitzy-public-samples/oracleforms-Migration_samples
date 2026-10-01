@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Billing.Invoicing.Api.Context;
 using Billing.Invoicing.Api.Contracts;
 using Billing.Invoicing.Api.Controllers;
@@ -29,6 +30,11 @@ public sealed class ControllerContractTests
     private const string RequestIdText = "Request id must be 32 upper-case hexadecimal characters.";
     private const string OfferIdText = "Offer id must be a positive whole number.";
     private const string LocalDocTypeText = "LOCAL_DOC_TYPE must be 505, 532 or 783.";
+    private const string RouteNotFoundText = "No resource matches the request path.";
+    private const string MethodNotAllowedText = "The request method is not allowed for this resource.";
+    private const string UnsupportedMediaTypeText = "The request body must be sent as application/json.";
+    private const string JsonContentType = "application/json";
+    private const string FormContentType = "application/x-www-form-urlencoded";
     private const string PatientNo = "P100";
 
     /// <summary>2^53 + 1, the smallest positive integer a JSON number read as a double cannot hold.</summary>
@@ -173,6 +179,13 @@ public sealed class ControllerContractTests
         Parameters = new InvoiceEntryParameters(),
         DiscountLimitChoice = null,
     };
+
+    private static string DraftJson(string draftDate)
+    {
+        var draft = JsonSerializer.SerializeToNode(CashDraft(), WebJson)!.AsObject();
+        draft["draftDate"] = draftDate;
+        return draft.ToJsonString();
+    }
 
     [Fact]
     public void ActionResponses_ListEveryControllerAction()
@@ -636,15 +649,274 @@ public sealed class ControllerContractTests
         Assert.Empty(fakes.Journal);
     }
 
+    [Theory]
+    [InlineData("/api/lov/OFFERS?payType=1&draftDate=2026-09-30T01:00:00%2B03:00", "2026-09-30T01:00:00+03:00")]
+    [InlineData("/api/lov/OFFERS?payType=1&draftDate=2026-09-30T01:00:00Z", "2026-09-30T01:00:00Z")]
+    [InlineData("/api/lov/RESERV_NO?docIdx=12&patientNo=P1&draftDate=2026-09-30T01:00:00-05:00", "2026-09-30T01:00:00-05:00")]
+    [InlineData("/api/lov/OFFERS?payType=1&draftDate=2026-09-30T00:00:00%2B00:00", "2026-09-30T00:00:00+00:00")]
+    [InlineData("/api/patients/P100/coverage?draftDate=2026-09-30T01:00:00%2B03:00", "2026-09-30T01:00:00+03:00")]
+    [InlineData("/api/patients/P100/coverage?draftDate=2026-09-30T01:00:00Z", "2026-09-30T01:00:00Z")]
+    [InlineData("/api/lov/OFFERS?payType=1&draftDate=not-a-date", "not-a-date")]
+    [InlineData("/api/patients/P100/coverage?draftDate=not-a-date", "not-a-date")]
+    public async Task Pipeline_DraftDateQueryWithATimeZoneDesignatorOrMalformed_IsRejectedOnInvDateWithoutReads(string path, string draftDate)
+    {
+        var fakes = new FakeDataPorts();
+
+        var (status, _, body) = await SendAsync(fakes, "GET", path);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, status);
+        var error = Assert.Single(body.GetProperty("errors").EnumerateObject());
+        Assert.Equal("INVDATE", ModelStateFieldMap.FieldOf(error.Name));
+        Assert.Equal($"The value '{draftDate}' is not valid for draftDate.", Assert.Single(error.Value.EnumerateArray()).GetString());
+        Assert.Empty(fakes.Journal);
+    }
+
+    [Theory]
+    [InlineData("2026-09-30T01:00:00")]
+    [InlineData("2026-03-31")]
+    [InlineData("2026-09-30T01:00:00.1234567")]
+    [InlineData("%202026-09-30T01:00:00%20")]
+    public async Task Pipeline_LovWithAWallClockDraftDate_QueriesTheListOnThatDate(string draftDate)
+    {
+        var fakes = new FakeDataPorts();
+        var expected = DateTime.Parse(Uri.UnescapeDataString(draftDate), CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces);
+
+        var (status, _, body) = await SendAsync(fakes, "GET", $"/api/lov/OFFERS?payType=1&draftDate={draftDate}");
+
+        Assert.Equal(StatusCodes.Status200OK, status);
+        Assert.Empty(body.GetProperty("rows").EnumerateArray());
+        var call = Assert.Single(fakes.Lovs.Calls);
+        Assert.Equal("Offers", call.Method);
+        var invDate = call.Arg<DateTime>();
+        Assert.Equal(expected.Date, invDate.Date);
+        Assert.Equal(DateTimeKind.Unspecified, invDate.Kind);
+    }
+
+    [Theory]
+    [InlineData("?draftDate=2026-09-30T01:00:00", false)]
+    [InlineData("?draftDate=2026-03-31", false)]
+    [InlineData("", true)]
+    [InlineData("?draftDate=", true)]
+    public async Task Pipeline_CoverageWithAWallClockOrNoDraftDate_ReadsTheCoverage(string query, bool readsDatabaseTime)
+    {
+        var fakes = new FakeDataPorts();
+        fakes.Lookups.PatientCoverage = new PatientCoverageSnapshot { PatientNo = PatientNo, CompCode = "0" };
+
+        var (status, _, _) = await SendAsync(fakes, "GET", $"/api/patients/{PatientNo}/coverage{query}");
+
+        Assert.Equal(StatusCodes.Status200OK, status);
+        Assert.Equal(PatientNo, Assert.Single(fakes.CallsTo(nameof(FakeLookupQueries.GetPatientCoverage))).Arg<string>());
+        Assert.Equal(readsDatabaseTime, fakes.Journal.Contains($"ILookupQueries.{nameof(FakeLookupQueries.GetDatabaseTime)}"));
+    }
+
+    [Fact]
+    public async Task Pipeline_LovWithAFormDraftDate_BindsTheQueryDateOnly()
+    {
+        var fakes = new FakeDataPorts();
+
+        var context = await SendForContextAsync(
+            fakes, "GET", "/api/lov/OFFERS?payType=1&draftDate=2026-09-30T01:00:00", "draftDate=2026-09-29T23:00:00%2B03:00", FormContentType);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        var invDate = Assert.Single(fakes.Lovs.Calls).Arg<DateTime>();
+        Assert.Equal(new DateTime(2026, 9, 30), invDate.Date);
+        Assert.Equal(DateTimeKind.Unspecified, invDate.Kind);
+    }
+
+    [Theory]
+    [InlineData("/api/lov/OFFERS?payType=1&draftDate=2026-09-30T01:00:00%2B03:00")]
+    [InlineData("/api/patients/P100/coverage?draftDate=2026-09-30T01:00:00%2B03:00")]
+    public async Task Pipeline_DraftDateQueryWithADesignatorAndAValidFormDate_IsRejectedOnTheQueryValue(string path)
+    {
+        var fakes = new FakeDataPorts();
+
+        var context = await SendForContextAsync(fakes, "GET", path, "draftDate=2026-09-30T01:00:00", FormContentType);
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        var error = Assert.Single((await Body(context)).GetProperty("errors").EnumerateObject());
+        Assert.Equal("INVDATE", ModelStateFieldMap.FieldOf(error.Name));
+        Assert.Equal("The value '2026-09-30T01:00:00+03:00' is not valid for draftDate.", Assert.Single(error.Value.EnumerateArray()).GetString());
+        Assert.Empty(fakes.Journal);
+    }
+
+    [Theory]
+    [InlineData("?draftDate=2026-09-30T01:00:00", false)]
+    [InlineData("", true)]
+    public async Task Pipeline_CoverageWithAFormDraftDate_IgnoresTheFormValue(string query, bool readsDatabaseTime)
+    {
+        var fakes = new FakeDataPorts();
+        fakes.Lookups.PatientCoverage = new PatientCoverageSnapshot { PatientNo = PatientNo, CompCode = "0" };
+
+        var context = await SendForContextAsync(
+            fakes, "GET", $"/api/patients/{PatientNo}/coverage{query}", "draftDate=2026-09-29T23:00:00%2B03:00", FormContentType);
+
+        Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+        Assert.Equal(readsDatabaseTime, fakes.Journal.Contains($"ILookupQueries.{nameof(FakeLookupQueries.GetDatabaseTime)}"));
+    }
+
+    [Fact]
+    public async Task Pipeline_LovWithOnlyAFormDraftDate_ReadsNoListDate()
+    {
+        var fakes = new FakeDataPorts();
+
+        var context = await SendForContextAsync(fakes, "GET", "/api/lov/OFFERS?payType=1", "draftDate=2026-09-30T01:00:00", FormContentType);
+
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, context.Response.StatusCode);
+        Assert.Contains(
+            (await Body(context)).GetProperty("messages").EnumerateArray(),
+            message => message.GetProperty("field").GetString() == "INVDATE");
+        Assert.Empty(fakes.Lovs.Calls);
+    }
+
+
+    [Theory]
+    [InlineData("2026-09-29T23:59:59+03:00")]
+    [InlineData("2026-09-29T23:59:59-05:00")]
+    [InlineData("2026-09-29T23:59:59Z")]
+    public async Task Pipeline_PreviewWithADraftDateCarryingATimeZoneDesignator_IsRejectedOnInvDateWithoutReads(string draftDate)
+    {
+        var fakes = new FakeDataPorts();
+        fakes.Lookups.PatientCoverage = new PatientCoverageSnapshot { PatientNo = PatientNo, CompCode = "0" };
+
+        var (status, _, body) = await SendAsync(fakes, "POST", "/api/invoices/preview", DraftJson(draftDate));
+
+        Assert.Equal(StatusCodes.Status400BadRequest, status);
+        var fields = body.GetProperty("errors").EnumerateObject().Select(error => ModelStateFieldMap.FieldOf(error.Name)).ToArray();
+        Assert.Contains("INVDATE", fields);
+        Assert.All(fields, field => Assert.True(field is null or "INVDATE"));
+        Assert.Empty(fakes.Journal);
+    }
+
+    [Theory]
+    [InlineData("2026-09-29T23:59:59")]
+    [InlineData("2026-09-29T23:59:59.1234567")]
+    [InlineData("2026-03-31")]
+    public async Task Pipeline_PreviewWithAWallClockDraftDate_PreviewsWithThatWallClock(string draftDate)
+    {
+        var fakes = new FakeDataPorts();
+        fakes.Lookups.PatientCoverage = new PatientCoverageSnapshot { PatientNo = PatientNo, CompCode = "0" };
+        var expected = DateTime.Parse(draftDate, CultureInfo.InvariantCulture);
+
+        var (status, _, _) = await SendAsync(fakes, "POST", "/api/invoices/preview", DraftJson(draftDate));
+
+        Assert.Equal(StatusCodes.Status200OK, status);
+        var header = Assert.Single(fakes.CallsTo(nameof(FakeBilInvoiceApiGateway.CalculatePreview))).Arg<InvoiceHeaderDraft>();
+        Assert.Equal(expected.Ticks, header.DraftDate.Ticks);
+        Assert.Equal(DateTimeKind.Unspecified, header.DraftDate.Kind);
+        Assert.Equal(expected.Ticks, header.InvDate!.Value.Ticks);
+        Assert.Equal(DateTimeKind.Unspecified, header.InvDate.Value.Kind);
+    }
+
+    [Theory]
+    [InlineData("GET", "/api/nope")]
+    [InlineData("GET", "/api/invoices//9001")]
+    [InlineData("POST", "/API/Nope")]
+    public async Task Pipeline_RouteMissUnderApi_Writes404NotFound(string method, string path)
+    {
+        var fakes = new FakeDataPorts();
+
+        var context = await SendForContextAsync(fakes, method, path, null, null);
+
+        await AssertNotFound(context, RouteNotFoundText);
+        Assert.Empty(fakes.Journal);
+    }
+
+    [Theory]
+    [InlineData("DELETE", "/api/invoices/1", "GET, PATCH")]
+    [InlineData("PUT", "/api/invoices/1", "GET, PATCH")]
+    [InlineData("GET", "/api/drafts/validate", "POST")]
+    [InlineData("POST", "/api/drafts/new", "GET")]
+    [InlineData("GET", "/api/invoices", "POST")]
+    [InlineData("POST", "/api/lov/CAT", "GET")]
+    public async Task Pipeline_MethodNotAllowed_Writes405MethodNotAllowedKeepingTheAllowHeader(string method, string path, string allow)
+    {
+        var fakes = new FakeDataPorts();
+
+        var context = await SendForContextAsync(fakes, method, path, null, null);
+
+        Assert.Equal(StatusCodes.Status405MethodNotAllowed, context.Response.StatusCode);
+        Assert.Equal(allow, context.Response.Headers.Allow.ToString());
+        Assert.Equal(ProblemJson, context.Response.ContentType);
+        var body = await Body(context);
+        Assert.Equal(new[] { "type", "title", "status", "message" }, Members(body));
+        Assert.Equal("method-not-allowed", body.GetProperty("type").GetString());
+        Assert.Equal("Method not allowed", body.GetProperty("title").GetString());
+        Assert.Equal(405, body.GetProperty("status").GetInt32());
+        Assert.Equal(MethodNotAllowedText, body.GetProperty("message").GetString());
+        Assert.Empty(fakes.Journal);
+    }
+
+    [Theory]
+    [InlineData("text/plain")]
+    [InlineData("application/xml")]
+    [InlineData(null)]
+    public async Task Pipeline_ValidateWithANonJsonBody_Writes415UnsupportedMediaTypeWithoutTraceId(string? contentType)
+    {
+        var fakes = new FakeDataPorts();
+
+        var context = await SendForContextAsync(fakes, "POST", "/api/drafts/validate", "x", contentType);
+
+        Assert.Equal(StatusCodes.Status415UnsupportedMediaType, context.Response.StatusCode);
+        Assert.Equal(ProblemJson, context.Response.ContentType);
+        var body = await Body(context);
+        Assert.Equal(new[] { "type", "title", "status", "message" }, Members(body));
+        Assert.Equal("unsupported-media-type", body.GetProperty("type").GetString());
+        Assert.Equal("Unsupported media type", body.GetProperty("title").GetString());
+        Assert.Equal(415, body.GetProperty("status").GetInt32());
+        Assert.Equal(UnsupportedMediaTypeText, body.GetProperty("message").GetString());
+        Assert.False(body.TryGetProperty("traceId", out _));
+        Assert.Empty(fakes.Journal);
+    }
+
+    [Fact]
+    public async Task Pipeline_UnknownLov_KeepsItsOwnNotFoundMessage()
+    {
+        var fakes = new FakeDataPorts();
+
+        var context = await SendForContextAsync(fakes, "GET", "/api/lov/NOPE", null, null);
+
+        await AssertNotFound(context, "List of values not found.");
+        Assert.Empty(fakes.Journal);
+    }
+
+    [Theory]
+    [InlineData("GET", "/nope")]
+    [InlineData("GET", "/apix/x")]
+    [InlineData("DELETE", "/")]
+    public async Task Pipeline_RouteMissOutsideApi_StaysAnEmpty404(string method, string path)
+    {
+        var context = await SendForContextAsync(new FakeDataPorts(), method, path, null, null);
+
+        Assert.Equal(StatusCodes.Status404NotFound, context.Response.StatusCode);
+        Assert.Null(context.Response.ContentType);
+        Assert.Equal(0, context.Response.Body.Length);
+    }
+
     /// <summary>Sends one request with the operator headers and an optional JSON body through the controllers, the exception handler and the operator-context middleware, in-process.</summary>
     private static async Task<(int Status, string? ContentType, JsonElement Body)> SendAsync(FakeDataPorts fakes, string method, string path, string? json = null)
+    {
+        var context = await SendForContextAsync(fakes, method, path, json, json is null ? null : JsonContentType);
+
+        return (context.Response.StatusCode, context.Response.ContentType, await Body(context));
+    }
+
+    /// <summary>Sends one request with the operator headers through the controllers, the exception handler, the status-code pages and the operator-context middleware, in-process.</summary>
+    /// <param name="fakes">Port fakes behind the workflow service.</param>
+    /// <param name="method">HTTP method.</param>
+    /// <param name="path">Request path with an optional query string.</param>
+    /// <param name="requestBody">Request body text; none when null.</param>
+    /// <param name="contentType">Request content type; none when null.</param>
+    /// <returns>The request after the pipeline has answered it.</returns>
+    private static async Task<HttpContext> SendForContextAsync(FakeDataPorts fakes, string method, string path, string? requestBody, string? contentType)
     {
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddMetrics();
         services.AddSingleton(new DiagnosticListener(nameof(ControllerContractTests)));
         services.AddSingleton<DiagnosticSource>(provider => provider.GetRequiredService<DiagnosticListener>());
-        services.AddControllers().AddApplicationPart(typeof(InvoicesController).Assembly);
+        services.AddControllers()
+            .ConfigureApiBehaviorOptions(o => o.SuppressMapClientErrors = true)
+            .AddApplicationPart(typeof(InvoicesController).Assembly);
         services.AddSingleton(new ProblemDetailsWriter(new OracleFailureTranslator()));
         services.AddSingleton(fakes.CreateService());
         await using var provider = services.BuildServiceProvider();
@@ -653,6 +925,7 @@ public sealed class ControllerContractTests
         app.UseRouting();
         app.UseExceptionHandler(handler => handler.Run(context =>
             context.RequestServices.GetRequiredService<ProblemDetailsWriter>().WriteAsync(context)));
+        app.UseStatusCodePages(status => status.HttpContext.RequestServices.GetRequiredService<ProblemDetailsWriter>().WriteAsync(status));
         app.UseMiddleware<OperatorContextMiddleware>();
         app.UseEndpoints(endpoints => endpoints.MapControllers());
         RequestDelegate pipeline = app.Build();
@@ -669,15 +942,19 @@ public sealed class ControllerContractTests
         context.Request.Headers["X-His-Machine"] = "clone23";
         context.Request.Headers["X-His-Session-Id"] = Operator.SessionId;
         context.Response.Body = new MemoryStream();
-        if (json is not null)
+        if (contentType is not null)
         {
-            context.Request.ContentType = "application/json";
-            context.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(json));
+            context.Request.ContentType = contentType;
+        }
+
+        if (requestBody is not null)
+        {
+            context.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(requestBody));
         }
 
         await pipeline(context);
 
-        return (context.Response.StatusCode, context.Response.ContentType, await Body(context));
+        return context;
     }
 
     [Fact]

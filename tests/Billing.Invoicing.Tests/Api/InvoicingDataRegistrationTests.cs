@@ -1,5 +1,6 @@
 using Billing.Invoicing.Api.Composition;
 using Billing.Invoicing.Data.Commands;
+using Billing.Invoicing.Data.Errors;
 using Billing.Invoicing.Data.Oracle;
 using Billing.Invoicing.Data.Plsql;
 using Billing.Invoicing.Data.Ports;
@@ -181,12 +182,63 @@ public sealed class InvoicingDataRegistrationTests
     }
 
     [Theory]
+    [Trait("Decision", "D-162")]
+    [InlineData(";;;")]
+    [InlineData(" ; ")]
+    [InlineData("\t;\n")]
+    [InlineData(";")]
+    public async Task AddInvoicingData_ConnectionStringWithoutAnAttribute_NeedsNoDraftSealKeyAndIsNotConfiguredOnFirstUse(string connectionString)
+    {
+        using var provider = Register(connectionString, null);
+        var options = provider.GetRequiredService<InvoicingDataOptions>();
+
+        Assert.Equal(connectionString, options.ConnectionString);
+        Assert.False(options.HasConnectionString);
+        Assert.Equal(string.Empty, options.DraftSealKey);
+
+        var open = await Assert.ThrowsAsync<InvalidOperationException>(() => provider.GetRequiredService<IOracleSessionFactory>().Open());
+        DataFailure? failure = provider.GetRequiredService<OracleFailureTranslator>().Translate(open);
+
+        Assert.NotNull(failure);
+        Assert.Equal(500, failure.Status);
+        Assert.Equal(DataFailure.OracleErrorType, failure.Type);
+        Assert.Equal("The Oracle connection string is not configured or is not well-formed.", failure.Message);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-162")]
+    [InlineData(null, false)]
+    [InlineData("", false)]
+    [InlineData("   ", false)]
+    [InlineData(";;;", false)]
+    [InlineData(" ;\t;\r\n", false)]
+    [InlineData("Data Source=x", true)]
+    [InlineData(";Data Source=x;", true)]
+    public void HasConnectionString_IsFalseOnlyWithoutAnAttribute(string? connectionString, bool expected)
+    {
+        var options = new InvoicingDataOptions { ConnectionString = connectionString! };
+
+        Assert.Equal(expected, options.HasConnectionString);
+    }
+
+    [Theory]
     [Trait("Decision", "D-39")]
     [InlineData("not base64!")]
     [InlineData("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHg==")]
     public void AddInvoicingData_MalformedOrShortDraftSealKey_IsRefusedAtStartup(string draftSealKey)
     {
         var error = Assert.Throws<InvalidOperationException>(() => Register(null, draftSealKey));
+
+        Assert.Equal("Configuration value 'Invoicing:DraftSealKey' must be base64 of at least 32 bytes.", error.Message);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-162")]
+    [InlineData(";;;")]
+    [InlineData(ConnectionString)]
+    public void AddInvoicingData_MalformedDraftSealKey_IsRefusedWhateverTheConnectionString(string connectionString)
+    {
+        var error = Assert.Throws<InvalidOperationException>(() => Register(connectionString, "not base64!"));
 
         Assert.Equal("Configuration value 'Invoicing:DraftSealKey' must be base64 of at least 32 bytes.", error.Message);
     }

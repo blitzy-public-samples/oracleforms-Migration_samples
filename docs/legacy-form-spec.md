@@ -78,7 +78,7 @@ Locators give the start-tag line in `05_Complex/Inv_Small_Cash.xml`.
 | `PATIENT_TRANS` [05_Complex/Inv_Small_Cash.xml:902] · `PATIENT_TRANS` [05_Complex/Inv_Small_Cash.xml:1008] | — | N — opened only by dead `IMP_RXXX` |
 | — · `RECORD_GROUP1196` [05_Complex/Inv_Small_Cash.xml:1001], `SERVICES_BAK` [05_Complex/Inv_Small_Cash.xml:1045] | — | N — referenced by no LOV |
 
-The bind policy of the served LOVs is D-49: `:global.lang` → `'E'`, `:global.reserv_system_500` → `0`, `:global.current_info_center_id` → the `X-His-Info-Center-Id` header, `:invdate` → `DraftDate`, item binds from the current draft (a missing value → 422 `field-validation`).
+The bind policy of the served LOVs is D-49: `:global.lang` → `'E'`, `:global.reserv_system_500` → `0`, `:global.current_info_center_id` → the `X-His-Info-Center-Id` header, `:invdate` → the date part of `DraftDate` (D-147), item binds from the current draft (a missing value → 422 `field-validation`).
 
 **Module parameters** [05_Complex/Inv_Small_Cash.xml:814-845]
 
@@ -155,7 +155,7 @@ Trigger ids follow XML order: the form-level triggers first, then per block the 
 | T026 | [05_Complex/Inv_Small_Cash.xml:27] | T_INV.COMP_CODE · WHEN-VALIDATE-ITEM | `DIRECT_COMP_SHARE`, `COMP_TYPE` from `COMPANYS`; company '0' → cash, otherwise credit (its `V_type` branches are dead) | DR-24, PR-04 | `PayTypeSelectionRule.Decide` with `LookupQueries.GetCompanyType`; direct share PR-04 |
 | T027 | [05_Complex/Inv_Small_Cash.xml:36] | T_INV.PAYTYPE · WHEN-VALIDATE-ITEM | Cash conversion (`MAKE_CASH`), item enablement | PR-24, OI-03 | Payer context PR-24 (OI-03); item enablement is UI mechanics |
 | T028 | [05_Complex/Inv_Small_Cash.xml:37] | T_INV.PAYTYPE · WHEN-LIST-CHANGED | Item enablement | N | UI mechanics: item enablement |
-| T029 | [05_Complex/Inv_Small_Cash.xml:43] | T_INV.DOCIDX · WHEN-VALIDATE-ITEM | Doctor required / lock warnings; clinic from doctor; `CLAIM_NO` build; waiting counters; consultation / review auto line; cash-card discount; `ADD_TO_LIST` | DR-10, DR-11, DR-23, DR-25, PR-21, OI-32 | `DoctorSelectionRules.Validate`, `ClaimNumberRule.Build`, `AddToListRule.Derive`, `VisitLineRule.Choose` (service '2000' branch) + PR-21 `BilImportGateway.GetVisitLine`; clinic from the `DOC` LOV return; cash card blocked (OI-32); waiting counters display-only (D-18) |
+| T029 | [05_Complex/Inv_Small_Cash.xml:43] | T_INV.DOCIDX · WHEN-VALIDATE-ITEM | Doctor required / lock warnings; clinic from doctor; `CLAIM_NO` build; waiting counters; consultation / review auto line; cash-card discount; `ADD_TO_LIST` | DR-10, DR-11, DR-23, DR-25, PR-21, OI-32 | `DoctorSelectionRules.Validate`, `ClaimNumberRule.Build`, `AddToListRule.Derive`, `VisitLineRule.Choose` (service '2000' branch) + PR-21 `BilImportGateway.GetVisitLine`; clinic, clinic name and doctor name re-read from the doctor after the DOCIDX reset (`LookupQueries.GetDoctorClinic`); cash card blocked (OI-32); waiting counters display-only (D-18) |
 | T030 | [05_Complex/Inv_Small_Cash.xml:44] | T_INV.DOCIDX · KEY-NEXT-ITEM | With `PARAMETER.CLAIM_NO=1`, inserts the doctor's consultation line | PR-21 | `BilImportGateway.GetVisitLine` through `ImportsController.VisitLine` |
 | T031 | [05_Complex/Inv_Small_Cash.xml:47] | T_INV.CLINICID · WHEN-VALIDATE-ITEM | Sex and age suitability (warnings: `when others then null` swallows the raise); `payed_before` | DR-04, OI-22, OI-23 | `ClinicSuitabilityRules.CheckSex`; `CheckAge` needs `DAY_TO_DAYES` (OI-22); `payed_before` not built (OI-23) |
 | T032 | [05_Complex/Inv_Small_Cash.xml:50] | T_INV.DEPT_WISE · WHEN-VALIDATE-ITEM | GP-at-ER-only rule (blocking), tests `NVL(:DEPT_WISE,0)=1` | DR-05 | `ErClinicRule.Validate` |
@@ -355,7 +355,7 @@ Every rule below is reached only through a retained PL/SQL call and is UNVERIFIE
 | PR-20 | Request-line availability at create (-20931) and link to `PAT_SERV_REQ` (-20930) [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:745-772, 2952-2965] | T061, T055 | `CreateFullInvoice` | `PackageParityTests.PR20_RequestLineAvailability` (SideEffects=Create) | `derivable` | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
 | PR-21 | Visit consultation / review line from `DOCTOR_CONSULTATION` on the patient-context price list (-20752 … -20755) [05_Complex/APEX_Reference/backend/BIL_IMPORT.sql:120-130, 1213-1230]; the service '2000' branch is DR-25 | T029, T030 | `BilImportGateway.GetVisitLine` | `PackageParityTests.PR21_VisitLine` | `derivable` | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
 | PR-22 | Idempotent create by request id (-20847, -20848, -20849; a replay returns the existing invoice) [05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:1303-1373] | — (replaces the Form's single-session commit) | `CreateFullInvoice` (D-54) | `PackageParityTests.PR22_IdempotentCreate` (SideEffects=Create) | `derivable`; no -20847 case, the gateway refuses such ids first (D-127) | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
-| PR-23 | Posting stages at create (payment, queue, stock) [05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:1385-1424]; print and SMS stages called with `'N'` (D-13, D-28) | T016, T061 | `CreateFullInvoice` | `PackageParityTests.PR23_PostingStages` (SideEffects=Create) | `pending-evidence` (OI-08 … OI-10) | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset; pending evidence (OI-08) |
+| PR-23 | Posting stages at create (payment, queue, stock) [05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:1385-1424]; print and SMS stages called with `'N'` (D-13, D-28) | T016, T061 | `CreateFullInvoice` | `PackageParityTests.PR23_PostingStages` (SideEffects=Create) | `pending-evidence` (OI-08 … OI-10) | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset; pending evidence (OI-08 … OI-10) |
 | PR-24 | Payer context (price list, VAT flags, cash flag) from `bil_patient_context.get_context` [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:3004-3018]; the engine's default pay type is not reached, because DR-24 always sends `paytype` [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:478-491] | T023, T027, PU16 `MAKE_CASH` | `CalculatePreview`, `CreateFullInvoice` | `PackageParityTests.PR24_PayerContext` | `pending-evidence` (OI-03) | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset; pending evidence (OI-03) |
 | PR-25 | Offer changed after calculation (-20970) [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1306-1322] | T066 standard-offer branch; the Form reads the offer at service validation and never re-checks it at commit | `CreateFullInvoice` | `PackageParityTests.PR25_OfferStale` (SideEffects=Create) | `derivable`; the orphan-metadata case carries no offer instance id (D-128) | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
 
@@ -617,7 +617,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Trigger\|T_INV\|PAYTYPE\|WHEN-LIST-CHANGED\|37 | T028 | N | UI mechanics: item enablement |
 | Item\|T_INV\|CURR_CODE\|-\|39 | — | PR-15, OI-15.21 | `InvoiceHeaderDraft.CurrCode`; list from `LookupQueries.GetCurrencies` |
 | Item\|T_INV\|DOCIDX\|-\|42 | — | DR-01, DR-10, DR-11, DR-25, PR-13 | `InvoiceHeaderDraft.DocId` |
-| Trigger\|T_INV\|DOCIDX\|WHEN-VALIDATE-ITEM\|43 | T029 | DR-10, DR-11, DR-23, DR-25, PR-21, OI-32 | `DoctorSelectionRules.Validate`, `ClaimNumberRule.Build`, `AddToListRule.Derive`, `VisitLineRule.Choose` (service '2000' branch) + PR-21 `BilImportGateway.GetVisitLine`; clinic from the `DOC` LOV return; cash card blocked (OI-32); waiting counters display-only (D-18) |
+| Trigger\|T_INV\|DOCIDX\|WHEN-VALIDATE-ITEM\|43 | T029 | DR-10, DR-11, DR-23, DR-25, PR-21, OI-32 | `DoctorSelectionRules.Validate`, `ClaimNumberRule.Build`, `AddToListRule.Derive`, `VisitLineRule.Choose` (service '2000' branch) + PR-21 `BilImportGateway.GetVisitLine`; clinic, clinic name and doctor name re-read from the doctor after the DOCIDX reset (`LookupQueries.GetDoctorClinic`); cash card blocked (OI-32); waiting counters display-only (D-18) |
 | Trigger\|T_INV\|DOCIDX\|KEY-NEXT-ITEM\|44 | T030 | PR-21 | `BilImportGateway.GetVisitLine` through `ImportsController.VisitLine` |
 | Item\|T_INV\|CLINICID\|-\|46 | — | DR-04, DR-05, DR-10, PR-13 | `InvoiceHeaderDraft.ClinicId` |
 | Trigger\|T_INV\|CLINICID\|WHEN-VALIDATE-ITEM\|47 | T031 | DR-04, OI-22, OI-23 | `ClinicSuitabilityRules.CheckSex`; `CheckAge` needs `DAY_TO_DAYES` (OI-22); `payed_before` not built (OI-23) |
@@ -657,10 +657,10 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Trigger\|T_INV\|CASH_PAYED\|KEY-NEXT-ITEM\|94 | T047 | N | UI mechanics: focus navigation |
 | Trigger\|T_INV\|CASH_PAYED\|WHEN-VALIDATE-ITEM\|95 | T048 | N | Empty trigger |
 | Item\|T_INV\|CASH_COLLECTED\|-\|97 | — | DR-09, DR-22 | `PreviewResponse.TotalCollected` from `PaymentAllocationRules.TotalCollected`; `InvoiceViewResponse.Display["TOTAL_COLLECTED"]` |
-| Item\|T_INV\|DOC_NAME\|-\|98 | — | OI-15.16 | `DOC` rows of `LovResponse.Rows`; `InvoiceViewResponse.Display["DOC_NAME"]` |
+| Item\|T_INV\|DOC_NAME\|-\|98 | — | OI-15.16 | `DOC` rows of `LovResponse.Rows`; `ValidateDraftResponse.Adjusted["DOC_NAME"]` and `NewDraftResponse.Display["DOC_NAME"]` from `LookupQueries.GetDoctorClinic`; `InvoiceViewResponse.Display["DOC_NAME"]` |
 | Item\|T_INV\|CARD_NAME\|-\|99 | — | OI-15.24 | `InvoiceViewResponse.Display["CARD_NAME"]` |
 | Item\|T_INV\|DOC_NAME1\|-\|100 | — | OI-15.16, OI-33 | `InvoiceViewResponse.Display["DOC_NAME1"]`; the `DOC1` LOV is blocked |
-| Item\|T_INV\|CLINICNAME\|-\|101 | — | OI-15.17 | `DOC` rows of `LovResponse.Rows`; `InvoiceViewResponse.Display["CLINICNAME"]` |
+| Item\|T_INV\|CLINICNAME\|-\|101 | — | OI-15.17 | `DOC` rows of `LovResponse.Rows`; `ValidateDraftResponse.Adjusted["CLINICNAME"]` and `NewDraftResponse.Display["CLINICNAME"]` from `LookupQueries.GetDoctorClinic`; `InvoiceViewResponse.Display["CLINICNAME"]` |
 | Item\|T_INV\|COMP_NAME\|-\|102 | — | OI-15.12, OI-15.13 | `COMPANY1_2` rows of `LovResponse.Rows`; `PatientCoverageSnapshot.CompName`; `InvoiceViewResponse.Display["COMP_NAME"]` |
 | Item\|T_INV\|PRINT_TIMES\|-\|103 | — | OI-33 | Not carried by the package inputs and not written by .NET; on no canvas |
 | Item\|T_INV\|AVANCE_PAYMENT\|-\|104 | — | OI-33 | Not carried by the package inputs and not written by .NET; on no canvas |
@@ -1027,7 +1027,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Billing.Invoicing.Api.Contracts.LovResponse | The 11 used LOV record groups (9 served; `SERVICES` OI-24, `DOC1` OI-33; D-49) |
 | Billing.Invoicing.Api.Contracts.MessageDto | PU08 `MESSAG` texts and severities, alert `ERR_ALERT` (DR-01 … DR-25) |
 | Billing.Invoicing.Api.Contracts.MoreDetailsResponse | Canvas `MORE`, T012, T056, T075 (OI-15.03, OI-15.27, D-111) |
-| Billing.Invoicing.Api.Contracts.NewDraftResponse | T015, T022, T003 (DR-20, DR-24) |
+| Billing.Invoicing.Api.Contracts.NewDraftResponse | T015, T022, T003, T029 (DR-20, DR-24) |
 | Billing.Invoicing.Api.Contracts.PackageImportRequest | T089 (PR-18, D-38) |
 | Billing.Invoicing.Api.Contracts.PreviewResponse | PU10 `SMALL_CALC` and `t_preview_totals` (PR-01 … PR-08; DR-08, DR-09) |
 | Billing.Invoicing.Api.Contracts.ValidateDraftRequest | WHEN-VALIDATE-ITEM / RECORD triggers T014, T023, T026, T029, T031 … T033, T039, T041, T042, T052, T066, T068, T074, T077, T078 |
@@ -1079,7 +1079,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Billing.Invoicing.Api.Services.InvoiceWorkflowService.ImportPackage | T089 (PR-18, DR-19, DR-23; OI-24) |
 | Billing.Invoicing.Api.Services.InvoiceWorkflowService.ImportRequests | T085 (DR-18, PR-19) |
 | Billing.Invoicing.Api.Services.InvoiceWorkflowService.ImportVisitLine | T029, T030 (DR-25, PR-21) |
-| Billing.Invoicing.Api.Services.InvoiceWorkflowService.NewDraft | T015, T022, T003 (DR-20, DR-24; OI-31) |
+| Billing.Invoicing.Api.Services.InvoiceWorkflowService.NewDraft | T015, T022, T003, T029 (DR-20, DR-24; OI-31) |
 | Billing.Invoicing.Api.Services.InvoiceWorkflowService.Preview | PU10 `SMALL_CALC` (T058, T060, T065 … T073; PR-01 … PR-08; DR-08, DR-09; OI-23) |
 | Billing.Invoicing.Api.Services.InvoiceWorkflowService.SendSms | T081 (OI-12, OI-45) |
 | Billing.Invoicing.Api.Services.InvoiceWorkflowService.TransferStock | T091 (OI-10, OI-44) |
@@ -1161,13 +1161,14 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Billing.Invoicing.Data.Queries.InvoiceQueries.GetLastInvoiceNo | T082 (OI-15.01) |
 | Billing.Invoicing.Data.Queries.InvoiceQueries.GetMoreDetails | T012, T056, T075, canvas `MORE` (OI-15.01, OI-15.03, OI-15.27, D-111) |
 | Billing.Invoicing.Data.Queries.InvoiceQueries.GetSelectedRequestRows | T085 cursor (DR-18, OI-15.08, D-26) |
-| Billing.Invoicing.Data.Queries.LookupQueries | T003, T004, T015, T023, T026, T027, T031, T039, T041, T052, T066, T068, PU23 `CHK_ADV_CLASS` |
+| Billing.Invoicing.Data.Queries.LookupQueries | T003, T004, T010, T015, T023, T026, T027, T029, T031, T039, T041, T052, T066, T068, PU23 `CHK_ADV_CLASS` |
 | Billing.Invoicing.Data.Queries.LookupQueries.GetClassAdvancedMode | PU23 `CHK_ADV_CLASS` `DISC_CLASSES.USE_ADVANCED` (OI-23, D-51) |
 | Billing.Invoicing.Data.Queries.LookupQueries.GetClinicProfile | T031, T032, T033 (DR-04, DR-05) |
 | Billing.Invoicing.Data.Queries.LookupQueries.GetCompanyIsDirect | T066 `COMPANYS.IS_DIRECT` price editability (PR-01, D-42) |
 | Billing.Invoicing.Data.Queries.LookupQueries.GetCompanyType | T023, T026 (DR-24) |
 | Billing.Invoicing.Data.Queries.LookupQueries.GetCurrencies | T004 (OI-15.21) |
 | Billing.Invoicing.Data.Queries.LookupQueries.GetDatabaseTime | T015 `SYSDATE` (DR-20, D-39) |
+| Billing.Invoicing.Data.Queries.LookupQueries.GetDoctorClinic | T029, T010 (DR-10, DR-25) |
 | Billing.Invoicing.Data.Queries.LookupQueries.GetInvoiceTypes | T004 (OI-15.20) |
 | Billing.Invoicing.Data.Queries.LookupQueries.GetPackageComponentFlags | T066, PU19 `OKA` `PACKAGE_DTL` (DR-23, OI-32) |
 | Billing.Invoicing.Data.Queries.LookupQueries.GetPatientCardId | T027 `PATIENT.CARD_ID` (OI-32, D-52) |
@@ -1268,7 +1269,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | components/PaymentPanel | `T_INV` payment items and `TOOL` buttons (DR-06 … DR-08, DR-22; T039, T041 … T043, T079) |
 | components/TotalsPanel | `T_INV` summary items (PR-01 … PR-08; DR-09) |
 | main | Infrastructure: React 18 entry point mounting `App` |
-| screens/InvoiceScreen | Canvas `CANVAS2`; actions T049, T079 … T082, T085, T089, T093 … T095 |
+| screens/InvoiceScreen | Canvas `CANVAS2`; actions T049, T079 … T082, T085, T089, T093 … T095; T029 validation of a preset doctor |
 | screens/MoreDetailsScreen | Canvas `MORE`; T050, T056, T091 (OI-10) |
 | state/invoiceDraft | Infrastructure: draft state shared by both screens, as `CANVAS2` and `MORE` share the `T_INV` / `D_INV` records |
 

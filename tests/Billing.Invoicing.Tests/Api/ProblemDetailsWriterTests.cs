@@ -3,6 +3,7 @@ using Billing.Invoicing.Api.Contracts;
 using Billing.Invoicing.Api.Errors;
 using Billing.Invoicing.Data.Errors;
 using Billing.Invoicing.Domain.Model;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
@@ -198,6 +199,115 @@ public sealed class ProblemDetailsWriterTests
         await new ProblemDetailsWriter(new OracleFailureTranslator()).WriteNotFoundAsync(context, "Invoice 5 was not found.");
 
         Assert.Equal(0, body.Length);
+    }
+
+    [Theory]
+    [InlineData(404, "/api/nope", "not-found", "Not found", "No resource matches the request path.")]
+    [InlineData(404, "/api/invoices//9001", "not-found", "Not found", "No resource matches the request path.")]
+    [InlineData(405, "/api/invoices/1", "method-not-allowed", "Method not allowed", "The request method is not allowed for this resource.")]
+    [InlineData(415, "/api/drafts/validate", "unsupported-media-type", "Unsupported media type", "The request body must be sent as application/json.")]
+    [InlineData(404, "/API/Nope", "not-found", "Not found", "No resource matches the request path.")]
+    [InlineData(415, "/Api/drafts/validate", "unsupported-media-type", "Unsupported media type", "The request body must be sent as application/json.")]
+    [InlineData(404, "/api", "not-found", "Not found", "No resource matches the request path.")]
+    public async Task StatusCodePage_ApiRefusal_WritesTheContractBody(int status, string path, string type, string title, string message)
+    {
+        var context = await WriteStatusCodePage(status, path);
+
+        Assert.Equal(status, context.Response.StatusCode);
+        Assert.Equal(ProblemJson, context.Response.ContentType);
+        context.Response.Body.Position = 0;
+        using var document = await JsonDocument.ParseAsync(context.Response.Body);
+        var body = document.RootElement;
+        Assert.Equal(new[] { "type", "title", "status", "message" }, Members(body));
+        Assert.Equal(type, body.GetProperty("type").GetString());
+        Assert.Equal(title, body.GetProperty("title").GetString());
+        Assert.Equal(status, body.GetProperty("status").GetInt32());
+        Assert.Equal(message, body.GetProperty("message").GetString());
+    }
+
+    [Fact]
+    public async Task StatusCodePage_MethodNotAllowed_KeepsTheAllowHeader()
+    {
+        var context = await WriteStatusCodePage(
+            StatusCodes.Status405MethodNotAllowed,
+            "/api/invoices/1",
+            response => response.Headers.Allow = "GET, PATCH");
+
+        Assert.Equal(StatusCodes.Status405MethodNotAllowed, context.Response.StatusCode);
+        Assert.Equal("GET, PATCH", context.Response.Headers.Allow.ToString());
+        Assert.Equal(ProblemJson, context.Response.ContentType);
+        Assert.True(context.Response.Body.Length > 0);
+    }
+
+    [Theory]
+    [InlineData(400)]
+    [InlineData(401)]
+    [InlineData(403)]
+    [InlineData(406)]
+    [InlineData(500)]
+    [InlineData(503)]
+    public async Task StatusCodePage_OtherStatus_WritesNothing(int status)
+    {
+        var context = await WriteStatusCodePage(status, "/api/invoices/1");
+
+        Assert.Equal(status, context.Response.StatusCode);
+        Assert.Null(context.Response.ContentType);
+        Assert.Equal(0, context.Response.Body.Length);
+    }
+
+    [Theory]
+    [InlineData("/")]
+    [InlineData("/apix/x")]
+    [InlineData("/index.html")]
+    [InlineData("/nope/api")]
+    public async Task StatusCodePage_PathOutsideApi_WritesNothing(string path)
+    {
+        var context = await WriteStatusCodePage(StatusCodes.Status404NotFound, path);
+
+        Assert.Equal(StatusCodes.Status404NotFound, context.Response.StatusCode);
+        Assert.Null(context.Response.ContentType);
+        Assert.Equal(0, context.Response.Body.Length);
+    }
+
+    [Fact]
+    public async Task StatusCodePage_StartedResponse_WritesNothing()
+    {
+        var context = new DefaultHttpContext();
+        var body = new MemoryStream();
+        context.Request.Path = "/api/nope";
+        context.Response.Body = body;
+        context.Features.Set<IHttpResponseFeature>(new StartedResponse { StatusCode = StatusCodes.Status404NotFound });
+
+        await new ProblemDetailsWriter(new OracleFailureTranslator())
+            .WriteAsync(new StatusCodeContext(context, new StatusCodePagesOptions(), _ => Task.CompletedTask));
+
+        Assert.Equal(0, body.Length);
+    }
+
+    [Fact]
+    public async Task StatusCodePage_NullContext_Throws()
+    {
+        await Assert.ThrowsAsync<ArgumentNullException>(() =>
+            new ProblemDetailsWriter(new OracleFailureTranslator()).WriteAsync((StatusCodeContext)null!));
+    }
+
+    /// <summary>Runs the status-code-pages overload over a bodiless response with the given status and request path.</summary>
+    /// <param name="status">Status already set on the response.</param>
+    /// <param name="path">Request path.</param>
+    /// <param name="arrange">Sets response headers before the write; none when null.</param>
+    /// <returns>The request after the write.</returns>
+    private static async Task<DefaultHttpContext> WriteStatusCodePage(int status, string path, Action<HttpResponse>? arrange = null)
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Path = path;
+        context.Response.Body = new MemoryStream();
+        context.Response.StatusCode = status;
+        arrange?.Invoke(context.Response);
+
+        await new ProblemDetailsWriter(new OracleFailureTranslator())
+            .WriteAsync(new StatusCodeContext(context, new StatusCodePagesOptions(), _ => Task.CompletedTask));
+
+        return context;
     }
 
     /// <summary>Response feature whose response has already started.</summary>

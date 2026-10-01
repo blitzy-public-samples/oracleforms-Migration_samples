@@ -4,6 +4,7 @@ import type {
   CoverageResponse,
   CreateInvoiceRequest,
   CreateInvoiceResponse,
+  DecimalValue,
   DocumentKind,
   DraftDto,
   DraftRequestDto,
@@ -232,12 +233,157 @@ function operatorHeaders(withBody: boolean): Record<string, string> {
   return headers;
 }
 
+/** Sticky matcher of one JSON number token. */
+const JSON_NUMBER_TOKEN = /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
+
+/** Parses JSON text like JSON.parse, keeping a number token as its source text when String(Number(token)) differs from it (D-149); throws SyntaxError on invalid JSON. */
+function parseJson(text: string): unknown {
+  let index = 0;
+
+  function fail(): never {
+    throw new SyntaxError(
+      index < text.length ? `Unexpected character at position ${index} of the JSON text.` : 'Unexpected end of the JSON text.',
+    );
+  }
+
+  function skipWhitespace(): void {
+    while (index < text.length) {
+      const code = text.charCodeAt(index);
+      if (code !== 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d) {
+        return;
+      }
+      index += 1;
+    }
+  }
+
+  function consume(char: string): void {
+    if (text[index] !== char) {
+      fail();
+    }
+    index += 1;
+  }
+
+  function readString(): string {
+    const start = index;
+    index += 1;
+    while (index < text.length) {
+      const char = text[index];
+      if (char === '"') {
+        index += 1;
+        return JSON.parse(text.slice(start, index)) as string;
+      }
+      index += char === '\\' ? 2 : 1;
+    }
+    return fail();
+  }
+
+  function readNumber(): number | string {
+    JSON_NUMBER_TOKEN.lastIndex = index;
+    const match = JSON_NUMBER_TOKEN.exec(text);
+    if (match === null) {
+      return fail();
+    }
+    const token = match[0];
+    index += token.length;
+    const value = Number(token);
+    return String(value) === token ? value : token;
+  }
+
+  function readLiteral<T>(word: string, value: T): T {
+    if (!text.startsWith(word, index)) {
+      fail();
+    }
+    index += word.length;
+    return value;
+  }
+
+  function readObject(): Record<string, unknown> {
+    const result: Record<string, unknown> = {};
+    consume('{');
+    skipWhitespace();
+    if (text[index] === '}') {
+      index += 1;
+      return result;
+    }
+    for (;;) {
+      skipWhitespace();
+      if (text[index] !== '"') {
+        fail();
+      }
+      const key = readString();
+      skipWhitespace();
+      consume(':');
+      Object.defineProperty(result, key, { value: readValue(), writable: true, enumerable: true, configurable: true });
+      skipWhitespace();
+      if (text[index] === '}') {
+        index += 1;
+        return result;
+      }
+      consume(',');
+    }
+  }
+
+  function readArray(): unknown[] {
+    const result: unknown[] = [];
+    consume('[');
+    skipWhitespace();
+    if (text[index] === ']') {
+      index += 1;
+      return result;
+    }
+    for (;;) {
+      result.push(readValue());
+      skipWhitespace();
+      if (text[index] === ']') {
+        index += 1;
+        return result;
+      }
+      consume(',');
+    }
+  }
+
+  function readValue(): unknown {
+    skipWhitespace();
+    switch (text[index]) {
+      case '{':
+        return readObject();
+      case '[':
+        return readArray();
+      case '"':
+        return readString();
+      case 't':
+        return readLiteral('true', true);
+      case 'f':
+        return readLiteral('false', false);
+      case 'n':
+        return readLiteral('null', null);
+      default:
+        return readNumber();
+    }
+  }
+
+  const value = readValue();
+  skipWhitespace();
+  if (index !== text.length) {
+    fail();
+  }
+  return value;
+}
+
+/** Text of a decimal as the Api returned it: a string unchanged, a finite number as String writes it, else ''. */
+export function decimalText(value: DecimalValue | null | undefined): string {
+  if (typeof value === 'string') {
+    return value;
+  }
+  return typeof value === 'number' && Number.isFinite(value) ? String(value) : '';
+}
+
 function parseErrorBody(text: string, contentType: string | null): unknown {
   if (text.trim() === '' || contentType === null || !contentType.toLowerCase().includes('json')) {
     return undefined;
   }
   try {
-    return JSON.parse(text) as unknown;
+    return parseJson(text);
   } catch {
     return undefined;
   }
@@ -320,7 +466,7 @@ async function request<T>(
   }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text) as unknown;
+    parsed = parseJson(text);
   } catch {
     throw new ApiError({
       status: response.status,

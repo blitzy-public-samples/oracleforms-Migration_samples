@@ -361,7 +361,7 @@ public sealed class DomainRuleBehaviourTests
             Texts(PatientEligibilityRules.Evaluate(expired, Admin(1), DraftDate)));
         Assert.Equal(
             new[] { ("Card Expired 28/09/2026 , Today last Date", ValidationMessage.Warning) },
-            Texts(PatientEligibilityRules.Evaluate(expired with { CardEnd = DraftDate }, Admin(2), DraftDate)));
+            Texts(PatientEligibilityRules.Evaluate(expired with { CardEnd = DraftDate.Date }, Admin(2), DraftDate)));
     }
 
     [Fact]
@@ -391,35 +391,32 @@ public sealed class DomainRuleBehaviourTests
     }
 
     [Fact]
-    public void Eligibility_ExpiryComparesDraftTimestamp()
+    public void Eligibility_ExpiryComparesDraftDateOnly()
     {
         var today = new DateTime(2026, 9, 28);
         var afternoon = new DateTime(2026, 9, 28, 15, 30, 0);
         var evening = new DateTime(2026, 9, 28, 18, 30, 0);
         var lastSecond = new DateTime(2026, 9, 28, 23, 59, 59);
 
-        Assert.Equal(
-            new[] { ("Contract  Ended 28/09/2026", ValidationMessage.Blocking) },
-            Texts(PatientEligibilityRules.Evaluate(InsuredCoverage() with { ContractEnd = today }, Admin(2), afternoon)));
+        Assert.Empty(PatientEligibilityRules.Evaluate(InsuredCoverage() with { ContractEnd = today }, Admin(2), afternoon).Messages);
         Assert.Empty(PatientEligibilityRules.Evaluate(InsuredCoverage() with { ContractEnd = afternoon }, Admin(2), afternoon).Messages);
         Assert.Equal(
             new[] { ("Contract  Ended 27/09/2026", ValidationMessage.Blocking) },
             Texts(PatientEligibilityRules.Evaluate(InsuredCoverage() with { ContractEnd = new DateTime(2026, 9, 27) }, Admin(2), new DateTime(2026, 9, 28, 0, 0, 1))));
 
         Assert.Equal(
-            new[] { ("Card Expired 28/09/2026", ValidationMessage.Blocking) },
+            new[] { ("Card Expired 28/09/2026 , Today last Date", ValidationMessage.Warning) },
             Texts(PatientEligibilityRules.Evaluate(InsuredCoverage() with { CardEnd = today }, Admin(2), evening)));
         Assert.Equal(
-            new[] { ("Card Expired 28/09/2026 , But due to that user have date admin privileges system will open claim", ValidationMessage.Warning) },
-            Texts(PatientEligibilityRules.Evaluate(InsuredCoverage() with { CardEnd = today }, Admin(1), evening)));
-        Assert.Equal(
             new[] { ("Card Expired 28/09/2026 , Today last Date", ValidationMessage.Warning) },
-            Texts(PatientEligibilityRules.Evaluate(InsuredCoverage() with { CardEnd = evening }, Admin(2), evening)));
+            Texts(PatientEligibilityRules.Evaluate(InsuredCoverage() with { CardEnd = today }, Admin(1), evening)));
+        Assert.Empty(PatientEligibilityRules.Evaluate(InsuredCoverage() with { CardEnd = evening }, Admin(2), evening).Messages);
         Assert.Empty(PatientEligibilityRules.Evaluate(InsuredCoverage() with { CardEnd = new DateTime(2026, 9, 28, 18, 0, 0) }, Admin(2), new DateTime(2026, 9, 28, 10, 15, 0)).Messages);
 
-        Assert.Equal(
-            new[] { ("Policy  Ended 28/09/2026 Patient well treated as cash patient ", ValidationMessage.Blocking) },
-            Texts(PatientEligibilityRules.Evaluate(InsuredCoverage() with { SubCompCode = "S1", SubCompanyContractEnd = today }, Admin(2), lastSecond)));
+        Assert.Empty(PatientEligibilityRules.Evaluate(
+            InsuredCoverage() with { SubCompCode = "S1", SubCompanyContractEnd = today },
+            Admin(2),
+            lastSecond).Messages);
         Assert.Empty(PatientEligibilityRules.Evaluate(
             InsuredCoverage() with { SubCompCode = "S1", SubCompanyContractEnd = lastSecond },
             Admin(2),

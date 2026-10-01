@@ -300,12 +300,12 @@ public sealed class HeaderInputBinderTests
     public void Bind_HeaderTextOverFieldWidthInCharacters_ThrowsBindingRejection(string name, int width)
     {
         string value = new('A', width + 1);
-        string expected = $"Invoice header: {name} has {width + 1} characters; at most {width} can be bound.";
+        string expected = $"{ItemOf(name)} has {width + 1} characters; at most {width} can be bound.";
 
         ArgumentException error = Assert.Throws<ArgumentException>(
             () => HeaderInputBinder.Bind(WithHeaderText(name, value), CreateOperator()));
 
-        AssertBindingRejection(expected, "header", error);
+        AssertBindingRejection(expected, ItemOf(name), "header", error);
     }
 
     [Theory]
@@ -314,14 +314,14 @@ public sealed class HeaderInputBinderTests
     {
         string value = new(TwoByteCharacter, width / 2 + 1);
         int bytes = Encoding.UTF8.GetByteCount(value);
-        string expected = $"Invoice header: {name} has {bytes} bytes in UTF-8; at most {width} can be bound.";
+        string expected = $"{ItemOf(name)} has {bytes} bytes in UTF-8; at most {width} can be bound.";
 
         ArgumentException error = Assert.Throws<ArgumentException>(
             () => HeaderInputBinder.Bind(WithHeaderText(name, value), CreateOperator()));
 
         Assert.InRange(value.Length, 1, width);
         Assert.True(bytes > width, $"{bytes} bytes");
-        AssertBindingRejection(expected, "header", error);
+        AssertBindingRejection(expected, ItemOf(name), "header", error);
     }
 
     [Fact]
@@ -331,7 +331,7 @@ public sealed class HeaderInputBinderTests
 
         ArgumentException error = Assert.Throws<ArgumentException>(() => HeaderInputBinder.Bind(header, CreateOperator()));
 
-        AssertBindingRejection("Invoice header: h_patientno has 13 characters; at most 12 can be bound.", "header", error);
+        AssertBindingRejection("PATIENTNO has 13 characters; at most 12 can be bound.", "PATIENTNO", "header", error);
     }
 
     [Fact]
@@ -344,15 +344,15 @@ public sealed class HeaderInputBinderTests
     }
 
     [Theory]
-    [InlineData("12345678901", "Invoice header: h_info_center_id has 11 characters; at most 10 can be bound.")]
-    [InlineData("\u00E9\u00E9\u00E9\u00E9\u00E9\u00E9", "Invoice header: h_info_center_id has 12 bytes in UTF-8; at most 10 can be bound.")]
+    [InlineData("12345678901", "INFO_CENTER_ID has 11 characters; at most 10 can be bound.")]
+    [InlineData("\u00E9\u00E9\u00E9\u00E9\u00E9\u00E9", "INFO_CENTER_ID has 12 bytes in UTF-8; at most 10 can be bound.")]
     public void Bind_InfoCenterIdOverFieldWidth_ThrowsBindingRejection(string infoCenterId, string expected)
     {
         OperatorContext operatorContext = CreateOperator() with { InfoCenterId = infoCenterId };
 
         ArgumentException error = Assert.Throws<ArgumentException>(() => HeaderInputBinder.Bind(CreateHeader(), operatorContext));
 
-        AssertBindingRejection(expected, "operatorContext", error);
+        AssertBindingRejection(expected, "INFO_CENTER_ID", "operatorContext", error);
     }
 
     [Fact]
@@ -375,13 +375,13 @@ public sealed class HeaderInputBinderTests
             () => HeaderInputBinder.Bind(CreateHeader(), CreateOperator(machineName)));
 
         Assert.Equal(15, machineName.Length);
-        AssertBindingRejection("Invoice header: h_machine_n has 23 bytes in UTF-8; at most 15 can be bound.", "operatorContext", error);
+        AssertBindingRejection("MACHINE_N has 23 bytes in UTF-8; at most 15 can be bound.", "MACHINE_N", "operatorContext", error);
     }
 
     [Fact]
-    public void Bind_TextOverFieldWidth_TranslatesToFormLevelFieldValidation()
+    public void Bind_TextOverFieldWidth_TranslatesToFieldValidationPlacedOnItsItem()
     {
-        const string expected = "Invoice header: h_claim_flag has 3 characters; at most 2 can be bound.";
+        const string expected = "CLAIM_FLAG has 3 characters; at most 2 can be bound.";
         InvoiceHeaderDraft header = CreateHeader() with { ClaimFlag = "OOO" };
         ArgumentException error = Assert.Throws<ArgumentException>(() => HeaderInputBinder.Bind(header, CreateOperator()));
 
@@ -391,7 +391,7 @@ public sealed class HeaderInputBinderTests
         Assert.Equal(422, failure.Status);
         Assert.Equal(DataFailure.FieldValidationType, failure.Type);
         Assert.Equal(expected, failure.Message);
-        Assert.Null(failure.Field);
+        Assert.Equal("CLAIM_FLAG", failure.Field);
         Assert.Null(failure.Number);
         Assert.Null(failure.Package);
         Assert.Null(failure.Kind);
@@ -455,11 +455,23 @@ public sealed class HeaderInputBinderTests
         _ => throw new ArgumentOutOfRangeException(nameof(name), name, "Not a header-sourced text field."),
     };
 
-    private static void AssertBindingRejection(string expected, string paramName, ArgumentException error)
+    /// <summary>Returns the T_INV Form item of a header-sourced text field.</summary>
+    private static string ItemOf(string name) => name switch
+    {
+        "h_patientno" => "PATIENTNO",
+        "h_curr_code" => "CURR_CODE",
+        "h_claim_no" => "CLAIM_NO",
+        "h_claim_flag" => "CLAIM_FLAG",
+        "h_note_no" => "NOTE_NO",
+        _ => throw new ArgumentOutOfRangeException(nameof(name), name, "Not a header-sourced text field."),
+    };
+
+    private static void AssertBindingRejection(string expected, string item, string paramName, ArgumentException error)
     {
         Assert.Equal(paramName, error.ParamName);
         Assert.StartsWith(expected, error.Message, StringComparison.Ordinal);
         Assert.Equal(expected, error.Data[OracleFailureTranslator.BindingRejectionKey]);
+        Assert.Equal(item, error.Data[OracleFailureTranslator.BindingRejectionFieldKey]);
     }
 
     private static OracleParameter Find(IReadOnlyList<OracleParameter> parameters, string name) =>

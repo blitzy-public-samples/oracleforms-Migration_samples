@@ -1,6 +1,4 @@
 using System.Data;
-using System.Text;
-using Billing.Invoicing.Data.Errors;
 using Billing.Invoicing.Domain.Model;
 using Oracle.ManagedDataAccess.Client;
 using Oracle.ManagedDataAccess.Types;
@@ -11,6 +9,7 @@ namespace Billing.Invoicing.Data.Plsql;
 public static class ClientIdBinder
 {
     private const string ParameterName = "l_client_id";
+    private const string Item = "CLIENT_ID";
     private const int MaxElementLength = 4000;
 
     /// <summary>Builds the <c>l_client_id</c> IN associative array, element <c>i</c> holding <c>lines[i].ClientId</c>.</summary>
@@ -29,22 +28,10 @@ public static class ClientIdBinder
                 continue;
             }
 
-            // A client id over the t_vc element size in characters or UTF-8 bytes is rejected, never truncated to fit (D-109).
-            string? rejection = null;
-            if (clientId.Length > MaxElementLength)
+            // A client id over the t_vc element size in characters or UTF-8 bytes is rejected on CLIENT_ID and its 1-based line, never truncated to fit (D-109).
+            if (BoundedVarchar2.Rejection($"{Item} on line {i + 1}", Item, clientId, MaxElementLength, nameof(lines)) is { } rejection)
             {
-                rejection = $"Invoice line at index {i}: {ParameterName} has {clientId.Length} characters; at most {MaxElementLength} can be bound.";
-            }
-            else if (Encoding.UTF8.GetByteCount(clientId) is var bytes and > MaxElementLength)
-            {
-                rejection = $"Invoice line at index {i}: {ParameterName} has {bytes} bytes in UTF-8; at most {MaxElementLength} can be bound.";
-            }
-
-            if (rejection is not null)
-            {
-                var error = new ArgumentException(rejection, nameof(lines));
-                error.Data[OracleFailureTranslator.BindingRejectionKey] = rejection;
-                throw error;
+                throw rejection;
             }
         }
 

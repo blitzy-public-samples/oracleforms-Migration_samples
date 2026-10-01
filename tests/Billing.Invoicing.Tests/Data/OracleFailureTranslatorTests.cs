@@ -29,6 +29,12 @@ public sealed class OracleFailureTranslatorTests
     private const string PackageExpansionQuantityText =
         "Request package expansion failed: multiplied quantity exceeds the supported two-decimal quantity precision for component 9.";
     private const string ListenerHostText = "Cannot connect. No listener at host 10.1.2.3 port 1521. (CONNECTION_ID=AbCdEf123==)";
+    private const string ConnectFailureText = "ORA-50201: Oracle Communication: Failed to connect to server or failed to parse connect string";
+
+    private const string TransportConnectFailureText =
+        "ORA-50232: Network Transport: TCP transport address connect failure for  host 127.0.0.1 port 1599. (CONNECTION_ID=AbCdEf123==)";
+
+    private const string ConnectionRequestTimedOutText = "ORA-50000: Connection request timed out";
 
     private static readonly string EngineFrame = Frame("HIS.BIL_INVOICE_ENGINE", 619);
     private static readonly string ApiFrame = Frame("HIS.BIL_INVOICE_API", 1476);
@@ -730,6 +736,114 @@ public sealed class OracleFailureTranslatorTests
     }
 
     [Fact]
+    public void Translate_DriverConnectFailureWhileOpening_Is503WithoutHostDetails()
+    {
+        OracleException driver = ConnectFailure(new Exception(TransportConnectFailureText));
+
+        foreach (Exception exception in new Exception[] { driver, new InvalidOperationException("open failed", driver) })
+        {
+            DataFailure? failure = translator.Translate(exception);
+
+            AssertUnavailable(failure, 50201);
+            Assert.DoesNotContain("127.0.0.1", failure!.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain("1599", failure.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain("host", failure.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("port", failure.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("CONNECTION_ID", failure.Message, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void Translate_DriverConnectFailureWithSocketOrStreamCauseWhileOpening_Is503()
+    {
+        foreach (Exception cause in new Exception[]
+        {
+            new IOException("Unable to read data from the transport connection.", new SocketException(10054)),
+            new Exception("ORA-00542: SSL Handshake failed", new IOException("Received an unexpected EOF or 0 bytes from the transport stream.")),
+            new IOException("Received an unexpected EOF or 0 bytes from the transport stream."),
+        })
+        {
+            AssertUnavailable(translator.Translate(ConnectFailure(cause)), 50201);
+        }
+    }
+
+    [Fact]
+    public void Translate_DriverConnectFailureWithConnectStringFault_Is500()
+    {
+        const string unformattedConnectFailure = "ORA-50232: Network Transport: TCP transport address connect failure for %s. (CONNECTION_ID=%s)";
+
+        foreach (Exception parseFault in new Exception[]
+        {
+            new ArgumentOutOfRangeException("port", "Specified argument was out of the range of valid values."),
+            new ArgumentException("The Data Source address is malformed."),
+            new FormatException("The input string '127.0.0.1:abc' was not in a correct format."),
+        })
+        {
+            DataFailure? failure = translator.Translate(ConnectFailure(new Exception(unformattedConnectFailure, parseFault)));
+
+            AssertOracleError(failure, 50201);
+        }
+    }
+
+    [Fact]
+    public void Translate_DriverConnectFailureOutsideOpen_Is500()
+    {
+        foreach (Exception cause in new Exception[]
+        {
+            new Exception(TransportConnectFailureText),
+            new IOException("Received an unexpected EOF or 0 bytes from the transport stream."),
+        })
+        {
+            AssertOracleError(translator.Translate(ConnectFailure(cause, duringOpen: false)), 50201);
+        }
+    }
+
+    [Fact]
+    public void Translate_DriverConnectFailureWhileOpeningWithoutTransportCause_Is500()
+    {
+        OracleException plain = Driver(50201, ConnectFailureText);
+        plain.Data[OracleErrorParser.DuringOpenKey] = true;
+
+        foreach (OracleException driver in new[] { plain, ConnectFailure(new InvalidOperationException("driver detail")) })
+        {
+            AssertOracleError(translator.Translate(driver), 50201);
+        }
+    }
+
+    [Fact]
+    public void Translate_StreamOrTransportCauseOutsideADriverConnectFailure_IsNotUnavailable()
+    {
+        foreach (Exception cause in new Exception[] { new IOException("stream closed"), new Exception(TransportConnectFailureText) })
+        {
+            OracleException logon = Driver(1017, "ORA-01017: invalid username/password; logon denied", cause);
+            logon.Data[OracleErrorParser.DuringOpenKey] = true;
+
+            AssertOracleError(translator.Translate(logon), 1017);
+        }
+
+        Assert.Null(translator.Translate(new IOException("Unexpected end of request content.")));
+        Assert.Null(translator.Translate(new InvalidOperationException("request failed", new IOException("Unexpected end of request content."))));
+    }
+
+    [Fact]
+    public void Translate_DriverTimeoutWhileOpening_Is503WithNumber()
+    {
+        OracleException driver = Driver(50000, ConnectionRequestTimedOutText);
+        driver.Data[OracleErrorParser.DuringOpenKey] = true;
+
+        AssertUnavailable(translator.Translate(OracleErrorParser.FromParts(50000, ConnectionRequestTimedOutText, duringOpen: true)), 50000);
+        AssertUnavailable(translator.Translate(driver), 50000);
+        AssertUnavailable(translator.Translate(new InvalidOperationException("open failed", driver)), 50000);
+    }
+
+    [Fact]
+    public void Translate_DriverTimeoutOutsideOpen_Is500()
+    {
+        AssertOracleError(translator.Translate(OracleErrorParser.FromParts(50000, ConnectionRequestTimedOutText)), 50000);
+        AssertOracleError(translator.Translate(Driver(50000, ConnectionRequestTimedOutText)), 50000);
+    }
+
+    [Fact]
     public void Translate_TimeoutWithPath_Is503WithFixedMessage()
     {
         var timeout = new TimeoutException("retry failed at /etc/his/connection.conf");
@@ -993,5 +1107,45 @@ public sealed class OracleFailureTranslatorTests
             message,
             inner ?? new InvalidOperationException("driver detail"),
         });
+    }
+
+    /// <summary>Builds an ORA-50201 driver exception whose network-layer exception wraps a cause.</summary>
+    /// <param name="cause">Exception below the driver's network-layer exception.</param>
+    /// <param name="duringOpen">Whether to mark the exception as raised while opening.</param>
+    /// <returns>The driver exception.</returns>
+    private static OracleException ConnectFailure(Exception cause, bool duringOpen = true)
+    {
+        OracleException driver = Driver(50201, ConnectFailureText, new Exception(ConnectFailureText, cause));
+        if (duringOpen)
+        {
+            driver.Data[OracleErrorParser.DuringOpenKey] = true;
+        }
+
+        return driver;
+    }
+
+    /// <summary>Asserts a 503 oracle-unavailable failure with the number, no package and the fixed message.</summary>
+    /// <param name="failure">The translated failure.</param>
+    /// <param name="number">Expected Oracle number.</param>
+    private static void AssertUnavailable(DataFailure? failure, int number)
+    {
+        Assert.NotNull(failure);
+        Assert.Equal(503, failure.Status);
+        Assert.Equal(DataFailure.OracleUnavailableType, failure.Type);
+        Assert.Equal(number, failure.Number);
+        Assert.Null(failure.Package);
+        Assert.Equal(UnavailableMessage, failure.Message);
+    }
+
+    /// <summary>Asserts a 500 oracle-error failure with the number and the fixed message.</summary>
+    /// <param name="failure">The translated failure.</param>
+    /// <param name="number">Expected Oracle number.</param>
+    private static void AssertOracleError(DataFailure? failure, int number)
+    {
+        Assert.NotNull(failure);
+        Assert.Equal(500, failure.Status);
+        Assert.Equal(DataFailure.OracleErrorType, failure.Type);
+        Assert.Equal(number, failure.Number);
+        Assert.Equal(OracleErrorMessage, failure.Message);
     }
 }

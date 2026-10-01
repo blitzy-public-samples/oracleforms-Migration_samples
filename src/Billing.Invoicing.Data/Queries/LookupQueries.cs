@@ -91,6 +91,10 @@ public sealed class LookupQueries : ILookupQueries
     public const string GetClassAdvancedModeSql =
         "SELECT USE_ADVANCED FROM DISC_CLASSES WHERE COMP_CODE = :subCompCode AND CLASS_CODE = :classCode";
 
+    /// <summary>SELECT of the doctor's CLINICS row read by T029, with DOCTORS.DOC_NAME read by T010.</summary>
+    public const string GetDoctorClinicSql =
+        "SELECT c.CLINICID, c.CLINICNAME, d.DOC_NAME FROM DOCTORS d, CLINICS c WHERE d.DOCID = :docId AND c.CLINICID = d.CLINICID";
+
     private const int MaxInListIds = 1000;
 
     private readonly InvoicingDataOptions _options;
@@ -463,6 +467,26 @@ public sealed class LookupQueries : ILookupQueries
         return ScalarInt32(GetClassAdvancedModeSql, parameters, "USE_ADVANCED", cancellationToken);
     }
 
+    /// <summary>CLINICS id and name of a doctor's clinic with DOCTORS.DOC_NAME, or null unless exactly one row with a clinic id is found.</summary>
+    /// <param name="docId">Doctor id.</param>
+    /// <param name="cancellationToken">Cancels the query.</param>
+    /// <exception cref="InvalidCastException">CLINICID is not a whole number.</exception>
+    /// <exception cref="OverflowException">CLINICID exceeds the Int32 range.</exception>
+    public async Task<(int ClinicId, string? ClinicName, string? DocName)?> GetDoctorClinic(int docId, CancellationToken cancellationToken = default)
+    {
+        var parameters = new DynamicParameters();
+        parameters.Add("docId", docId, DbType.Int32);
+
+        await using var connection = await OracleSessionFactory.OpenConnection(_options, cancellationToken).ConfigureAwait(false);
+        var rows = (await connection.QueryAsync<DoctorClinicRow>(Command(GetDoctorClinicSql, parameters, cancellationToken)).ConfigureAwait(false)).ToArray();
+        if (rows.Length != 1 || ToInt32(rows[0].CLINICID, nameof(DoctorClinicRow.CLINICID)) is not { } clinicId)
+        {
+            return null;
+        }
+
+        return (clinicId, rows[0].CLINICNAME, rows[0].DOC_NAME);
+    }
+
     /// <summary>First column of the first row of a query as a whole number, or null when there is no row or value.</summary>
     private async Task<int?> ScalarInt32(string sql, DynamicParameters parameters, string column, CancellationToken cancellationToken)
     {
@@ -707,5 +731,17 @@ public sealed class LookupQueries : ILookupQueries
 
         /// <summary>Queue flag, 0 when null; 1 adds the service to the visit queue.</summary>
         public decimal? ADD_TO_QUE { get; set; }
+    }
+
+    private sealed class DoctorClinicRow
+    {
+        /// <summary>Clinic id of the doctor's clinic.</summary>
+        public decimal? CLINICID { get; set; }
+
+        /// <summary>Clinic name.</summary>
+        public string? CLINICNAME { get; set; }
+
+        /// <summary>Doctor name.</summary>
+        public string? DOC_NAME { get; set; }
     }
 }

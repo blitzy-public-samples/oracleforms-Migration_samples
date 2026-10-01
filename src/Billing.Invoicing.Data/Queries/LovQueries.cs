@@ -195,7 +195,7 @@ public sealed class LovQueries : ILovQueries
     }
 
     /// <summary>Reservations of an active doctor of the information centre on a date, free or held by the patient, for the view-only RESERV_NO LOV.</summary>
-    /// <param name="invDate">Draft date, bound as received.</param>
+    /// <param name="invDate">Draft date; its date part is bound.</param>
     /// <param name="docId">Doctor of the draft header.</param>
     /// <param name="patientNo">Patient of the draft header.</param>
     /// <param name="infoCenterId">Operator's information centre.</param>
@@ -219,7 +219,7 @@ public sealed class LovQueries : ILovQueries
 
     /// <summary>Standard offers valid on a date at the information centre for the OFFERS LOV; no rows unless the pay type is 1.</summary>
     /// <param name="payType">Pay type of the draft header.</param>
-    /// <param name="invDate">Draft date.</param>
+    /// <param name="invDate">Draft date; its date part is bound.</param>
     /// <param name="infoCenterId">Operator's information centre.</param>
     /// <param name="cancellationToken">Cancels the read.</param>
     /// <returns>OFERID and OFFER_NAME rows.</returns>
@@ -300,9 +300,9 @@ public sealed class LovQueries : ILovQueries
         parameters.Add(name, value, DbType.AnsiString, ParameterDirection.Input, maxBytes);
     }
 
-    /// <summary>Adds a DATE input bind that keeps the time of day.</summary>
+    /// <summary>Adds a DATE input bind of the date part of <paramref name="value"/>, at midnight.</summary>
     private static void AddDate(DynamicParameters parameters, string name, DateTime value) =>
-        parameters.Add(name, value, DbType.Date, ParameterDirection.Input);
+        parameters.Add(name, value.Date, DbType.Date, ParameterDirection.Input);
 
     /// <summary>Adds a NUMBER input bind.</summary>
     private static void AddNumber(DynamicParameters parameters, string name, int value) =>

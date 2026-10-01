@@ -25,7 +25,7 @@ public static class HeaderRecordRules
 
     /// <summary>Validates the header record in T014 order and stops at the first blocking message.</summary>
     /// <param name="header">Draft header supplying PAYTYPE, COMP_CODE, PATIENTNO and DOCIDX.</param>
-    /// <returns>One blocking message on COMP_CODE (credit with company '0'), PATIENTNO (null or empty) or DOCIDX (null), whichever fails first; otherwise <see cref="RuleResult.Empty"/>.</returns>
+    /// <returns>One blocking message on COMP_CODE (credit with company '0'), PATIENTNO (null, empty or white space) or DOCIDX (null), whichever fails first; otherwise <see cref="RuleResult.Empty"/>.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="header"/> is null.</exception>
     public static RuleResult ValidateRecord(InvoiceHeaderDraft header)
     {
@@ -36,7 +36,7 @@ public static class HeaderRecordRules
             return Block(CompCodeField, PatientNotInCompany);
         }
 
-        if (string.IsNullOrEmpty(header.PatientNo))
+        if (string.IsNullOrWhiteSpace(header.PatientNo))
         {
             return Block(PatientNoField, PatientRequired);
         }

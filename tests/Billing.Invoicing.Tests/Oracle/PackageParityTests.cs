@@ -257,7 +257,7 @@ public sealed class PackageParityTests
     [Trait("SideEffects", OracleFactAttribute.CreateSideEffects)]
     public Task PR22_IdempotentCreate() => RunAsync("PR-22", Operation.Create);
 
-    [OracleFact(PendingOn = "OI-08", SideEffects = OracleFactAttribute.CreateSideEffects)]
+    [OracleFact(PendingOn = "OI-08 … OI-10", SideEffects = OracleFactAttribute.CreateSideEffects)]
     [Trait("Rule", "PR-23")]
     [Trait("SideEffects", OracleFactAttribute.CreateSideEffects)]
     public Task PR23_PostingStages() => RunAsync("PR-23", Operation.Create);

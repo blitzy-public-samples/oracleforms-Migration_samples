@@ -11,9 +11,9 @@
   ],
   "cases": [
     {
-      "name": "pending-oi-08-paid-invoice-posts-payment",
+      "name": "pending-oi-08-oi-10-paid-invoice-posts-payment",
       "status": "pending-evidence",
-      "pendingOn": "OI-08",
+      "pendingOn": "OI-08 … OI-10",
       "input": {
         "operation": "BilInvoiceApiGateway.CreateFullInvoice",
         "header": {
@@ -54,9 +54,9 @@
       "expected": {}
     },
     {
-      "name": "pending-oi-08-partial-payment-refused-or-accepted",
+      "name": "pending-oi-08-oi-10-partial-payment-refused-or-accepted",
       "status": "pending-evidence",
-      "pendingOn": "OI-08",
+      "pendingOn": "OI-08 … OI-10",
       "input": {
         "operation": "BilInvoiceApiGateway.CreateFullInvoice",
         "header": {
@@ -98,9 +98,9 @@
       "decision": "D-13"
     },
     {
-      "name": "pending-oi-08-queue-and-stock-posted",
+      "name": "pending-oi-08-oi-10-queue-and-stock-posted",
       "status": "pending-evidence",
-      "pendingOn": "OI-08",
+      "pendingOn": "OI-08 … OI-10",
       "input": {
         "operation": "BilInvoiceApiGateway.CreateFullInvoice",
         "header": {

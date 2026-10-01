@@ -51,7 +51,7 @@ public sealed record FixtureExpected(string? Outcome, IReadOnlyList<FixtureMessa
 /// <param name="Input">Case input, deserialised by the test into its own shape.</param>
 /// <param name="Expected">Expected result.</param>
 /// <param name="Requires">Assumed rows and shared-package outputs of a package case.</param>
-/// <param name="PendingOn">Open-item id of a pending-evidence case.</param>
+/// <param name="PendingOn">Open-item id, or ascending open-item range, of a pending-evidence case.</param>
 public sealed record FixtureCase(
     string Name,
     string Status,
@@ -588,10 +588,9 @@ public static partial class ParityFixture
             throw Invalid(id, label, $"a domain case must be '{Derivable}'.");
         }
 
-        if (fixtureCase.Status == PendingEvidence
-            && (fixtureCase.PendingOn is null || !OpenItemPattern().IsMatch(fixtureCase.PendingOn)))
+        if (fixtureCase.Status == PendingEvidence && !IsOpenItemReference(fixtureCase.PendingOn))
         {
-            throw Invalid(id, label, $"pendingOn '{fixtureCase.PendingOn}' must be an open-item id OI-nn.");
+            throw Invalid(id, label, $"pendingOn '{fixtureCase.PendingOn}' must be an open-item id OI-nn or an ascending range OI-nn … OI-nn.");
         }
 
         if (fixtureCase.Input.ValueKind != JsonValueKind.Object)
@@ -691,6 +690,25 @@ public static partial class ParityFixture
         }
     }
 
+    private static bool IsOpenItemReference(string? reference)
+    {
+        if (reference is null)
+        {
+            return false;
+        }
+
+        var match = OpenItemPattern().Match(reference);
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        var last = match.Groups["last"];
+        return !last.Success
+            || int.Parse(last.ValueSpan, NumberStyles.None, CultureInfo.InvariantCulture)
+                > int.Parse(match.Groups["first"].ValueSpan, NumberStyles.None, CultureInfo.InvariantCulture);
+    }
+
     private static InvalidDataException Invalid(string id, string? caseName, string problem) =>
         new(caseName is null
             ? $"Fixture '{id}': {problem}"
@@ -699,6 +717,6 @@ public static partial class ParityFixture
     [GeneratedRegex(@"^(DR|PR)-[0-9]{2}\z", RegexOptions.CultureInvariant)]
     private static partial Regex FixtureIdPattern();
 
-    [GeneratedRegex(@"^OI-[0-9]{2}\z", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"^OI-(?<first>[0-9]{2})(?: \u2026 OI-(?<last>[0-9]{2}))?\z", RegexOptions.CultureInvariant)]
     private static partial Regex OpenItemPattern();
 }

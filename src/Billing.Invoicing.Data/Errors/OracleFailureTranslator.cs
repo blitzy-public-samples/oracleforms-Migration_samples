@@ -1,6 +1,7 @@
 using System.Collections.Frozen;
 using System.Net.Sockets;
 using System.Text.RegularExpressions;
+using Oracle.ManagedDataAccess.Client;
 
 namespace Billing.Invoicing.Data.Errors;
 
@@ -9,6 +10,9 @@ public sealed partial class OracleFailureTranslator
 {
     /// <summary>Exception data key holding the operator-facing text of a value a binder or gateway refused to bind.</summary>
     public const string BindingRejectionKey = "Billing.Invoicing.Data.BindingRejection";
+
+    /// <summary>Exception data key holding the legacy item name a binding rejection is placed on.</summary>
+    public const string BindingRejectionFieldKey = "Billing.Invoicing.Data.BindingRejectionField";
 
     /// <summary><see cref="Exception.Data"/> key whose value <c>true</c> marks a blank or malformed Oracle connection string.</summary>
     public const string ConfigurationFaultKey = "Billing.Invoicing.Data.ConfigurationFault";
@@ -20,6 +24,10 @@ public sealed partial class OracleFailureTranslator
     private const int InternalServerErrorStatus = 500;
     private const int NotImplementedStatus = 501;
     private const int ServiceUnavailableStatus = 503;
+
+    private const int DriverTimeoutNumber = 50000;
+    private const int DriverConnectFailureNumber = 50201;
+    private const string TransportConnectFailureCode = "ORA-50232";
 
     private const string UnknownPackage = "UNKNOWN";
 
@@ -80,6 +88,12 @@ public sealed partial class OracleFailureTranslator
             return Unavailable(error.Number);
         }
 
+        // The driver's connection-request timeout while opening is 503 (D-154).
+        if (error.Number == DriverTimeoutNumber && error.DuringOpen)
+        {
+            return Unavailable(error.Number);
+        }
+
         // Every other code, including credential, privilege and account failures while opening, is 500.
         return OracleError(error.Number, InnermostFramePackage(error));
     }
@@ -101,9 +115,11 @@ public sealed partial class OracleFailureTranslator
                 return OracleError(driverNumber, package: null);
             }
 
-            // A generic Oracle error with a socket failure or timeout in the chain is 503.
+            // A generic Oracle error with a socket failure or timeout in the chain, or a driver connect failure while opening (D-154), is 503.
             DataFailure failure = Translate(oracleError);
-            return failure.Status == InternalServerErrorStatus && transport ? Unavailable(failure.Number) : failure;
+            return failure.Status == InternalServerErrorStatus && (transport || IsConnectFailureWhileOpening(exception, oracleError))
+                ? Unavailable(failure.Number)
+                : failure;
         }
 
         if (HasConfigurationFault(exception))
@@ -127,7 +143,7 @@ public sealed partial class OracleFailureTranslator
             return Unavailable(null);
         }
 
-        // A value a binder or gateway refused is a form-level 422 carrying its rejection text.
+        // A value a binder or gateway refused is a 422 carrying its rejection text, on its item when one is named, else form-level.
         if (exception is ArgumentException && exception.Data[BindingRejectionKey] is string text)
         {
             return new DataFailure
@@ -135,6 +151,7 @@ public sealed partial class OracleFailureTranslator
                 Status = UnprocessableEntityStatus,
                 Type = DataFailure.FieldValidationType,
                 Message = text,
+                Field = exception.Data[BindingRejectionFieldKey] as string,
             };
         }
 
@@ -290,6 +307,38 @@ public sealed partial class OracleFailureTranslator
         }
 
         return false;
+    }
+
+    /// <summary>Returns whether an ORA-50201 raised while opening has a socket, stream or ORA-50232 cause below the driver exception and no connect-string parse fault in its chain.</summary>
+    /// <param name="exception">The exception raised by a Data member.</param>
+    /// <param name="error">The parsed error of the first ODP.NET exception in the chain.</param>
+    /// <returns>True when the failure is a network connect failure.</returns>
+    private static bool IsConnectFailureWhileOpening(Exception exception, OracleErrorInfo error)
+    {
+        if (!error.DuringOpen || error.Number != DriverConnectFailureNumber)
+        {
+            return false;
+        }
+
+        bool belowDriver = false;
+        bool transportCause = false;
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is ArgumentException or FormatException)
+            {
+                return false;
+            }
+
+            if (belowDriver)
+            {
+                transportCause |= current is SocketException or IOException
+                    || current.Message.Contains(TransportConnectFailureCode, StringComparison.Ordinal);
+            }
+
+            belowDriver |= current is OracleException;
+        }
+
+        return transportCause;
     }
 
     /// <summary>Returns whether the exception or its inner-exception chain is marked under <see cref="ConfigurationFaultKey"/>.</summary>

@@ -12,6 +12,24 @@
       "expected": { "outcome": "Blocking", "messages": [{ "field": "APPROV_REF_NO", "text": "1001Need Approval", "severity": "Blocking" }] }
     },
     {
+      "name": "approval-reference-empty-blocks",
+      "status": "derivable",
+      "input": { "serviceId": "1001", "payType": 2, "x422ApprovCheck": 1, "reqNeedA": 1, "approvRefNo": "" },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "APPROV_REF_NO", "text": "1001Need Approval", "severity": "Blocking" }] }
+    },
+    {
+      "name": "approval-reference-blank-blocks",
+      "status": "derivable",
+      "input": { "serviceId": "1001", "payType": 2, "x422ApprovCheck": 1, "reqNeedA": 1, "approvRefNo": " " },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "APPROV_REF_NO", "text": "1001Need Approval", "severity": "Blocking" }] }
+    },
+    {
+      "name": "approval-reference-tab-blocks",
+      "status": "derivable",
+      "input": { "serviceId": "1001", "payType": 2, "x422ApprovCheck": 1, "reqNeedA": 1, "approvRefNo": "\t" },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "APPROV_REF_NO", "text": "1001Need Approval", "severity": "Blocking" }] }
+    },
+    {
       "name": "approval-check-bypass-passes",
       "status": "derivable",
       "input": { "serviceId": "1001", "payType": 2, "x422ApprovCheck": 2, "reqNeedA": 1, "approvRefNo": null },
@@ -51,6 +69,12 @@
       "name": "service-missing-passes",
       "status": "derivable",
       "input": { "serviceId": null, "payType": 2, "x422ApprovCheck": 1, "reqNeedA": 1, "approvRefNo": null },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "service-blank-passes",
+      "status": "derivable",
+      "input": { "serviceId": " ", "payType": 2, "x422ApprovCheck": 1, "reqNeedA": 1, "approvRefNo": null },
       "expected": { "outcome": "Pass", "messages": [] }
     }
   ],
