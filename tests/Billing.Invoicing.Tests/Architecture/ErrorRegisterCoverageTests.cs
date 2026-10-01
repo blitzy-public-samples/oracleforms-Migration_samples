@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
+using Billing.Invoicing.Data.Errors;
 
 namespace Billing.Invoicing.Tests.Architecture;
 
@@ -16,6 +17,10 @@ public sealed class ErrorRegisterCoverageTests
     private const int RequestUnavailableDeclarationLine = 176;
     private const int ExpectedDistinctNumbers = 119;
     private const int MaxListedProblems = 40;
+    private const char SpaceSymbol = '\u2420';
+    private const string NoLeadingLiteral = "\u2014";
+    private const string CataloguedYes = "Yes";
+    private const string CataloguedNo = "No";
 
     private static readonly (string FileName, int ExpectedCount)[] PackageSources =
     [
@@ -179,6 +184,70 @@ public sealed class ErrorRegisterCoverageTests
         Assert.True(problems.Count == 0, DescribeProblems(problems));
     }
 
+    /// <summary>Asserts each §8 row's Catalogue prefix and Catalogued cells give the longest matching <see cref="OracleErrorCatalog"/> prefix, else the site's leading literal.</summary>
+    [Fact]
+    public void LegacyFormSpecSection8_ShowsEachSitePrefixAndCatalogueFlag()
+    {
+        var specPath = Path.Combine(FindRepositoryRoot(), "docs", "legacy-form-spec.md");
+        Assert.True(File.Exists(specPath), $"Legacy Form specification not found: {specPath}");
+
+        var section = ReadErrorRegisterSection(File.ReadAllLines(specPath));
+        Assert.True(section is not null, $"{specPath} has no level-2 heading naming §8 and the error register.");
+
+        var problems = new List<string>();
+        var rows = new List<RegisterRow>();
+        foreach (var table in ReadTables(section))
+        {
+            rows.AddRange(ReadRegisterRows(table, problems) ?? []);
+        }
+
+        Assert.True(rows.Count > 0, $"§8 of {specPath} holds no register row.");
+
+        var sites = AllSites().ToDictionary(site => (site.Package, site.Line));
+        foreach (var row in rows)
+        {
+            if (!sites.TryGetValue((row.Package, row.Line), out var site))
+            {
+                problems.Add($"§8 line {row.SpecLine} names {row.Package}:{row.Line}, which is not a raise site.");
+                continue;
+            }
+
+            var cataloguePrefix = site.LeadingLiteral is not { } literal
+                ? null
+                : OracleErrorCatalog.Rows
+                    .Where(entry => string.Equals(entry.Package, site.Package, StringComparison.Ordinal)
+                        && entry.Number == site.Number
+                        && literal.StartsWith(entry.MessagePrefix, StringComparison.Ordinal))
+                    .Select(entry => entry.MessagePrefix)
+                    .OrderByDescending(prefix => prefix.Length)
+                    .FirstOrDefault();
+            var expectedPrefix = cataloguePrefix ?? site.LeadingLiteral ?? NoLeadingLiteral;
+            var expectedCatalogued = cataloguePrefix is null ? CataloguedNo : CataloguedYes;
+
+            if (row.Prefix is null)
+            {
+                problems.Add($"{site.Package}:{site.Line}: §8 line {row.SpecLine} has no Catalogue prefix cell; expected [{expectedPrefix}].");
+            }
+            else if (!string.Equals(row.Prefix, expectedPrefix, StringComparison.Ordinal))
+            {
+                problems.Add(
+                    $"{site.Package}:{site.Line}: §8 line {row.SpecLine} Catalogue prefix [{row.Prefix}] differs from [{expectedPrefix}].");
+            }
+
+            if (row.Catalogued is null)
+            {
+                problems.Add($"{site.Package}:{site.Line}: §8 line {row.SpecLine} has no Catalogued cell; expected [{expectedCatalogued}].");
+            }
+            else if (!string.Equals(row.Catalogued, expectedCatalogued, StringComparison.Ordinal))
+            {
+                problems.Add(
+                    $"{site.Package}:{site.Line}: §8 line {row.SpecLine} Catalogued [{row.Catalogued}] differs from [{expectedCatalogued}].");
+            }
+        }
+
+        Assert.True(problems.Count == 0, DescribeProblems(problems));
+    }
+
     /// <summary>Returns the parsed sites of all three packages in source order.</summary>
     private static IEnumerable<RaiseSite> AllSites() => Extraction.Value.SelectMany(package => package.Sites);
 
@@ -220,7 +289,12 @@ public sealed class ErrorRegisterCoverageTests
                 }
                 else
                 {
-                    sites.Add(new RaiseSite(package, line, number, Whitespace.Replace(arguments[1], " ").Trim()));
+                    sites.Add(new RaiseSite(
+                        package,
+                        line,
+                        number,
+                        Whitespace.Replace(arguments[1], " ").Trim(),
+                        ReadLeadingLiteral(arguments[1])));
                 }
             }
 
@@ -369,6 +443,38 @@ public sealed class ErrorRegisterCoverageTests
         return text.Length;
     }
 
+    /// <summary>Returns the uncollapsed text of the single-quoted literal that opens a message argument, with <c>''</c> decoded to <c>'</c>; null when the argument opens with an expression.</summary>
+    /// <param name="argument">Message argument of a parsed call.</param>
+    /// <exception cref="InvalidOperationException">The opening literal never closes.</exception>
+    private static string? ReadLeadingLiteral(string argument)
+    {
+        var text = argument.TrimStart();
+        if (text.Length == 0 || text[0] != '\'')
+        {
+            return null;
+        }
+
+        var literal = new StringBuilder();
+        for (var index = 1; index < text.Length; index++)
+        {
+            if (text[index] != '\'')
+            {
+                literal.Append(text[index]);
+            }
+            else if (index + 1 < text.Length && text[index + 1] == '\'')
+            {
+                literal.Append('\'');
+                index++;
+            }
+            else
+            {
+                return literal.ToString();
+            }
+        }
+
+        throw new InvalidOperationException($"The leading literal of the message argument never closes: {argument.Trim()}");
+    }
+
     /// <summary>Resolves a first argument that is a signed integer literal or a numeric constant declared in the same source.</summary>
     /// <param name="argument">Trimmed first argument.</param>
     /// <param name="stripped">Comment-free text of the package source holding the call.</param>
@@ -492,6 +598,8 @@ public sealed class ErrorRegisterCoverageTests
             return null;
         }
 
+        var prefixColumn = header.FindIndex(cell => cell.Contains("prefix", StringComparison.Ordinal));
+        var cataloguedColumn = header.FindIndex(cell => cell.Contains("catalogued", StringComparison.Ordinal));
         var width = new[] { packageColumn, lineColumn, numberColumn, templateColumn }.Max() + 1;
         var rows = new List<RegisterRow>();
 
@@ -527,11 +635,24 @@ public sealed class ErrorRegisterCoverageTests
                 continue;
             }
 
-            rows.Add(new RegisterRow(package.ToUpperInvariant(), lineNumber, errorNumber, cells[templateColumn], specLine));
+            rows.Add(new RegisterRow(
+                package.ToUpperInvariant(),
+                lineNumber,
+                errorNumber,
+                cells[templateColumn],
+                specLine,
+                CellOrNull(cells, prefixColumn)?.Replace(SpaceSymbol, ' '),
+                CellOrNull(cells, cataloguedColumn)));
         }
 
         return rows;
     }
+
+    /// <summary>Returns the cell at <paramref name="column"/>, or null when the column is absent or the row is shorter.</summary>
+    /// <param name="cells">Normalised cells of one row.</param>
+    /// <param name="column">Zero-based column index; -1 when the header has no such column.</param>
+    private static string? CellOrNull(List<string> cells, int column) =>
+        column >= 0 && column < cells.Count ? cells[column] : null;
 
     /// <summary>Returns the index of the first header cell matching <paramref name="primary"/>, else the first matching <paramref name="fallback"/>, else -1.</summary>
     /// <param name="header">Lower-cased header cells.</param>
@@ -614,7 +735,8 @@ public sealed class ErrorRegisterCoverageTests
     /// <param name="Line">1-based line of the call token.</param>
     /// <param name="Number">Resolved error number.</param>
     /// <param name="Template">Message expression with whitespace collapsed.</param>
-    private sealed record RaiseSite(string Package, int Line, int Number, string Template);
+    /// <param name="LeadingLiteral">Uncollapsed text of the literal opening the message; null when it opens with an expression.</param>
+    private sealed record RaiseSite(string Package, int Line, int Number, string Template, string? LeadingLiteral);
 
     /// <summary>One counted call that could not be parsed.</summary>
     /// <param name="Package">Package name.</param>
@@ -641,5 +763,7 @@ public sealed class ErrorRegisterCoverageTests
     /// <param name="Number">Error number the row lists.</param>
     /// <param name="Template">Normalised message template.</param>
     /// <param name="SpecLine">1-based line of the row in the specification.</param>
-    private sealed record RegisterRow(string Package, int Line, int Number, string Template, int SpecLine);
+    /// <param name="Prefix">Normalised Catalogue prefix cell with each U+2420 read as a space; null when absent.</param>
+    /// <param name="Catalogued">Normalised Catalogued cell; null when absent.</param>
+    private sealed record RegisterRow(string Package, int Line, int Number, string Template, int SpecLine, string? Prefix, string? Catalogued);
 }

@@ -133,9 +133,7 @@
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
           { "table": "SERVICES", "key": { "SERVICEID": "P100", "LIST_ID": 1, "IS_PACKAGE": 1 }, "rowCount": 0 }
         ],
-        "context": [
-          { "source": "BIL_PATIENT_CONTEXT.get_context", "values": { "patientno": "990000001", "list_id": 1, "is_cash": "Y" } }
-        ]
+        "context": []
       },
       "expected": {
         "error": { "package": "BIL_INVOICE_ENGINE", "number": -20946, "messagePrefix": "Invoice create failed: package " }
@@ -163,9 +161,7 @@
           { "table": "PACKAGE_DTL", "key": { "SERVICEID": "P100", "LIST_ID": 1, "SUB_SERVICEID": "2001" }, "columns": { "QTY": 2, "OBJECT_VERSION_NUMBER": 1 } },
           { "table": "PACKAGE_DTL", "key": { "SERVICEID": "P100", "LIST_ID": 1, "SUB_SERVICEID": "2002" }, "columns": { "QTY": 1, "OBJECT_VERSION_NUMBER": 1 } }
         ],
-        "context": [
-          { "source": "BIL_PATIENT_CONTEXT.get_context", "values": { "patientno": "990000001", "list_id": 1, "is_cash": "Y" } }
-        ]
+        "context": []
       },
       "expected": {
         "error": { "package": "BIL_INVOICE_ENGINE", "number": -20969, "messagePrefix": "The package definition changed after the invoice was calculated. " }

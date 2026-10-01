@@ -795,4 +795,3 @@ public sealed class InvoiceQueries : IInvoiceQueries
         public decimal? CLINIC_AGE_LIMIT { get; set; }
     }
 }
-

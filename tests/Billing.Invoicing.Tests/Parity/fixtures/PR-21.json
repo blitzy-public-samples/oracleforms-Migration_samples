@@ -27,12 +27,10 @@
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
           { "table": "DOCTORS", "key": { "DOCID": 10 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 1 } },
           { "table": "DOCTOR_CONSULTATION", "key": { "LIST_ID": 1, "DOCID": 10 }, "count": 1, "columns": { "CONS_SERVID": "3001", "REVIEW_SERVID": "3002" } },
+          { "table": "DOCTOR_CONSULTATION", "key": { "DOCID": 10 }, "count": 1 },
           { "table": "SERVICES", "key": { "SERVICEID": "3001" }, "columns": { "IS_PACKAGE": 0 } }
         ],
-        "context": [
-          { "package": "BIL_PATIENT_CONTEXT", "field": "list_id", "value": 1 },
-          { "package": "BIL_PRICE_RULE", "serviceid": "3001", "field": "price", "value": 150.00 }
-        ]
+        "context": []
       },
       "expected": {
         "values": {
@@ -60,12 +58,10 @@
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
           { "table": "DOCTORS", "key": { "DOCID": 10 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 1 } },
           { "table": "DOCTOR_CONSULTATION", "key": { "LIST_ID": 1, "DOCID": 10 }, "count": 1, "columns": { "CONS_SERVID": "3001", "REVIEW_SERVID": "3002" } },
+          { "table": "DOCTOR_CONSULTATION", "key": { "DOCID": 10 }, "count": 1 },
           { "table": "SERVICES", "key": { "SERVICEID": "3002" }, "columns": { "IS_PACKAGE": 0 } }
         ],
-        "context": [
-          { "package": "BIL_PATIENT_CONTEXT", "field": "list_id", "value": 1 },
-          { "package": "BIL_PRICE_RULE", "serviceid": "3002", "field": "price", "value": 75.00 }
-        ]
+        "context": []
       },
       "expected": {
         "values": {
@@ -94,9 +90,7 @@
           { "table": "DOCTORS", "key": { "DOCID": 10 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 1 } },
           { "table": "DOCTOR_CONSULTATION", "key": { "LIST_ID": 1, "DOCID": 10 }, "count": 0 }
         ],
-        "context": [
-          { "package": "BIL_PATIENT_CONTEXT", "field": "list_id", "value": 1 }
-        ]
+        "context": []
       },
       "expected": {
         "error": { "package": "BIL_IMPORT", "number": -20753, "messagePrefix": "Visit import failed: no consultation/review setup was found for this doctor and patient price list." }
@@ -117,9 +111,7 @@
           { "table": "DOCTORS", "key": { "DOCID": 10 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 1 } },
           { "table": "DOCTOR_CONSULTATION", "key": { "LIST_ID": 1, "DOCID": 10 }, "count": 2, "columns": { "CONS_SERVID": "3001", "REVIEW_SERVID": "3002" } }
         ],
-        "context": [
-          { "package": "BIL_PATIENT_CONTEXT", "field": "list_id", "value": 1 }
-        ]
+        "context": []
       },
       "expected": {
         "error": { "package": "BIL_IMPORT", "number": -20754, "messagePrefix": "Visit import failed: consultation/review setup is duplicated for this doctor and patient price list." }
@@ -140,9 +132,7 @@
           { "table": "DOCTORS", "key": { "DOCID": 10 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 1 } },
           { "table": "DOCTOR_CONSULTATION", "key": { "LIST_ID": 1, "DOCID": 10 }, "count": 1, "columns": { "CONS_SERVID": null, "REVIEW_SERVID": "3002" } }
         ],
-        "context": [
-          { "package": "BIL_PATIENT_CONTEXT", "field": "list_id", "value": 1 }
-        ]
+        "context": []
       },
       "expected": {
         "error": { "package": "BIL_IMPORT", "number": -20755, "messagePrefix": "Visit import failed: no consultation service is configured for this doctor and patient price list." }
@@ -163,9 +153,7 @@
           { "table": "DOCTORS", "key": { "DOCID": 10 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 1 } },
           { "table": "DOCTOR_CONSULTATION", "key": { "LIST_ID": 1, "DOCID": 10 }, "count": 1, "columns": { "CONS_SERVID": "3001", "REVIEW_SERVID": null } }
         ],
-        "context": [
-          { "package": "BIL_PATIENT_CONTEXT", "field": "list_id", "value": 1 }
-        ]
+        "context": []
       },
       "expected": {
         "error": { "package": "BIL_IMPORT", "number": -20755, "messagePrefix": "Visit import failed: no review service is configured for this doctor and patient price list." }

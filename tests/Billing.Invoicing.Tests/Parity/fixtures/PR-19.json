@@ -38,12 +38,7 @@
           { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "IS_PACKAGE": 0 } }
         ],
         "context": [
-          { "name": "ins_comp_util.get_cash_comp_code", "value": "0" },
-          { "name": "bil_patient_context.is_cash", "value": "N" },
-          { "name": "bil_patient_context.comp_code", "value": "100" },
-          { "name": "bil_patient_context.list_id", "value": 1 },
-          { "name": "bil_service_context.is_package", "value": 0 },
-          { "name": "bil_price_rule.billing_price", "value": 50 }
+          { "name": "bil_service_context.is_package", "value": 0 }
         ]
       },
       "expected": {
@@ -84,12 +79,7 @@
           { "table": "SERVICES", "key": { "SERVICEID": "1003" }, "columns": { "IS_PACKAGE": 0 } }
         ],
         "context": [
-          { "name": "ins_comp_util.get_cash_comp_code", "value": "0" },
-          { "name": "bil_patient_context.is_cash", "value": "N" },
-          { "name": "bil_patient_context.comp_code", "value": "100" },
-          { "name": "bil_patient_context.list_id", "value": 1 },
-          { "name": "bil_service_context.is_package", "value": 0 },
-          { "name": "bil_price_rule.billing_price", "value": 50 }
+          { "name": "bil_service_context.is_package", "value": 0 }
         ]
       },
       "expected": {
@@ -128,12 +118,7 @@
           { "table": "SERVICES", "key": { "SERVICEID": "1003" }, "columns": { "IS_PACKAGE": 0 } }
         ],
         "context": [
-          { "name": "ins_comp_util.get_cash_comp_code", "value": "0" },
-          { "name": "bil_patient_context.is_cash", "value": "Y" },
-          { "name": "bil_patient_context.comp_code", "value": "0" },
-          { "name": "bil_patient_context.list_id", "value": 1 },
-          { "name": "bil_service_context.is_package", "value": 0 },
-          { "name": "bil_price_rule.billing_price", "value": 50 }
+          { "name": "bil_service_context.is_package", "value": 0 }
         ]
       },
       "expected": {

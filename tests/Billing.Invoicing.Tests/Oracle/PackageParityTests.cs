@@ -48,6 +48,8 @@ public sealed class PackageParityTests
     private const string ErrorOutcome = "Error";
     private const string UnknownPackage = "UNKNOWN";
     private const string PreconditionPrefix = "Precondition:";
+    private const string CurrencyField = "curr_code";
+    private const string RaisesField = "raises";
 
     private const string PatientPhoneSql = "SELECT PHONE_H FROM PATIENT WHERE PATIENTNO = :k0";
 
@@ -98,6 +100,49 @@ public sealed class PackageParityTests
             [OperationKey, HeaderKey, OperatorKey, OperatorContextKey, VisitUniqueKey, PatServReqRowIdsKey, ApprovalModeKey, ParametersKey],
         [Operation.VisitLine] = [OperationKey, HeaderKey, OperatorKey, OperatorContextKey, VisitKindKey],
     };
+
+    // ENGINE = 05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql, IMPORT = BIL_IMPORT.sql beside it.
+    private static readonly IReadOnlyDictionary<string, ContextRelation> ContextRelations =
+        new Dictionary<string, ContextRelation>(StringComparer.OrdinalIgnoreCase)
+        {
+            // ENGINE:1760 line list_id = service context list_id.
+            ["bil_service_context.list_id"] = new("list_id", DeclaredValue),
+            // ENGINE:281-289, 1761 line curr_code = upper_trim_to_null(service context curr_code).
+            ["bil_service_context.curr_code"] = new(CurrencyField, DeclaredValue),
+            // ENGINE:1781 line vat_rate = nvl(vat_rate, 0).
+            ["bil_service_context.vat_rate"] = new("vat_rate", ZeroWhenNull),
+            // ENGINE:1953, 1764 plan_discount_pct = nvl(plan_price_disc, 0) on a line with no standard offer, package or offer role.
+            ["bil_service_context.plan_price_disc"] = new("plan_discount_pct", ZeroWhenNull, ObservedCondition: PlainLine),
+            // ENGINE:177, 1807, 2436, 2520, 2535, 2643-2661; IMPORT:657-670 is_package 1 yields a PARENT line, any other value no package role.
+            ["bil_service_context.is_package"] = new("package_line_role", PackageRole),
+            // ENGINE:1039-1051, 1061-1063, 1937-1943, 1763 price = round(nvl(billing_price, 0), 3) on a line with no price override, standard offer, package or offer role.
+            ["bil_price_rule.billing_price"] = new("price", RoundedPrice, NoPriceOverride, PlainLine),
+            // ENGINE:1870-1872, 2079-2080, 1827-1828 allow_manual_discount = 'Y' only for allow_discount 'Y', on a line with no package role and no offer role but SERVICE.
+            ["bil_price_rule.allow_discount"] = new("allow_manual_discount", YesOrNo, ObservedCondition: OwnPermissions),
+            // ENGINE:1873-1875, 2079-2080, 1829-1830 allow_price_override = 'Y' only for allow_manual_price 'Y', on the same lines.
+            ["bil_price_rule.allow_manual_price"] = new("allow_price_override", YesOrNo, ObservedCondition: OwnPermissions),
+            // ENGINE:1777 line the_pay = patient share.
+            ["bil_class_rule.the_pay"] = new("the_pay", DeclaredValue),
+            ["bil_class_rule.patient_share"] = new("the_pay", DeclaredValue),
+            // ENGINE:1778 line the_comp = company share.
+            ["bil_class_rule.the_comp"] = new("the_comp", DeclaredValue),
+            ["bil_class_rule.company_share"] = new("the_comp", DeclaredValue),
+            // ENGINE:1877-1882, 1912 matched 'Y' on an offer-eligible line sets offer_type 1; ENGINE:1895-1900 an unmatched line keeps its offer_type whether or not bil_offer_rule was called.
+            ["bil_offer_rule.matched"] = new("offer_type", OfferTypeOf, OfferEligible),
+            // ENGINE:1917 offer_price_applied = offer_price on a standard-offer line.
+            ["bil_offer_rule.offer_price"] = new("offer_price_applied", DeclaredValue, ObservedCondition: StandardOfferLine),
+            // ENGINE:1918 offer_dis_applied = offer_dis on a standard-offer line.
+            ["bil_offer_rule.offer_dis"] = new("offer_dis_applied", DeclaredValue, ObservedCondition: StandardOfferLine),
+            // CreateFullInvoice returns each posting stage's flag.
+            ["bil_payment.payment_posted"] = new("payment_posted", DeclaredValue),
+            ["bil_queue_posting.queue_posted"] = new("queue_posted", DeclaredValue),
+            ["bil_stock_posting.stock_posted"] = new("stock_posted", DeclaredValue),
+            // ENGINE:3203-3207 create_invoice returns only past an open-shift assertion.
+            ["bil_cashier_shift.shift_open"] = new("shift_open", DeclaredTrue, CreateOnly, Completion: true),
+        };
+
+    // A shared-package call declared not to raise is observed by the operation returning.
+    private static readonly ContextRelation RaisesRelation = new(RaisesField, DeclaredFalse, Completion: true);
 
     private readonly ITestOutputHelper output;
 
@@ -226,7 +271,7 @@ public sealed class PackageParityTests
     [Trait("SideEffects", OracleFactAttribute.CreateSideEffects)]
     public Task PR25_OfferStale() => RunAsync("PR-25", Operation.Create);
 
-    /// <summary>Runs every derivable case of a PR fixture in its own uncommitted session and logs every pending-evidence case without asserting it.</summary>
+    /// <summary>Runs every derivable case of a PR fixture in its own session, explicitly rolled back after the case, and logs every pending-evidence case without asserting it.</summary>
     /// <param name="id">Package rule id, such as PR-01.</param>
     /// <param name="defaultOperation">Gateway operation of a case whose input names none.</param>
     private async Task RunAsync(string id, Operation defaultOperation)
@@ -244,6 +289,8 @@ public sealed class PackageParityTests
         var preconditionFailures = new List<string>();
         var parityFailures = new List<string>();
         var unexpectedErrors = new List<string>();
+        var rollbackFailures = new List<string>();
+        var failedCases = 0;
 
         foreach (var fixtureCase in doc.Cases)
         {
@@ -254,52 +301,178 @@ public sealed class PackageParityTests
             }
 
             var label = new CaseLabel(id, fixtureCase.Name);
-            try
+            var outcome = await RunInRolledBackSessionAsync(
+                () => new OracleSessionFactory(options).Open(),
+                session => RunCaseAsync(label, doc.Compare, fixtureCase, defaultOperation, session, apiGateway, importGateway),
+                session => ReleaseRolledBackSessionAsync(session, TimeSpan.FromSeconds(options.CommandTimeoutSeconds)));
+
+            if (RecordOutcome(label, outcome, preconditionFailures, parityFailures, unexpectedErrors, rollbackFailures))
             {
-                var operation = await RunCaseAsync(label, doc.Compare, fixtureCase, defaultOperation, options, apiGateway, importGateway);
-                output.WriteLine($"{label}: {GatewayName(operation)} parity asserted.");
-            }
-            catch (XunitException ex) when (ex.Message.StartsWith(PreconditionPrefix, StringComparison.Ordinal))
-            {
-                preconditionFailures.Add(ex.Message);
-                output.WriteLine(ex.Message);
-            }
-            catch (XunitException ex)
-            {
-                parityFailures.Add($"{label}: {ex.Message}");
-                output.WriteLine($"{label}: parity failure: {ex.Message}");
-            }
-            catch (Exception ex)
-            {
-                unexpectedErrors.Add($"{label}: {ex}");
-                output.WriteLine($"{label}: unexpected {ex.GetType().Name}: {ex.Message}");
+                failedCases++;
             }
         }
 
-        if (preconditionFailures.Count + parityFailures.Count + unexpectedErrors.Count > 0)
+        if (failedCases > 0)
         {
-            Assert.Fail(FailureReport(id, preconditionFailures, parityFailures, unexpectedErrors));
+            Assert.Fail(FailureReport(id, failedCases, preconditionFailures, parityFailures, unexpectedErrors, rollbackFailures));
         }
     }
 
-    /// <summary>Plans one derivable case, checks its declared rows, runs its gateway operation in a fresh session that is never committed, and asserts the fixture's expected result.</summary>
+    /// <summary>Logs one case outcome and adds its case failure and its rollback failure each to its own section.</summary>
+    /// <returns>True when the case failed or its rollback was not confirmed.</returns>
+    private bool RecordOutcome(
+        CaseLabel label,
+        CaseOutcome outcome,
+        List<string> preconditionFailures,
+        List<string> parityFailures,
+        List<string> unexpectedErrors,
+        List<string> rollbackFailures)
+    {
+        switch (outcome)
+        {
+            case { CaseFailure: null, Operation: { } operation }:
+                output.WriteLine(outcome.RollbackFailure is null
+                    ? $"{label}: {GatewayName(operation)} parity asserted."
+                    : $"{label}: {GatewayName(operation)} parity not accepted: the session's rollback or release failed.");
+                break;
+            case { CaseFailure: XunitException failure } when failure.Message.StartsWith(PreconditionPrefix, StringComparison.Ordinal):
+                preconditionFailures.Add(failure.Message);
+                output.WriteLine(failure.Message);
+                break;
+            case { CaseFailure: XunitException failure }:
+                parityFailures.Add($"{label}: {failure.Message}");
+                output.WriteLine($"{label}: parity failure: {failure.Message}");
+                break;
+            case { CaseFailure: { } failure }:
+                unexpectedErrors.Add($"{label}: {failure}");
+                output.WriteLine($"{label}: unexpected {failure.GetType().Name}: {failure.Message}");
+                break;
+        }
+
+        if (outcome.RollbackFailure is { } rollbackFailure)
+        {
+            rollbackFailures.Add($"{label}: {rollbackFailure}");
+            output.WriteLine($"{label}: rollback failure {rollbackFailure.GetType().Name}: {rollbackFailure.Message}");
+        }
+
+        return outcome.CaseFailure is not null || outcome.RollbackFailure is not null;
+    }
+
+    /// <summary>Opens a session, runs one case in it, then always awaits an explicit rollback, the release of a rolled-back session and the disposal of the session.</summary>
+    /// <param name="open">Opens the case's session.</param>
+    /// <param name="run">Runs the case in the open session and returns the gateway operation it ran.</param>
+    /// <param name="release">Releases the session's transaction and connection after a completed rollback and returns the release failure, or null.</param>
+    /// <returns>The operation the case ran, its failure, and the failure of its rollback, release or disposal; a session that fails to open is a case failure with no rollback.</returns>
+    private static async Task<CaseOutcome> RunInRolledBackSessionAsync(
+        Func<Task<IOracleSession>> open,
+        Func<IOracleSession, Task<Operation>> run,
+        Func<IOracleSession, Task<Exception?>> release)
+    {
+        IOracleSession session;
+        try
+        {
+            session = await open() ?? throw new InvalidOperationException("The session factory returned no session.");
+        }
+        catch (Exception ex)
+        {
+            return new CaseOutcome(null, ex, null);
+        }
+
+        Operation? operation = null;
+        Exception? caseFailure = null;
+        Exception? rollbackFailure = null;
+        try
+        {
+            operation = await run(session);
+        }
+        catch (Exception ex)
+        {
+            caseFailure = ex;
+        }
+        finally
+        {
+            var cleanupFailures = new List<Exception>();
+            try
+            {
+                await session.Rollback();
+            }
+            catch (Exception ex)
+            {
+                cleanupFailures.Add(ex);
+            }
+
+            if (cleanupFailures.Count == 0)
+            {
+                try
+                {
+                    if (await release(session) is { } releaseFailure)
+                    {
+                        cleanupFailures.Add(releaseFailure);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    cleanupFailures.Add(ex);
+                }
+            }
+
+            try
+            {
+                await session.DisposeAsync();
+            }
+            catch (Exception ex)
+            {
+                cleanupFailures.Add(ex);
+            }
+
+            rollbackFailure = cleanupFailures.Count switch
+            {
+                0 => null,
+                1 => cleanupFailures[0],
+                _ => new AggregateException(cleanupFailures),
+            };
+        }
+
+        return new CaseOutcome(operation, caseFailure, rollbackFailure);
+    }
+
+    /// <summary>Releases the transaction and the connection of a rolled-back <see cref="OracleSession"/> through <see cref="OracleSession.ReleaseWithinDeadline"/> and returns the failures it reports.</summary>
+    /// <param name="session">The case's session, already rolled back.</param>
+    /// <param name="deadline">Time each release step may take.</param>
+    /// <returns>The release failure, or null when both were released or the session is not an <see cref="OracleSession"/>.</returns>
+    private static async Task<Exception?> ReleaseRolledBackSessionAsync(IOracleSession session, TimeSpan deadline)
+    {
+        if (session is not OracleSession oracleSession)
+        {
+            return null;
+        }
+
+        var failures = await OracleSession.ReleaseWithinDeadline(deadline, null, null, oracleSession.Transaction, oracleSession.Connection);
+        return failures switch
+        {
+            null or [] => null,
+            [var only] => only,
+            _ => new AggregateException(failures),
+        };
+    }
+
+    /// <summary>Plans one derivable case, checks its declared rows, runs its gateway operation in the given uncommitted session, and asserts the fixture's expected result.</summary>
     /// <returns>The gateway operation the case ran.</returns>
     private async Task<Operation> RunCaseAsync(
         CaseLabel label,
         FixtureCompare compare,
         FixtureCase fixtureCase,
         Operation defaultOperation,
-        InvoicingDataOptions options,
+        IOracleSession session,
         BilInvoiceApiGateway apiGateway,
         BilImportGateway importGateway)
     {
         var plan = PlanCase(label, fixtureCase.Input, defaultOperation);
         var requires = fixtureCase.Requires ?? throw label.Precondition("requires is missing.");
-        var contextChecks = ReadContext(label, requires.Context);
+        var contextChecks = ReadContext(label, requires.Context, plan);
         var expected = fixtureCase.Expected;
         JsonElement? expectedValues = expected.Values is { } values ? RenderTemplates(label, values) : null;
 
-        await using var session = await new OracleSessionFactory(options).Open();
         var handles = SessionHandles(session);
 
         foreach (var row in requires.Rows)
@@ -519,21 +692,25 @@ public sealed class PackageParityTests
         return UnknownPackage;
     }
 
-    /// <summary>Formats the failures of one fixture, preconditions apart from parity failures and unexpected errors.</summary>
+    /// <summary>Formats the failures of one fixture, preconditions, parity failures, unexpected errors and rollback failures each in its own section.</summary>
+    /// <param name="failedCases">Number of distinct cases that failed; one case may appear in two sections.</param>
     private static string FailureReport(
         string id,
+        int failedCases,
         IReadOnlyCollection<string> preconditionFailures,
         IReadOnlyCollection<string> parityFailures,
-        IReadOnlyCollection<string> unexpectedErrors)
+        IReadOnlyCollection<string> unexpectedErrors,
+        IReadOnlyCollection<string> rollbackFailures)
     {
         var sections = new List<string>
         {
-            $"{id}: {preconditionFailures.Count + parityFailures.Count + unexpectedErrors.Count} derivable case(s) failed (UNVERIFIED).",
+            $"{id}: {failedCases} derivable case(s) failed (UNVERIFIED).",
         };
 
         AddSection(sections, "Precondition failures", preconditionFailures);
         AddSection(sections, "Parity failures", parityFailures);
         AddSection(sections, "Unexpected errors", unexpectedErrors);
+        AddSection(sections, "Rollback failures", rollbackFailures);
         return string.Join(Environment.NewLine, sections);
 
         static void AddSection(List<string> target, string title, IReadOnlyCollection<string> items)
@@ -1008,7 +1185,8 @@ public sealed class PackageParityTests
                 var value = ColumnValue(label, actualRow, column.Name);
                 if (!Matches(column.Value, value))
                 {
-                    throw label.Precondition($"{description}: {column.Name} is {Describe(value)}, {column.Value.GetRawText()} declared.");
+                    throw label.Precondition(
+                        $"{description}: {column.Name} differs from the declared {column.Value.GetRawText()} (actual value withheld: {Withheld(value)}).");
                 }
             }
         }
@@ -1131,7 +1309,7 @@ public sealed class PackageParityTests
             var phone = ColumnValue(label, patient, "PHONE_H");
             if (phone is not null)
             {
-                throw label.Precondition($"PATIENT {header.PatientNo} PHONE_H is {Describe(phone)}; a create-path case needs a patient with no mobile number.");
+                throw label.Precondition($"PATIENT {header.PatientNo} has a PHONE_H value (withheld); a create-path case needs a patient with no mobile number.");
             }
         }
     }
@@ -1202,8 +1380,12 @@ public sealed class PackageParityTests
     };
 
 
-    /// <summary>Reads requires.context into value checks: an explicit field, a values object, a dotted name with an optional [serviceid], or flat field keys.</summary>
-    private static List<ContextCheck> ReadContext(CaseLabel label, IReadOnlyList<JsonElement> context)
+    /// <summary>Reads requires.context into value checks: an explicit output field, a values object, a dotted name with an optional [serviceid], or flat field keys.</summary>
+    /// <param name="label">Case under test.</param>
+    /// <param name="context">The case's requires.context entries.</param>
+    /// <param name="plan">The case's gateway call.</param>
+    /// <returns>One check per declared value, each bound to its output relation or to none.</returns>
+    private static List<ContextCheck> ReadContext(CaseLabel label, IReadOnlyList<JsonElement> context, CasePlan plan)
     {
         var checks = new List<ContextCheck>();
         foreach (var entry in context)
@@ -1221,6 +1403,7 @@ public sealed class PackageParityTests
 
             var service = properties.TryGetValue("serviceid", out var serviceElement) ? ServiceText(label, serviceElement) : null;
             var source = ContextSource(properties) ?? entry.GetRawText();
+            var package = ContextPackage(properties);
             var before = checks.Count;
 
             if (properties.TryGetValue("field", out var field))
@@ -1230,7 +1413,7 @@ public sealed class PackageParityTests
                     throw label.Precondition($"requires.context entry {entry.GetRawText()} needs a field name and a value.");
                 }
 
-                checks.Add(new ContextCheck(source, field.GetString()!, service, fieldValue));
+                checks.Add(NewContextCheck(source, null, field.GetString()!, service, fieldValue, plan));
             }
             else if (properties.TryGetValue("values", out var values))
             {
@@ -1244,7 +1427,7 @@ public sealed class PackageParityTests
                 {
                     if (!string.Equals(item.Name, "serviceid", StringComparison.Ordinal))
                     {
-                        checks.Add(new ContextCheck($"{source}.{item.Name}", item.Name, valuesService, item.Value));
+                        checks.Add(NewContextCheck($"{source}.{item.Name}", package, item.Name, valuesService, item.Value, plan));
                     }
                 }
             }
@@ -1257,7 +1440,7 @@ public sealed class PackageParityTests
                 }
 
                 var (fieldName, nameService) = SplitContextName(label, name.GetString()!);
-                checks.Add(new ContextCheck(name.GetString()!, fieldName, nameService ?? service, namedValue));
+                checks.Add(NewContextCheck(name.GetString()!, package, fieldName, nameService ?? service, namedValue, plan));
             }
             else
             {
@@ -1269,7 +1452,7 @@ public sealed class PackageParityTests
                     }
 
                     var (fieldName, nameService) = SplitContextName(label, key);
-                    checks.Add(new ContextCheck(key, fieldName, nameService ?? service, value));
+                    checks.Add(NewContextCheck(key, DottedPackage(key) ?? PackageKey(properties), fieldName, nameService ?? service, value, plan));
                 }
             }
 
@@ -1282,53 +1465,126 @@ public sealed class PackageParityTests
         return checks;
     }
 
-    /// <summary>Compares each context check with the first preview line, totals or operation output that carries its field; a field none carries is logged as assumed.</summary>
-    private void CheckContext(
+    /// <summary>Compares each context check with the output that echoes it; a check no observed output carries fails as a precondition, whether or not the case's operation raised.</summary>
+    /// <param name="label">Case under test.</param>
+    /// <param name="checks">The case's context checks.</param>
+    /// <param name="observations">Outputs observed in the case's session, each named by its gateway call.</param>
+    private static void CheckContext(
         CaseLabel label,
         IReadOnlyList<ContextCheck> checks,
         IReadOnlyList<(string Source, IReadOnlyDictionary<string, object?> Values)> observations)
     {
+        if (checks.Count == 0)
+        {
+            return;
+        }
+
+        var operation = GatewayName(checks[0].Plan.Operation);
+        var completed = observations.Any(observation => string.Equals(observation.Source, operation, StringComparison.Ordinal));
         foreach (var check in checks)
         {
-            if (!TryObserve(check, observations, out var observed, out var where))
+            if (!TryObserve(check, observations, completed, out var expected, out var observed, out var where, out var reason))
             {
-                output.WriteLine($"{label}: context {check.Source} = {check.Value.GetRawText()} is not observable in the outputs; assumed (UNVERIFIED).");
-                continue;
+                var cause = completed || check.Relation is { Completion: true } ? reason : $"{reason} ({operation} raised before returning an output)";
+                throw label.Precondition($"context {check.Source} = {check.Value.GetRawText()} cannot be checked: {cause}.");
             }
 
-            if (!Matches(check.Value, observed))
+            if (!Matches(expected, observed))
             {
+                var implied = expected.GetRawText() == check.Value.GetRawText() ? string.Empty : $" (output {expected.GetRawText()})";
                 throw label.Precondition(
-                    $"context {check.Source} declares {check.Value.GetRawText()}, but {where} {check.Field} is {Describe(observed)}.");
+                    $"context {check.Source} declares {check.Value.GetRawText()}{implied}, but {where} {check.Relation!.Output} differs (actual value withheld: {Withheld(observed)}).");
             }
         }
     }
 
+    /// <summary>Finds the output value that echoes a context check through its relation.</summary>
+    /// <param name="check">The declared value and its relation.</param>
+    /// <param name="observations">Outputs observed in the case's session.</param>
+    /// <param name="completed">True when the case's own operation returned an output.</param>
+    /// <param name="expected">Output value the declared value implies.</param>
+    /// <param name="observed">Observed output value.</param>
+    /// <param name="where">Output that carries the observed value.</param>
+    /// <param name="reason">Why the check is unobserved, when the result is false.</param>
+    /// <returns>True when an output carries a value the relation applies to.</returns>
     private static bool TryObserve(
         ContextCheck check,
         IReadOnlyList<(string Source, IReadOnlyDictionary<string, object?> Values)> observations,
+        bool completed,
+        out JsonElement expected,
         out object? observed,
-        out string where)
+        out string where,
+        out string reason)
     {
+        expected = default;
+        observed = null;
+        where = string.Empty;
+        var operation = GatewayName(check.Plan.Operation);
+
+        if (check.Relation is not { } relation)
+        {
+            reason = $"no output of {operation} echoes {check.Package}.{check.Field}";
+            return false;
+        }
+
+        if (relation.InputCondition?.Invoke(check) is { } inputReason)
+        {
+            reason = inputReason;
+            return false;
+        }
+
+        if (relation.Expect(check.Value, check) is not { } implied)
+        {
+            reason = $"no output of {operation} echoes {check.Package}.{check.Field} = {check.Value.GetRawText()}";
+            return false;
+        }
+
+        expected = FixtureKeyComparer.Instance.Equals(relation.Output, CurrencyField) ? NormalisedCurrency(implied) : implied;
+        if (relation.Completion)
+        {
+            reason = $"{operation} returned no output";
+            if (!completed)
+            {
+                return false;
+            }
+
+            observed = implied.ValueKind == JsonValueKind.True;
+            where = operation;
+            return true;
+        }
+
+        reason = check.ServiceId is null
+            ? $"no observed output carries {relation.Output}"
+            : $"no observed line for service {check.ServiceId} carries {relation.Output}";
         foreach (var (source, values) in observations)
         {
             var line = SelectLine(values, check.ServiceId);
-            if (line is not null && line.TryGetValue(check.Field, out observed))
+            IReadOnlyDictionary<string, object?> record;
+            string place;
+            if (line is not null && line.ContainsKey(relation.Output))
             {
-                where = $"{source} line";
-                return true;
+                (record, place) = (line, $"{source} line");
+            }
+            else if (check.ServiceId is null && values.TryGetValue(relation.Output, out var scalar) && IsScalar(scalar))
+            {
+                (record, place) = (values, source);
+            }
+            else
+            {
+                continue;
             }
 
-            if (check.ServiceId is null && values.TryGetValue(check.Field, out var scalar) && IsScalar(scalar))
+            if (relation.ObservedCondition?.Invoke(record) is { } observedReason)
             {
-                observed = scalar;
-                where = source;
-                return true;
+                reason = $"{place} {observedReason}";
+                continue;
             }
+
+            observed = record[relation.Output];
+            where = place;
+            return true;
         }
 
-        observed = null;
-        where = string.Empty;
         return false;
     }
 
@@ -1394,6 +1650,207 @@ public sealed class PackageParityTests
         JsonValueKind.Number => element.GetRawText(),
         _ => throw label.Precondition($"requires.context serviceid {element.GetRawText()} is neither a string nor a number."),
     };
+
+    /// <summary>Returns the lower-cased package a context entry names: the first segment of its dotted name, output, key or source, else its package member, else null.</summary>
+    private static string? ContextPackage(IReadOnlyDictionary<string, JsonElement> properties)
+    {
+        foreach (var key in new[] { "name", "output", "key", "source" })
+        {
+            if (properties.TryGetValue(key, out var element) && element.ValueKind == JsonValueKind.String)
+            {
+                return DottedPackage(element.GetString()!) ?? PackageKey(properties);
+            }
+        }
+
+        return PackageKey(properties);
+    }
+
+    /// <summary>Returns the lower-cased first segment of a dotted context name, or null when the name has no package segment.</summary>
+    private static string? DottedPackage(string name)
+    {
+        var dot = name.IndexOf('.', StringComparison.Ordinal);
+        var package = dot > 0 ? name[..dot].Trim() : string.Empty;
+        return package.Length == 0 ? null : package.ToLowerInvariant();
+    }
+
+    /// <summary>Returns the lower-cased package member of a context entry, or null.</summary>
+    private static string? PackageKey(IReadOnlyDictionary<string, JsonElement> properties) =>
+        properties.TryGetValue("package", out var element) && element.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(element.GetString())
+            ? element.GetString()!.Trim().ToLowerInvariant()
+            : null;
+
+    /// <summary>Builds a context check: a value with no package is compared with the output field it names, any other with its package field's output relation.</summary>
+    /// <returns>The check, with a null relation when no output echoes the package field.</returns>
+    private static ContextCheck NewContextCheck(string source, string? package, string field, string? serviceId, JsonElement value, CasePlan plan)
+    {
+        var relation = package is null
+            ? new ContextRelation(field, DeclaredValue)
+            : string.Equals(field, RaisesField, StringComparison.OrdinalIgnoreCase)
+                ? RaisesRelation
+                : ContextRelations.GetValueOrDefault($"{package}.{field}");
+        return new ContextCheck(source, package, field, serviceId, value, relation, plan);
+    }
+
+    /// <summary>Returns the declared value as the output value it implies.</summary>
+    private static JsonElement? DeclaredValue(JsonElement value, ContextCheck check) => value;
+
+    /// <summary>Returns nvl(value, 0) for a number or null, else null.</summary>
+    private static JsonElement? ZeroWhenNull(JsonElement value, ContextCheck check) => value.ValueKind switch
+    {
+        JsonValueKind.Null => JsonSerializer.SerializeToElement(0m),
+        JsonValueKind.Number => value,
+        _ => null,
+    };
+
+    /// <summary>Returns round(nvl(value, 0), 3), half away from zero, for a number or null, else null.</summary>
+    private static JsonElement? RoundedPrice(JsonElement value, ContextCheck check) => value.ValueKind switch
+    {
+        JsonValueKind.Null => JsonSerializer.SerializeToElement(0m),
+        JsonValueKind.Number when value.TryGetDecimal(out var price) =>
+            JsonSerializer.SerializeToElement(Math.Round(price, 3, MidpointRounding.AwayFromZero)),
+        _ => null,
+    };
+
+    /// <summary>Returns 'Y' when upper_trim_to_null(value) is 'Y' and 'N' for any other string or null, else null.</summary>
+    private static JsonElement? YesOrNo(JsonElement value, ContextCheck check) => value.ValueKind switch
+    {
+        JsonValueKind.String => JsonSerializer.SerializeToElement(UpperTrimToNull(value.GetString()) == "Y" ? "Y" : "N"),
+        JsonValueKind.Null => JsonSerializer.SerializeToElement("N"),
+        _ => null,
+    };
+
+    /// <summary>Returns PARENT for is_package 1 and null for any other value.</summary>
+    private static JsonElement? PackageRole(JsonElement value, ContextCheck check) =>
+        JsonSerializer.SerializeToElement(
+            value.ValueKind == JsonValueKind.Number && value.TryGetDecimal(out var flag) && flag == 1 ? "PARENT" : null);
+
+    /// <summary>Returns offer_type 1 for matched 'Y', else null.</summary>
+    private static JsonElement? OfferTypeOf(JsonElement value, ContextCheck check) =>
+        value.ValueKind == JsonValueKind.String && value.GetString() == "Y" ? JsonSerializer.SerializeToElement(1) : null;
+
+    /// <summary>Returns a declared true, else null.</summary>
+    private static JsonElement? DeclaredTrue(JsonElement value, ContextCheck check) => value.ValueKind == JsonValueKind.True ? value : null;
+
+    /// <summary>Returns a declared false, else null.</summary>
+    private static JsonElement? DeclaredFalse(JsonElement value, ContextCheck check) => value.ValueKind == JsonValueKind.False ? value : null;
+
+    /// <summary>Returns a curr_code string as upper_trim_to_null leaves it, and any other value unchanged.</summary>
+    private static JsonElement NormalisedCurrency(JsonElement value) =>
+        value.ValueKind == JsonValueKind.String ? JsonSerializer.SerializeToElement(UpperTrimToNull(value.GetString())) : value;
+
+    /// <summary>Returns the reason the input line is priced by an override instead of the billing price, or null.</summary>
+    private static string? NoPriceOverride(ContextCheck check) => InputLine(check) switch
+    {
+        null => MissingInputLine(check),
+        { } line when UsesPriceOverride(line) => $"input line {line.ServiceId} uses a price override, so its price is not the billing price",
+        _ => null,
+    };
+
+    /// <summary>Returns the reason a declared match cannot reach the line's offer_type, or null.</summary>
+    private static string? OfferEligible(ContextCheck check)
+    {
+        if (InputLine(check) is not { } line)
+        {
+            return MissingInputLine(check);
+        }
+
+        if (check.Value.ValueKind != JsonValueKind.String || check.Value.GetString() != "Y")
+        {
+            return "only a matched 'Y' reaches offer_type: an unmatched line and a line bil_offer_rule never resolves show the same offer_type";
+        }
+
+        if (check.Plan.Header?.PayType != 1)
+        {
+            return "a standard offer is resolved only for a cash invoice (payType 1)";
+        }
+
+        if (HasPackageMetadata(line))
+        {
+            return $"input line {line.ServiceId} carries package metadata, so no standard offer is resolved for it";
+        }
+
+        return line.PatServReqRowId is not null && UsesPriceOverride(line)
+            ? $"input line {line.ServiceId} is a request line with a price override, so no standard offer is resolved for it"
+            : null;
+    }
+
+    /// <summary>Returns the reason an operation other than CreateFullInvoice cannot observe the cashier shift, or null.</summary>
+    private static string? CreateOnly(ContextCheck check) =>
+        check.Plan.Operation == Operation.Create ? null : $"{GatewayName(check.Plan.Operation)} does not assert the cashier shift";
+
+    /// <summary>Returns the reason an observed line is a standard-offer, package or offer line, or null.</summary>
+    private static string? PlainLine(IReadOnlyDictionary<string, object?> record)
+    {
+        if (!record.TryGetValue("offer_type", out var offerType)
+            || !record.TryGetValue("package_line_role", out var packageRole)
+            || !record.TryGetValue("offer_line_role", out var offerRole))
+        {
+            return "shows no offer type and line roles";
+        }
+
+        if (AsDecimal(offerType) == 1)
+        {
+            return "is a standard-offer line";
+        }
+
+        return packageRole is null && offerRole is null ? null : "is a package or offer line";
+    }
+
+    /// <summary>Returns the reason an observed line takes its discount and override permissions from a package or bundled offer, or null.</summary>
+    private static string? OwnPermissions(IReadOnlyDictionary<string, object?> record)
+    {
+        if (!record.TryGetValue("package_line_role", out var packageRole) || !record.TryGetValue("offer_line_role", out var offerRole))
+        {
+            return "shows no line roles";
+        }
+
+        if (packageRole is not null)
+        {
+            return "is a package line";
+        }
+
+        return offerRole is null || string.Equals(Convert.ToString(offerRole, CultureInfo.InvariantCulture), "SERVICE", StringComparison.Ordinal)
+            ? null
+            : "is a bundled-offer line";
+    }
+
+    /// <summary>Returns the reason an observed line is not a standard-offer line, or null.</summary>
+    private static string? StandardOfferLine(IReadOnlyDictionary<string, object?> record) =>
+        record.TryGetValue("offer_type", out var offerType) && AsDecimal(offerType) == 1 ? null : "is not a standard-offer line";
+
+    /// <summary>Returns the input line a check names by service id, else the first input line, or null.</summary>
+    private static InvoiceLineDraft? InputLine(ContextCheck check) => check.ServiceId is null
+        ? check.Plan.Lines.FirstOrDefault()
+        : check.Plan.Lines.FirstOrDefault(line => string.Equals(line.ServiceId, check.ServiceId, StringComparison.Ordinal));
+
+    /// <summary>Describes the input line a check names but the case input lacks.</summary>
+    private static string MissingInputLine(ContextCheck check) => check.ServiceId is null
+        ? $"{GatewayName(check.Plan.Operation)} input has no line"
+        : $"{GatewayName(check.Plan.Operation)} input has no line for service {check.ServiceId}";
+
+    /// <summary>Mirrors ENGINE line_uses_price_override: yn_flag(use_price_override) 'Y' or a non-null price_override.</summary>
+    private static bool UsesPriceOverride(InvoiceLineDraft line) =>
+        UpperTrimToNull(line.UsePriceOverride) is "Y" or "YES" or "1" or "TRUE" || line.PriceOverride is not null;
+
+    /// <summary>Returns true when an input line carries any package field.</summary>
+    private static bool HasPackageMetadata(InvoiceLineDraft line) =>
+        line.PackageServiceId is not null
+        || line.PackageInstanceId is not null
+        || line.PackageLineRole is not null
+        || line.PackageComponentOrder is not null
+        || line.PackageParentLineId is not null
+        || line.PackagePricingMethod is not null
+        || line.PackageDefinitionToken is not null;
+
+    /// <summary>Mirrors ENGINE upper_trim_to_null: trims spaces, maps blank to null and upper-cases the rest.</summary>
+    private static string? UpperTrimToNull(string? value)
+    {
+        var trimmed = value?.Trim(' ');
+        return string.IsNullOrEmpty(trimmed) ? null : trimmed.ToUpperInvariant();
+    }
+
+    /// <summary>Describes an actual database or package value without its content: null, or the non-null value's type.</summary>
+    private static string Withheld(object? value) => value is null or DBNull ? "null" : $"a non-null {value.GetType().Name}";
 
     /// <summary>Compares a declared JSON value with a database or package value: numbers as decimal, strings ordinally, dates as DateTime, null equal to DBNull.</summary>
     private static bool Matches(JsonElement expected, object? actual)
@@ -1701,6 +2158,9 @@ public sealed class PackageParityTests
         public override string ToString() => $"{Id}/{Name}";
     }
 
+    /// <summary>Result of one case run: the gateway operation it ran, or null when it failed, its failure, and the failure of its rollback, release or disposal.</summary>
+    private sealed record CaseOutcome(Operation? Operation, Exception? CaseFailure, Exception? RollbackFailure);
+
     /// <summary>Gateway call of one case, with every argument read from its input.</summary>
     private sealed record CasePlan(
         Operation Operation,
@@ -1720,8 +2180,28 @@ public sealed class PackageParityTests
         string? ParentSourceId,
         VisitLineChoice? VisitChoice);
 
-    /// <summary>One declared shared-package output: its source name, the output field it lands in, an optional line service id and the declared value.</summary>
-    private sealed record ContextCheck(string Source, string Field, string? ServiceId, JsonElement Value);
+    /// <summary>One declared shared-package value: its source name, package and field, an optional line service id, the declared value, the output relation that echoes it and the case's gateway call.</summary>
+    private sealed record ContextCheck(
+        string Source,
+        string? Package,
+        string Field,
+        string? ServiceId,
+        JsonElement Value,
+        ContextRelation? Relation,
+        CasePlan Plan);
+
+    /// <summary>Output field echoing a declared value, the output value it implies, the input and observed-line conditions under which the echo holds, and whether completion alone observes it.</summary>
+    /// <param name="Output">Output field carrying the echo.</param>
+    /// <param name="Expect">Output value a declared value implies, or null when the declared value has no relation.</param>
+    /// <param name="InputCondition">Reason the case input prevents the echo, or null.</param>
+    /// <param name="ObservedCondition">Reason an observed line or output does not carry the echo, or null.</param>
+    /// <param name="Completion">True when the operation returning its output observes the declared value.</param>
+    private sealed record ContextRelation(
+        string Output,
+        Func<JsonElement, ContextCheck, JsonElement?> Expect,
+        Func<ContextCheck, string?>? InputCondition = null,
+        Func<IReadOnlyDictionary<string, object?>, string?>? ObservedCondition = null,
+        bool Completion = false);
 
     /// <summary>Key comparer that ignores case and underscores, so inv_no, INV_NO and invNo name the same field.</summary>
     private sealed class FixtureKeyComparer : IEqualityComparer<string>

@@ -1,3 +1,4 @@
+using System.Reflection;
 using Billing.Invoicing.Data.Errors;
 
 namespace Billing.Invoicing.Tests.Data;
@@ -20,6 +21,11 @@ public sealed class OracleErrorParserTests
 
     private const string PatientRequiredMessage =
         "ORA-20900: Invoice create failed: patient number is required.";
+
+    private const string FrameMatchTimeoutFieldName = "FrameMatchTimeoutMilliseconds";
+
+    private static readonly (string Schema, string Package, int Line) EngineFrame = ("HIS", "BIL_INVOICE_ENGINE", 619);
+    private static readonly (string Schema, string Package, int Line) ApiFrame = ("HIS", "BIL_INVOICE_API", 1476);
 
     [Fact]
     public void FromParts_ApplicationError_NormalisesNumberAndParsesTextAndFrame()
@@ -146,17 +152,43 @@ public sealed class OracleErrorParserTests
     }
 
     [Fact]
-    public void FromParts_LargeNearMatchFlood_ReturnsFramesInMessageOrderUpToAnyTimeout()
+    public void FromParts_NearMatchFloodBetweenTwoFrames_ReturnsBothFramesInMessageOrder()
     {
-        string flood = string.Concat(Enumerable.Repeat("ORA-06512: at \"xxxxxxxx", 20000));
+        string flood = string.Concat(Enumerable.Repeat("ORA-06512: at \"xxxxxxxx", 100));
         string message = "ORA-20931: x\n" + EngineFrameLine + "\n" + flood + "\n" + ApiFrameLine;
 
         OracleErrorInfo info = OracleErrorParser.FromParts(20931, message);
 
-        Assert.InRange(info.Frames.Count, 1, 2);
-        Assert.Equal(
-            new[] { ("HIS", "BIL_INVOICE_ENGINE", 619), ("HIS", "BIL_INVOICE_API", 1476) }.Take(info.Frames.Count),
-            info.Frames);
+        Assert.Equal(new[] { EngineFrame, ApiFrame }, info.Frames);
+    }
+
+    [Fact]
+    public void FromParts_LargeNearMatchFlood_LosesTheLaterFrameOnlyAfterTheMatchTimeout()
+    {
+        FieldInfo? timeoutField = typeof(OracleErrorParser).GetField(FrameMatchTimeoutFieldName, BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(timeoutField);
+        int timeoutMilliseconds = Assert.IsType<int>(timeoutField.GetRawConstantValue());
+        Assert.InRange(timeoutMilliseconds, 1, int.MaxValue);
+
+        string flood = string.Concat(Enumerable.Repeat("ORA-06512: at \"xxxxxxxx", 20000));
+        string message = "ORA-20931: x\n" + EngineFrameLine + "\n" + flood + "\n" + ApiFrameLine;
+
+        long startedAt = Environment.TickCount64;
+        OracleErrorInfo info = OracleErrorParser.FromParts(20931, message);
+        long elapsedMilliseconds = Environment.TickCount64 - startedAt;
+
+        Assert.NotEmpty(info.Frames);
+        Assert.Equal(EngineFrame, info.Frames[0]);
+        if (elapsedMilliseconds < timeoutMilliseconds)
+        {
+            Assert.Equal(new[] { EngineFrame, ApiFrame }, info.Frames);
+        }
+        else
+        {
+            Assert.True(
+                info.Frames.SequenceEqual(new[] { EngineFrame }) || info.Frames.SequenceEqual(new[] { EngineFrame, ApiFrame }),
+                $"After {elapsedMilliseconds} ms the frames must be [Engine] or [Engine, Api]; got [{string.Join(", ", info.Frames)}].");
+        }
     }
 
     [Fact]

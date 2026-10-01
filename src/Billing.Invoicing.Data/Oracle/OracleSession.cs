@@ -220,7 +220,7 @@ public sealed class OracleSession : IOracleSession
         }
     }
 
-    /// <summary>Runs an Oracle call within a deadline; an expired deadline is a <see cref="TimeoutException"/>, a caller cancellation stays an <see cref="OperationCanceledException"/>, and a failure before either propagates unchanged.</summary>
+    /// <summary>Runs an Oracle call within a deadline: an expired deadline is a <see cref="TimeoutException"/>; a caller cancellation is an <see cref="OperationCanceledException"/> while the call is still running, and otherwise the call's own result or failure stands; a failure before either propagates unchanged.</summary>
     /// <param name="operation">Name of the call, used in the timeout message.</param>
     /// <param name="deadline">Time the call may take.</param>
     /// <param name="call">Starts the call with a token that is cancelled when the deadline expires or the caller cancels.</param>

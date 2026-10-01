@@ -52,6 +52,31 @@ public sealed class BilImportGatewayTests
         Assert.False(error.Data.Contains(OracleFailureTranslator.BindingRejectionKey));
     }
 
+    [Fact]
+    [Trait("Decision", "D-90")]
+    public void Constructor_CommandTimeoutAtTheMaximum_IsAccepted()
+    {
+        var options = new InvoicingDataOptions { CommandTimeoutSeconds = InvoicingDataOptions.MaxCommandTimeoutSeconds };
+
+        Assert.IsType<BilImportGateway>(new BilImportGateway(options));
+    }
+
+    [Theory]
+    [Trait("Decision", "D-90")]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(InvoicingDataOptions.MaxCommandTimeoutSeconds + 1)]
+    [InlineData(int.MaxValue)]
+    public void Constructor_CommandTimeoutOutOfRange_ThrowsNamingTheKey(int commandTimeoutSeconds)
+    {
+        var options = new InvoicingDataOptions { CommandTimeoutSeconds = commandTimeoutSeconds };
+
+        var exception = Assert.Throws<ArgumentOutOfRangeException>("options", () => new BilImportGateway(options));
+
+        Assert.Equal(commandTimeoutSeconds, exception.ActualValue);
+        Assert.Contains("Invoicing:CommandTimeoutSeconds", exception.Message, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData(nameof(PlsqlBlocks.RequestImport))]
     [InlineData(nameof(PlsqlBlocks.VisitLine))]

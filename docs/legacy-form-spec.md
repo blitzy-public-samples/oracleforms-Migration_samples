@@ -88,14 +88,14 @@ The bind policy of the served LOVs is D-49: `:global.lang` → `'E'`, `:global.r
 | `NEW_PAT_INV` | 815 | No reader outside comments | N | Unused |
 | `THE_DOC` | 816 | T029 | DR-11 | `InvoiceEntryParameters.TheDoc` → `DoctorSelectionRules.Validate` |
 | `COMP_TYPE` | 817 | Set by T026 from `COMPANYS`; read by T015, T023, T029, T054, T066, `MAKE_CASH`, `OKA`, `CHK_ADV_CLASS` | PR-04 | `InvoiceEntryParameters.CompType`; line payer rate is payer share inside the package (UNVERIFIED) |
-| `PAY_VAT_CO` | 818 | T010, T023, `SMALL_CALC` | PR-05 | `InvoiceEntryParameters.PayVatCo`; VAT flags inside the package |
+| `PAY_VAT_CO` | 818 | T010, T023, `SMALL_CALC` | PR-05 | `InvoiceEntryParameters.PayVatCo`; VAT flags inside the package (UNVERIFIED) |
 | `FROM_CHK` | 819 | T003, `CHK_SEC_DETAIL` | N | UI mechanics: item toggling |
 | `CLAIM_FLAG` | 820 | T003, T015, T023, T029, T030; `SERVICES` record group | DR-10, DR-20, DR-25, OI-24 | `InvoiceEntryParameters.ClaimFlag` → `ClaimNumberRule.Build`, `InvoiceDefaultsRule.Apply`; also filters the blocked `SERVICES` LOV |
 | `CASH_OR_CREDIT` | 821 | T003, T015, T023 | DR-24 | `InvoiceEntryParameters.CashOrCredit` → `PayTypeSelectionRule.Decide` |
 | `DO_REVIEW` | 822 | T029 | DR-25 | `InvoiceEntryParameters.DoReview` → `VisitLineRule.Choose` |
 | `THE_COUNTRY` | 823 | No reader outside comments | N | Unused |
 | `CLAIM_DATE` | 824 | No reader outside comments | N | Unused |
-| `PAY_VAT` | 825 | T010, T023, `SMALL_CALC` | PR-05 | `InvoiceEntryParameters.PayVat`; VAT flags inside the package |
+| `PAY_VAT` | 825 | T010, T023, `SMALL_CALC` | PR-05 | `InvoiceEntryParameters.PayVat`; VAT flags inside the package (UNVERIFIED) |
 | `ONE_VISIT_960` | 826 | T003, T066, `OKA` | OI-32 | `InvoiceEntryParameters.OneVisit960`; claim / revisit sub-rule blocked |
 | `DIRECT_CALL` | 827 | T003, `CHK_SEC_DETAIL` | N | UI mechanics: item toggling |
 | `X422_APPROV_CHECK` | 828 | T003, T074, T085 | DR-14, DR-18, PR-19 | `InvoiceEntryParameters.X422ApprovCheck` → `LineEntryRules.ValidateApproval`, `RequestImportRules.Notices`, `BilImportGateway.ApprovalCheckMode` (D-12) |
@@ -135,12 +135,12 @@ Trigger ids follow XML order: the form-level triggers first, then per block the 
 | T006 | [05_Complex/Inv_Small_Cash.xml:1099] | FORM · WHEN-FORM-NAVIGATE | Global UI flags (`inv_to_delete`, `DO_PREVIEW`) | N | UI mechanics: form navigation state |
 | T007 | [05_Complex/Inv_Small_Cash.xml:1100] | FORM · ON-CLEAR-DETAILS | Master-detail coordination | N | UI mechanics: the API returns header and lines together |
 | T008 | [05_Complex/Inv_Small_Cash.xml:1101] | FORM · WHEN-WINDOW-ACTIVATED | Global UI flags (`inv_to_delete`, `DO_PREVIEW`) | N | UI mechanics: window activation state |
-| T009 | [05_Complex/Inv_Small_Cash.xml:1102] | FORM · PRE-COMMIT | 'Invoice without Details' when there are no lines | DR-02, PR-14 | `InvoiceDetailRules.RequireDetails`; engine -20903 re-checks |
+| T009 | [05_Complex/Inv_Small_Cash.xml:1102] | FORM · PRE-COMMIT | 'Invoice without Details' when there are no lines | DR-02, PR-14 | `InvoiceDetailRules.RequireDetails`; engine -20903 re-checks (UNVERIFIED) |
 | T010 | [05_Complex/Inv_Small_Cash.xml:362] | T_INV · POST-QUERY | Display lookups; makes queried invoices non-updatable and non-deletable | DR-17, OI-15.01 | `InvoiceQueries.GetInvoice` (display lookups in `InvoiceViewResponse.Display`); read-only → `InvoiceStatePolicy.CanEdit` |
-| T011 | [05_Complex/Inv_Small_Cash.xml:363] | T_INV · PRE-INSERT | `GET_NEXT_INVOICE_NO` ×20; `OLD_OR_NEW`; shift re-check; `SEQ_NO` / `DOC_SEQ` queue number; PATIENT `NEW_INV_*` clear; `IS_STATE`; `THE_MONTH` / `THE_YEAR`; `machine_n` | PR-09, PR-10, PR-11, PR-12, DR-21, OI-09, OI-19, OI-33 | Numbering PR-09; `OLD_OR_NEW` PR-11; month/year PR-12; shift PR-10 (the re-check only warned); queue number → queue posting (D-14, OI-09); `IS_STATE` not carried (OI-33); PATIENT clear DR-21 `ReceptionTransferRule.ShouldClear` + `PatientTransferCommand.ClearReceptionTransfer` (failure swallowed, D-44) |
+| T011 | [05_Complex/Inv_Small_Cash.xml:363] | T_INV · PRE-INSERT | `GET_NEXT_INVOICE_NO` ×20; `OLD_OR_NEW`; shift re-check; `SEQ_NO` / `DOC_SEQ` queue number; PATIENT `NEW_INV_*` clear; `IS_STATE`; `THE_MONTH` / `THE_YEAR`; `machine_n` | PR-09, PR-10, PR-11, PR-12, DR-21, OI-09, OI-19, OI-33 | Numbering PR-09; `OLD_OR_NEW` PR-11; month/year PR-12; shift PR-10 (the re-check only warned); queue number → queue posting (D-14, OI-09, UNVERIFIED); `IS_STATE` not carried (OI-33); PATIENT clear DR-21 `ReceptionTransferRule.ShouldClear` + `PatientTransferCommand.ClearReceptionTransfer` (failure swallowed, D-44) |
 | T012 | [05_Complex/Inv_Small_Cash.xml:364] | T_INV · PRE-QUERY | `global.go_to_inv` preset; `LOCAL_DOC_TYPE` → `ROW_TYPE` | OI-15.01 | `ROW_TYPE` filter in `InvoiceQueries.GetInvoice` |
 | T013 | [05_Complex/Inv_Small_Cash.xml:365] | T_INV · PRE-UPDATE | `UPD_USER_NO`, `PAT_VISIT_M` doctor update | OI-56 | Saved-invoice update blocked: `InvoicesController.Update` → 501 (D-36) |
-| T014 | [05_Complex/Inv_Small_Cash.xml:366] | T_INV · WHEN-VALIDATE-RECORD | Patient required; company required for credit; doctor required; payment type default | DR-01, DR-22, PR-13 | `HeaderRecordRules.ValidateRecord`, `HeaderRecordRules.ApplyPaymentTypeDefault`; engine header checks re-check |
+| T014 | [05_Complex/Inv_Small_Cash.xml:366] | T_INV · WHEN-VALIDATE-RECORD | Patient required; company required for credit; doctor required; payment type default | DR-01, DR-22, PR-13 | `HeaderRecordRules.ValidateRecord`, `HeaderRecordRules.ApplyPaymentTypeDefault`; engine header checks re-check (UNVERIFIED) |
 | T015 | [05_Complex/Inv_Small_Cash.xml:367] | T_INV · WHEN-CREATE-RECORD | Defaults: info centre, `INVDATE := sysdate`, `INV_TIME`, `PFLAG`, claim preload, `payed_before` via `GET_PAYID_VALUE`, home-care type 7, `SUB_PAYTYPE := 1` | DR-20, DR-24, PR-12, OI-23 | `InvoiceDefaultsRule.Apply` (claim preload `InvoiceQueries.GetClaimPreload`, visit doctor `LookupQueries.GetVisitDoctor`, draft date `LookupQueries.GetDatabaseTime`, D-39); pay type `PayTypeSelectionRule.Decide`; `PFLAG` PR-12; `payed_before` not built (OI-23) |
 | T016 | [05_Complex/Inv_Small_Cash.xml:368] | T_INV · POST-INSERT | `HMISFOX_AUDIT` insert; `ADD_TO_LIST` → `PAT_VISIT_M` ('Cant add visit to clinic list'); cash-invoice SMS link | OI-13, OI-09, OI-12, OI-45 | Audit → engine `BIL_AUDIT` call (OI-13, UNVERIFIED); visit list → queue posting (OI-09, D-14, UNVERIFIED); SMS with the `inv_small_cash.jsp` link not sent (OI-12, OI-45, D-28) |
 | T017 | [05_Complex/Inv_Small_Cash.xml:369] | T_INV · POST-UPDATE | Update audit | OI-56 | Saved-invoice update blocked: `InvoicesController.Update` → 501 (D-36) |
@@ -151,7 +151,7 @@ Trigger ids follow XML order: the form-level triggers first, then per block the 
 | T022 | [05_Complex/Inv_Small_Cash.xml:13] | T_INV.INVTYPEID · WHEN-VALIDATE-ITEM | `IS_HOME_CARE` → type 7; `IS_STATE` 1 for types 1, 3 | DR-20, OI-33 | Home-care type in `InvoiceDefaultsRule.Apply`; `IS_STATE` not carried (OI-33) |
 | T023 | [05_Complex/Inv_Small_Cash.xml:18] | T_INV.PATIENTNO · WHEN-VALIDATE-ITEM | Coverage load from `V_PAT_DATA`; cash forcing; contract, company, card, policy, class and referral checks; pay type; `GET_ELLIGABILTY` pre-authorisation | DR-03, DR-24, PR-24, OI-03, OI-24, OI-21 | `PatientEligibilityRules.Evaluate` over `LookupQueries.GetPatientCoverage`; pay type `PayTypeSelectionRule.Decide`; payer context PR-24 via `BIL_PATIENT_CONTEXT` (OI-03); `GET_PRICE_PLAN` not built (OI-24); pre-authorisation not derived (OI-21, D-52) |
 | T024 | [05_Complex/Inv_Small_Cash.xml:21] | T_INV.PATIENTNAME · KEY-NEXT-ITEM | Focus navigation | N | UI mechanics: focus navigation |
-| T025 | [05_Complex/Inv_Small_Cash.xml:24] | T_INV.INV_TIME · WHEN-VALIDATE-ITEM | `PFLAG` from time | PR-12 | Engine derives `PFLAG` (D-06) |
+| T025 | [05_Complex/Inv_Small_Cash.xml:24] | T_INV.INV_TIME · WHEN-VALIDATE-ITEM | `PFLAG` from time | PR-12 | Engine derives `PFLAG` (D-06, UNVERIFIED) |
 | T026 | [05_Complex/Inv_Small_Cash.xml:27] | T_INV.COMP_CODE · WHEN-VALIDATE-ITEM | `DIRECT_COMP_SHARE`, `COMP_TYPE` from `COMPANYS`; company '0' → cash, otherwise credit (its `V_type` branches are dead) | DR-24, PR-04 | `PayTypeSelectionRule.Decide` with `LookupQueries.GetCompanyType`; direct share PR-04 |
 | T027 | [05_Complex/Inv_Small_Cash.xml:36] | T_INV.PAYTYPE · WHEN-VALIDATE-ITEM | Cash conversion (`MAKE_CASH`), item enablement | PR-24, OI-03 | Payer context PR-24 (OI-03); item enablement is UI mechanics |
 | T028 | [05_Complex/Inv_Small_Cash.xml:37] | T_INV.PAYTYPE · WHEN-LIST-CHANGED | Item enablement | N | UI mechanics: item enablement |
@@ -167,7 +167,7 @@ Trigger ids follow XML order: the form-level triggers first, then per block the 
 | T038 | [05_Complex/Inv_Small_Cash.xml:73] | T_INV.FINALDISC_PERC · KEY-NEXT-ITEM | `SUB_PAYTYPE := 1` when patient pays; navigation | DR-22 | `HeaderRecordRules.ApplyPaymentTypeDefault`; navigation is UI mechanics |
 | T039 | [05_Complex/Inv_Small_Cash.xml:74] | T_INV.FINALDISC_PERC · WHEN-VALIDATE-ITEM | `USERS_TABLE.MAX_DISC` limit + `DISC_ALERT`; final discount from percent; amount reset | DR-06, DR-07, PR-06 | Limit `FinalDiscountLimitRule.Evaluate` / `.ApplyChoice`; reset `PaymentAllocationRules.ResetAfterDiscountChange`; amount PR-06 |
 | T040 | [05_Complex/Inv_Small_Cash.xml:77] | T_INV.FINALDISC · KEY-NEXT-ITEM | `SUB_PAYTYPE := 1` when patient pays; navigation | DR-22 | `HeaderRecordRules.ApplyPaymentTypeDefault`; navigation is UI mechanics |
-| T041 | [05_Complex/Inv_Small_Cash.xml:78] | T_INV.FINALDISC · WHEN-VALIDATE-ITEM | Final discount > patient share blocked; derived percent vs `MAX_DISC` | DR-06, DR-07, PR-06 | Limit `FinalDiscountLimitRule.Evaluate`; exceed check PR-06 (-20914, legacy text via `OracleErrorCatalog`); reset `PaymentAllocationRules.ResetAfterDiscountChange` |
+| T041 | [05_Complex/Inv_Small_Cash.xml:78] | T_INV.FINALDISC · WHEN-VALIDATE-ITEM | Final discount > patient share blocked; derived percent vs `MAX_DISC` | DR-06, DR-07, PR-06 | Limit `FinalDiscountLimitRule.Evaluate`; exceed check PR-06 (-20914, UNVERIFIED, legacy text via `OracleErrorCatalog`); reset `PaymentAllocationRules.ResetAfterDiscountChange` |
 | T042 | [05_Complex/Inv_Small_Cash.xml:81] | T_INV.AMOUNT_1 · WHEN-VALIDATE-ITEM | `amount_2 := net − amount_1` | DR-07 | `PaymentAllocationRules.AllocateSecondAmount` |
 | T043 | [05_Complex/Inv_Small_Cash.xml:84] | T_INV.AMOUNT_2 · WHEN-VALIDATE-ITEM | `REUND` recompute | DR-08 | `PaymentAllocationRules.Refund` |
 | T044 | [05_Complex/Inv_Small_Cash.xml:87] | T_INV.SUB_PAYTYPE · WHEN-VALIDATE-ITEM | Payment-type name lookup; its two messages sit in commented code | OI-15.15 | `PAY_TYPE1` LOV display through `LovQueries.PayTypes`; commented code not migrated (D-27) |
@@ -180,26 +180,26 @@ Trigger ids follow XML order: the form-level triggers first, then per block the 
 | T051 | [05_Complex/Inv_Small_Cash.xml:173] | T_INV.OFERID · KEY-NEXT-ITEM | Focus navigation | N | UI mechanics: focus navigation |
 | T052 | [05_Complex/Inv_Small_Cash.xml:559] | D_INV · WHEN-VALIDATE-RECORD | 'This service not requested by doctor at this claim' (warning); cash `PAYRATE 100` | DR-16, PR-04 | `LineEntryRules.WarnNotRequested`; pay rate PR-04 |
 | T053 | [05_Complex/Inv_Small_Cash.xml:560] | D_INV · WHEN-NEW-RECORD-INSTANCE | `CHK_SEC_DETAIL` | N, OI-25 | UI mechanics: per-block permission toggling; permissions not built (OI-25) |
-| T054 | [05_Complex/Inv_Small_Cash.xml:561] | D_INV · WHEN-CREATE-RECORD | `PAYRATE` default / `DIRECT_COMP_SHARE`; `list_id` | PR-04 | Payer share inside the package calls of preview and create |
-| T055 | [05_Complex/Inv_Small_Cash.xml:562] | D_INV · PRE-INSERT | `D_INV_SEQ` row id | PR-20, OI-40.03 | Engine `insert_lines` [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2794-2968] |
+| T054 | [05_Complex/Inv_Small_Cash.xml:561] | D_INV · WHEN-CREATE-RECORD | `PAYRATE` default / `DIRECT_COMP_SHARE`; `list_id` | PR-04 | Payer share inside the package calls of preview and create (UNVERIFIED) |
+| T055 | [05_Complex/Inv_Small_Cash.xml:562] | D_INV · PRE-INSERT | `D_INV_SEQ` row id | PR-20, OI-40.03 | Engine `insert_lines` [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2794-2968] (UNVERIFIED) |
 | T056 | [05_Complex/Inv_Small_Cash.xml:563] | D_INV · POST-QUERY | Insurance employee name from `EMP` | OI-15.27 | `InvoiceQueries.GetMoreDetails` |
 | T057 | [05_Complex/Inv_Small_Cash.xml:564] | D_INV · PRE-UPDATE | Update user of a saved line | OI-56 | Saved-line update blocked (D-36) |
 | T058 | [05_Complex/Inv_Small_Cash.xml:565] | D_INV · KEY-DELREC | `DELETE_RECORD` on the current line, then `SMALL_CALC` | PR-01, PR-02, PR-03, PR-04, PR-05, PR-06, PR-07, PR-08, OI-56 | Unsaved line: removed from the draft and re-previewed (`InvoiceWorkflowService.Preview`). Saved line of a just-saved invoice: blocked (OI-56, D-36) |
 | T059 | [05_Complex/Inv_Small_Cash.xml:566] | D_INV · PRE-DELETE | Request unlink of a deleted saved line | OI-56 | Saved-line deletion blocked (D-36) |
 | T060 | [05_Complex/Inv_Small_Cash.xml:567] | D_INV · POST-DELETE | Recalculation and location refresh after a saved-line delete | OI-56 | Saved-line deletion blocked (D-36) |
-| T061 | [05_Complex/Inv_Small_Cash.xml:568] | D_INV · POST-INSERT | `PAT_SERV_REQ` link; `T_INV_LOCA` / `D_INV_LOCA` service locations; `PACKAGE_CONS_M` / `PACKAGE_CONS` | PR-20, OI-09, OI-31 | Link PR-20 inside `CreateFullInvoice`; locations → queue posting (OI-09, D-14); package consumption blocked (OI-31) |
+| T061 | [05_Complex/Inv_Small_Cash.xml:568] | D_INV · POST-INSERT | `PAT_SERV_REQ` link; `T_INV_LOCA` / `D_INV_LOCA` service locations; `PACKAGE_CONS_M` / `PACKAGE_CONS` | PR-20, OI-09, OI-31 | Link PR-20 inside `CreateFullInvoice`; locations → queue posting (OI-09, D-14, UNVERIFIED); package consumption blocked (OI-31) |
 | T062 | [05_Complex/Inv_Small_Cash.xml:569] | D_INV · KEY-CREREC | New lines on a saved invoice while `UPDATE_ALLOWED` is true | OI-56, DR-17 | Blocked on a saved invoice (D-36); unsaved drafts add lines freely (`InvoiceStatePolicy.CanEdit`) |
 | T063 | [05_Complex/Inv_Small_Cash.xml:570] | D_INV · POST-UPDATE | Location refresh after a saved-line update | OI-56 | Saved-line update blocked (D-36) |
 | T064 | [05_Complex/Inv_Small_Cash.xml:384] | D_INV.CATID · KEY-NEXT-ITEM | Navigation | N | UI mechanics: focus navigation |
 | T065 | [05_Complex/Inv_Small_Cash.xml:388] | D_INV.SERVICEID · KEY-NEXT-ITEM | Navigation; `AMOUNT_1 := net` after the last line | DR-07 | `PaymentAllocationRules.DefaultFirstAmount`; navigation is UI mechanics |
-| T066 | [05_Complex/Inv_Small_Cash.xml:389] | D_INV.SERVICEID · WHEN-VALIDATE-ITEM | 'You Must Select Value'; inline OKA (eligibility, standard offer, revisit and claim checks, advance payment, cash card, package consumption); `CHK_ADV_CLASS`; `PRICE` enablement; pay rate; `SMALL_CALC` | DR-15, DR-23, PR-16, PR-04, PR-01, OI-32, OI-31 | `LineEntryRules.RequireService`; `AddToListRule.Derive`; offer PR-16; share PR-04; untraced sub-rules → `OpenItemGate.Evaluate` blockers (OI-32); `PRICE` editability → price-override binding (D-42); consumption blocked (OI-31); recalculation PR-01 … PR-08 via `InvoiceWorkflowService.Preview` |
+| T066 | [05_Complex/Inv_Small_Cash.xml:389] | D_INV.SERVICEID · WHEN-VALIDATE-ITEM | 'You Must Select Value'; inline copy of OKA (eligibility, revisit and claim checks, advance payment, cash card, package consumption); its own standard-offer branch (cash: `OFFERS` / `OFFERS_DTL` with `OFFER_TYPE=1` set price and discount), which the `OKA` unit lacks; `CHK_ADV_CLASS`; `PRICE` enablement; pay rate; `SMALL_CALC` | DR-15, DR-23, PR-16, PR-25, PR-04, PR-01, OI-32, OI-31 | `LineEntryRules.RequireService`; `AddToListRule.Derive`; standard-offer branch → PR-16, PR-25 inside the package (UNVERIFIED); share PR-04; untraced sub-rules → `OpenItemGate.Evaluate` blockers (OI-32); `PRICE` editability → price-override binding (D-42); consumption blocked (OI-31); recalculation PR-01 … PR-08 via `InvoiceWorkflowService.Preview` |
 | T067 | [05_Complex/Inv_Small_Cash.xml:393] | D_INV.PRICE · WHEN-VALIDATE-ITEM | `SMALL_CALC` | PR-01 | Re-preview through `BilInvoiceApiGateway.CalculatePreview` |
 | T068 | [05_Complex/Inv_Small_Cash.xml:396] | D_INV.QTY · WHEN-VALIDATE-ITEM | `SHOW_QTY` limit; quantity ≥ 1; remaining package quantity | DR-12, OI-31 | `LineEntryRules.ValidateQuantity`; remaining quantity blocked (OI-31) |
 | T069 | [05_Complex/Inv_Small_Cash.xml:397] | D_INV.QTY · KEY-NEXT-ITEM | Navigation | N | UI mechanics: focus navigation |
 | T070 | [05_Complex/Inv_Small_Cash.xml:400] | D_INV.DISC · WHEN-VALIDATE-ITEM | `SMALL_CALC` | PR-02 | Re-preview through `BilInvoiceApiGateway.CalculatePreview` |
 | T071 | [05_Complex/Inv_Small_Cash.xml:403] | D_INV.MY_DISC · WHEN-VALIDATE-ITEM | `SMALL_CALC` | PR-02 | Re-preview through `BilInvoiceApiGateway.CalculatePreview` |
-| T072 | [05_Complex/Inv_Small_Cash.xml:406] | D_INV.FIXPAY · WHEN-VALIDATE-ITEM | Mutual reset + recalculation | PR-04, OI-33 | Payer share inside the package; operator override not carried (OI-33) |
-| T073 | [05_Complex/Inv_Small_Cash.xml:409] | D_INV.PAYRATE · WHEN-VALIDATE-ITEM | Mutual reset + recalculation | PR-04, OI-33 | Payer share inside the package; operator override not carried (OI-33) |
+| T072 | [05_Complex/Inv_Small_Cash.xml:406] | D_INV.FIXPAY · WHEN-VALIDATE-ITEM | Mutual reset + recalculation | PR-04, OI-33 | Payer share inside the package (UNVERIFIED); operator override not carried (OI-33) |
+| T073 | [05_Complex/Inv_Small_Cash.xml:409] | D_INV.PAYRATE · WHEN-VALIDATE-ITEM | Mutual reset + recalculation | PR-04, OI-33 | Payer share inside the package (UNVERIFIED); operator override not carried (OI-33) |
 | T074 | [05_Complex/Inv_Small_Cash.xml:439] | D_INV.APPROV_REF_NO · WHEN-VALIDATE-ITEM | Credit line needing approval without a reference | DR-14 | `LineEntryRules.ValidateApproval` |
 | T075 | [05_Complex/Inv_Small_Cash.xml:713] | T_INV_TRANS_M · PRE-QUERY | `inv_type := 197` | OI-15.03 | `INV_TYPE = '197'` filter in `InvoiceQueries.GetMoreDetails` |
 | T076 | [05_Complex/Inv_Small_Cash.xml:721] | TOOL.DO_PREVIEW · WHEN-CHECKBOX-CHANGED | Print-preview flag | N, OI-11 | UI mechanics: print flag; printing blocked (OI-11, OI-45, OI-46) |
@@ -211,7 +211,7 @@ Trigger ids follow XML order: the form-level triggers first, then per block the 
 | T082 | [05_Complex/Inv_Small_Cash.xml:746] | TOOL.GO_LAST · WHEN-BUTTON-PRESSED | `MAX(INV_NO)` where `IN_OUT=1`, `ROW_TYPE=1`, `PHARMACY_INV_NO IS NULL`, current information centre | OI-15.01 | `InvoiceQueries.GetLastInvoiceNo` (same predicates) through `InvoicesController.Last` |
 | T083 | [05_Complex/Inv_Small_Cash.xml:749] | TOOL.RELASE · WHEN-BUTTON-PRESSED | `PAYED_BEFORE := 0`, recalculation | OI-23 | Not built: `GET_PAYID_VALUE` is missing, so Release is not rendered |
 | T084 | [05_Complex/Inv_Small_Cash.xml:752] | TOOL.PUSH_BUTTON1062 · WHEN-BUTTON-PRESSED | Open `phy_req_note` | OI-50 | Not built: other Form, out of scope |
-| T085 | [05_Complex/Inv_Small_Cash.xml:755] | TOOL.DO_IMP2 · WHEN-BUTTON-PRESSED | Request import of `V_SERVICES_REQ` rows with `SELECT_TO_INV=1` and `D_INV_ROW_ID IS NULL`; rejected rows → serviceid \|\| ' Rejected ', need-approval rows → serviceid \|\| ' Need Approval'; `X422_APPROV_CHECK=2` bypasses approval | DR-18, PR-19, OI-15.08 | `RequestImportRules.RequireDoctor`, `RequestImportRules.Notices` (D-26); `InvoiceQueries.GetSelectedRequestRows`; `BilImportGateway.ImportRequestLines` with approval mode 0 / 1 (D-12) |
+| T085 | [05_Complex/Inv_Small_Cash.xml:755] | TOOL.DO_IMP2 · WHEN-BUTTON-PRESSED | Request import of `V_SERVICES_REQ` rows with `SELECT_TO_INV=1` and `D_INV_ROW_ID IS NULL`; rejected rows → serviceid \|\| ' Rejected ', need-approval rows → serviceid \|\| ' Need Approval'; `X422_APPROV_CHECK=2` bypasses approval; imported cash lines take the standard offer's price and discount (T066's branch, repeated) | DR-18, PR-19, PR-16, OI-15.08 | `RequestImportRules.RequireDoctor`, `RequestImportRules.Notices` (D-26); `InvoiceQueries.GetSelectedRequestRows`; `BilImportGateway.ImportRequestLines` with approval mode 0 / 1 (D-12); standard offer on imported cash lines → PR-16 inside the package at preview and create (UNVERIFIED) |
 | T086 | [05_Complex/Inv_Small_Cash.xml:758] | TOOL.PUSH_BUTTON934 · WHEN-BUTTON-PRESSED | Canvas switch `CANVAS2` → `MORE` | N | UI mechanics: canvas switch, realised as the Web `App` screen toggle |
 | T087 | [05_Complex/Inv_Small_Cash.xml:761] | TOOL.CMD_LANG · WHEN-BUTTON-PRESSED | Language toggle | N | UI mechanics: single-language UI (D-18) |
 | T088 | [05_Complex/Inv_Small_Cash.xml:764] | TOOL.DO_TRANSLATE · WHEN-BUTTON-PRESSED | Open `translate` | OI-51 | Not built: other Form, out of scope |
@@ -243,10 +243,10 @@ Trigger ids follow XML order: the form-level triggers first, then per block the 
 | PU14 | [05_Complex/Inv_Small_Cash.xml:973] | `CLEAR_ALL_MASTER_DETAILS` · program unit | Relation coordination | N | UI mechanics: master-detail coordination |
 | PU15 | [05_Complex/Inv_Small_Cash.xml:974] | `NEW_WATING_NOXXXXX` · program unit | Waiting-number variant; never called | N | Dead code: never called |
 | PU16 | [05_Complex/Inv_Small_Cash.xml:975] | `MAKE_CASH` · program unit | Cash payer context (company '0', `GET_PRICE_PLAN`, direct share) | DR-24, PR-24, OI-03, OI-24 | Pay type `PayTypeSelectionRule.Decide`; payer context PR-24 (OI-03); price plan not built (OI-24) |
-| PU17 | [05_Complex/Inv_Small_Cash.xml:976] | `DO_DISC` · program unit | Line discount rate ↔ value | PR-02, DR-13 | Engine discount calculation; its message is covered by `LineEntryRules.ValidateDiscountType` |
+| PU17 | [05_Complex/Inv_Small_Cash.xml:976] | `DO_DISC` · program unit | Line discount rate ↔ value | PR-02, DR-13 | Engine discount calculation (UNVERIFIED); its message is covered by `LineEntryRules.ValidateDiscountType` |
 | PU18 | [05_Complex/Inv_Small_Cash.xml:977] | `GET_NOTES` · program unit | Request notes for location rows | OI-09 | Queue posting stage (UNVERIFIED) |
-| PU19 | [05_Complex/Inv_Small_Cash.xml:978] | `OKA` · program unit | Service admission checks and pricing context | PR-03, PR-04, PR-16, PR-25, DR-23, OI-31, OI-32 | Package pricing and offers; `AddToListRule.Derive` (D-37); untraced sub-rules → `OpenItemGate.Evaluate` blockers (OI-32); consumption blocked (OI-31) |
-| PU20 | [05_Complex/Inv_Small_Cash.xml:979] | `ROUND_FOR_CASH` · program unit | Patient amount due | PR-07 | Engine `cash_collected` |
+| PU19 | [05_Complex/Inv_Small_Cash.xml:978] | `OKA` · program unit | Service admission checks and pricing context; no offer branch | PR-03, PR-04, DR-23, OI-31, OI-32 | Package pricing context: discountability PR-03 and payer share PR-04 inside the package (UNVERIFIED); `AddToListRule.Derive` (D-37); untraced sub-rules → `OpenItemGate.Evaluate` blockers (OI-32); consumption blocked (OI-31); no offer branch: standard offers are traced to T066 and T085 |
+| PU20 | [05_Complex/Inv_Small_Cash.xml:979] | `ROUND_FOR_CASH` · program unit | Patient amount due | PR-07 | Engine `cash_collected` (UNVERIFIED) |
 | PU21 | [05_Complex/Inv_Small_Cash.xml:980] | `CHG_PRMPT2` · program unit | Prompt translation via `FIND_PROMPT` | N, OI-43 | UI mechanics: prompt translation |
 | PU22 | [05_Complex/Inv_Small_Cash.xml:981] | `CHK_LIC_SEC` · program unit | Licence check; never called | N | Dead code: never called |
 | PU23 | [05_Complex/Inv_Small_Cash.xml:982] | `CHK_ADV_CLASS` · program unit | Class-based share, advanced class rules, cash-card line discount | PR-04, OI-23, OI-32 | Share and advanced classes PR-04; advanced-class deductible blocked (OI-23, D-51); cash card blocked (OI-32) |
@@ -264,10 +264,10 @@ None of these units is re-implemented in C#. Each is reached only through the re
 
 | Program unit | Package operation that now owns it | Notes |
 |---|---|---|
-| `SMALL_CALC` (PU10) [05_Complex/Inv_Small_Cash.xml:969] | `BIL_INVOICE_API.CALCULATE_EDITABLE_INVOICE_PREVIEW` → `BIL_INVOICE_ENGINE.PREVIEW_INVOICE` / `calculate_lines` (PR-01 … PR-08, PR-15), through `BilInvoiceApiGateway.CalculatePreview` | Legacy credit deductible cap `MAX_DEDUCTABLE − (payed_before + s_pay)`. The running `s_pay` part corresponds to the engine's `p_patient_paid_so_far` [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2023] (PR-04). The `payed_before` part needs the missing `GET_PAYID_VALUE` and has no package counterpart, so credit preview and create block with OI-23 wherever the cap can apply (D-51) |
+| `SMALL_CALC` (PU10) [05_Complex/Inv_Small_Cash.xml:969] | `BIL_INVOICE_API.CALCULATE_EDITABLE_INVOICE_PREVIEW` → `BIL_INVOICE_ENGINE.PREVIEW_INVOICE` / `calculate_lines` (PR-01 … PR-08, PR-15), through `BilInvoiceApiGateway.CalculatePreview` | Legacy credit deductible cap `MAX_DEDUCTABLE − (payed_before + s_pay)`. The running `s_pay` part corresponds to the engine's `p_patient_paid_so_far` [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2023] (PR-04, UNVERIFIED). The `payed_before` part needs the missing `GET_PAYID_VALUE` and has no package counterpart, so credit preview and create block with OI-23 wherever the cap can apply (D-51) |
 | `DO_DISC` (PU17) [05_Complex/Inv_Small_Cash.xml:976] | Engine `calc_discount_amount` / `calc_discount_percent` (PR-02) | Its message 'use Discount rate for insurance companys' is covered by DR-13 |
-| `CHK_ADV_CLASS` (PU23) [05_Complex/Inv_Small_Cash.xml:982] | Engine `calculate_lines` → `bil_class_rule.resolve_share` (PR-04) | Advanced classes (`DISC_CLASSES.USE_ADVANCED`, `COMPANY_CAT`, `SYS_CAT_TYPE`) are payer share (OI-06). An advanced class can set `MAX_DEDUCTABLE` per line, which .NET does not derive, so a credit draft with one blocks under OI-23 (D-51). The cash-card branch has no package trace and blocks (OI-32) |
-| `OKA` (PU19, inline copy in T066) [05_Complex/Inv_Small_Cash.xml:978] | Engine `calculate_lines`, `bil_service_context`, `bil_offer_rule`, `BIL_IMPORT` (PR-03, PR-04, PR-16, PR-25) | Revisit limits, claim count / `ONE_VISIT_960`, advance payment `PKG_TYPE=3`, cash-card discount and begin-of-claim eligibility have no trace in the three sources; each blocks the operation that needs it when its condition holds (OI-32, D-05). `ADD_TO_LIST` is DR-23 (D-37); package consumption is OI-31 |
+| `CHK_ADV_CLASS` (PU23) [05_Complex/Inv_Small_Cash.xml:982] | Engine `calculate_lines` → `bil_class_rule.resolve_share` (PR-04) | Advanced classes (`DISC_CLASSES.USE_ADVANCED`, `COMPANY_CAT`, `SYS_CAT_TYPE`) are payer share (OI-06, UNVERIFIED). An advanced class can set `MAX_DEDUCTABLE` per line, which .NET does not derive, so a credit draft with one blocks under OI-23 (D-51). The cash-card branch has no package trace and blocks (OI-32) |
+| `OKA` (PU19, inline copy in T066) [05_Complex/Inv_Small_Cash.xml:978] | Engine `calculate_lines`, `bil_service_context`, `BIL_IMPORT` (PR-03, PR-04) | Revisit limits, claim count / `ONE_VISIT_960`, advance payment `PKG_TYPE=3`, cash-card discount and begin-of-claim eligibility have no trace in the three sources; each blocks the operation that needs it when its condition holds (OI-32, D-05). `ADD_TO_LIST` is DR-23 (D-37); package consumption is OI-31. `OKA` has no offer branch: the standard-offer branch sits beside the inline copy in T066 [05_Complex/Inv_Small_Cash.xml:389] and T085 repeats it [05_Complex/Inv_Small_Cash.xml:755]; it maps to `bil_offer_rule` (PR-16, PR-25), not to this unit |
 | `ROUND_FOR_CASH` (PU20) [05_Complex/Inv_Small_Cash.xml:979] | Engine `cash_collected` [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:3058-3059] (PR-07) | The legacy credit branch `S_PAY + nvl(VAT_TOTAL_PAT,2)` is unrounded and defaults VAT to 2; the package governs (§10, D-40) |
 | `GET_NEXT_INVOICE_NO` | Engine `get_next_invoice_no_safe` [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1082-1102] calling the standalone function (PR-09) | A standalone DB function [05_Complex/README.md:357], not a Form program unit; T011 is its Form caller (D-02, OI-19) |
 
@@ -278,12 +278,12 @@ None of these units is re-implemented in C#. Each is reached only through the re
 | Sub-rule [Form locator] | Package evidence | Target |
 |---|---|---|
 | Payer share, advanced classes (`DISC_CLASSES.USE_ADVANCED`, `COMPANY_CAT`), `DIRECT_COMP_SHARE` line rate [05_Complex/Inv_Small_Cash.xml:978, 982] | `bil_class_rule.resolve_share` [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2016-2025] | PR-04, UNVERIFIED (OI-06); the prior-payment part of the deductible cap is OI-23 (D-51) |
-| Standard offers [05_Complex/Inv_Small_Cash.xml:978] | `bil_offer_rule` [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1866-1885] | PR-16, PR-25 |
-| Eligibility before queueing: `ADD_TO_QUE=1`, sub-company set, `PRE_AUTHORIZATION` null → 'Elligabilty should be done with services marked as begin of claim' [05_Complex/Inv_Small_Cash.xml:389, 978] | None: `pre_authorization` is stored, never checked [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2708, 2756] | Blocked (OI-32) whenever a line's service (or a package component) has `ADD_TO_QUE=1` and the header has a sub-company; no request pre-authorisation is read (D-52) |
+| Standard offers: T066's own branch, repeated by T085 for imported request lines; the `OKA` unit has none [05_Complex/Inv_Small_Cash.xml:389, 755] | `bil_offer_rule` [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1866-1885] | PR-16, PR-25, UNVERIFIED (OI-07) |
+| Eligibility before queueing: `ADD_TO_QUE=1`, sub-company set, `PRE_AUTHORIZATION` null → 'Elligabilty should be done with services marked as begin of claim' [05_Complex/Inv_Small_Cash.xml:389, 978] | None: `pre_authorization` is stored, never checked [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2708, 2756] (a reading of the package source; runtime behaviour UNVERIFIED) | Blocked (OI-32) whenever a line's service (or a package component) has `ADD_TO_QUE=1` and the header has a sub-company; no request pre-authorisation is read (D-52) |
 | Claim and revisit limits: `CONS_REV` 1 / 2, `ONE_VISIT_960` [05_Complex/Inv_Small_Cash.xml:389, 978] | None | Blocked (OI-32) when the service has `CONS_REV` 1 or 2 |
 | Advance-payment instalments: `IS_PACKAGE=1` with `PKG_TYPE=3` [05_Complex/Inv_Small_Cash.xml:389, 978] | None | Blocked (OI-32) |
 | Cash-card line discount from `CASH_CARD_DISCDTL` when `CARD_ID` is set [05_Complex/Inv_Small_Cash.xml:43, 978, 982] | None | Blocked (OI-32) when the server-read card id (`LookupQueries.GetPatientCardId`, claim preload) is set (D-52) |
-| `ADD_TO_LIST` flag [05_Complex/Inv_Small_Cash.xml:43, 389, 978] | Caller-supplied `add_to_list`, stored and never derived [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:21, 2782] | DR-23 (D-37) |
+| `ADD_TO_LIST` flag [05_Complex/Inv_Small_Cash.xml:43, 389, 978] | Caller-supplied `add_to_list`, stored and never derived [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:21, 2782] (a reading of the package source; runtime behaviour UNVERIFIED) | DR-23 (D-37) |
 | Package consumption (`PKG_INV`) [05_Complex/Inv_Small_Cash.xml:389, 978] | None | Blocked (OI-31, D-30) |
 
 **Legacy post-insert side effects.** Each is assigned to a `CREATE_FULL_INVOICE` posting stage [05_Complex/APEX_Reference/backend/README.md:145-158] whose implementation is in a missing package; .NET writes none of these tables (D-14). Every equivalence is UNVERIFIED.
@@ -297,16 +297,16 @@ None of these units is re-implemented in C#. Each is reached only through the re
 | Payment | `BIL_PAYMENT.post_payment` [05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:1385-1403] | UNVERIFIED (OI-08, D-13) |
 | Print | `BIL_REPORTS_PRINT` | Blocked (OI-11) |
 
-**Domain rules DR-01 … DR-25.** Legacy texts are copied byte for byte from the XML, including spelling, double and trailing spaces; `\|\|` shows concatenation. Target members are in `Billing.Invoicing.Domain.Rules` or `.Workflow`. Test classes are in `tests/Billing.Invoicing.Tests/Domain` (`Category=DomainParity`); fixtures in `Parity/fixtures`.
+**Domain rules DR-01 … DR-25.** Legacy texts are copied byte for byte from the XML, including spelling, double and trailing spaces; `\|\|` shows concatenation. The `Legacy text (verbatim)` column holds only texts copied from the XML; a text the target emits that the XML does not hold (DR-03's inferred Forms diagnostic, DR-06's DISC_T message) is stated in the Rule column and marked non-legacy. Target members are in `Billing.Invoicing.Domain.Rules` or `.Workflow`. Test classes are in `tests/Billing.Invoicing.Tests/Domain` (`Category=DomainParity`); fixtures in `Parity/fixtures`.
 
 | DR | Source [locator] | Rule | Legacy text (verbatim) | Severity | Target member | Test class · fixture |
 |---|---|---|---|---|---|---|
 | DR-01 | T014 [05_Complex/Inv_Small_Cash.xml:366] | Patient required; credit (`PAYTYPE=2`) with company '0' refused; doctor required (the block WHERE makes `PHARMACY_INV_NO` null, so it always applies) | `'Select Patient No is required '`; `'this patient not belong to any company !!'`; `'Doctor No is required '` | Blocking | `HeaderRecordRules.ValidateRecord` | `HeaderRecordRulesTests` · `DR-01.json` |
 | DR-02 | T009 [05_Complex/Inv_Small_Cash.xml:1102] | No lines refused | `'Invoice without Details'` | Blocking | `InvoiceDetailRules.RequireDetails` | `InvoiceDetailRulesTests` · `DR-02.json` |
-| DR-03 | T023 [05_Complex/Inv_Small_Cash.xml:18] | Coverage validity from the `V_PAT_DATA` snapshot; blocking vs warning follows the `INV_DATE_ADMIN` and company-type branches | `'Contract  Ended '\|\| to_char(r1.cCONTEND,'dd/mm/yyyy')` (\|\| `' , But due to that user have date admin privileges system will open claim'`); `'Company Is Holed'`; `'Card Expired '\|\| to_char(r1.CARD_END,'dd/mm/yyyy')` (\|\| `' , But due to that user have date admin privileges system will open claim'` / `' , Today last Date'`); `'Policy  Ended '` \|\| date \|\| `' ,But due to that user have date admin privileges system will open claim'`; `'Policy  Ended '` \|\| date \|\| `' Patient well treated as cash patient '`; `'Policy Is Holed'`; `'Refral Required For This Class'`; `'Class Is Holed'`; unhandled ORA-01403 on a missing `V_PAT_DATA` row → `'FRM-40735: WHEN-VALIDATE-ITEM trigger raised unhandled exception ORA-01403.'` (D-72) | Blocking or warning per branch | `PatientEligibilityRules.Evaluate` | `PatientEligibilityRulesTests` · `DR-03.json` |
+| DR-03 | T023 [05_Complex/Inv_Small_Cash.xml:18] | Coverage validity from the `V_PAT_DATA` snapshot; blocking vs warning follows the `INV_DATE_ADMIN` and company-type branches. Non-legacy: a nonblank patient with no `V_PAT_DATA` row hits T023's unhandled ORA-01403 (its `NO_DATA_FOUND` handler is commented out); the target returns one blocking `PATIENTNO` message with the inferred Forms runtime diagnostic 'FRM-40735: WHEN-VALIDATE-ITEM trigger raised unhandled exception ORA-01403.', which is not an XML text; its exact Forms wording is UNVERIFIED (not observed at runtime) (D-72) | `'Contract  Ended '\|\| to_char(r1.cCONTEND,'dd/mm/yyyy')` (\|\| `' , But due to that user have date admin privileges system will open claim'`); `'Company Is Holed'`; `'Card Expired '\|\| to_char(r1.CARD_END,'dd/mm/yyyy')` (\|\| `' , But due to that user have date admin privileges system will open claim'` / `' , Today last Date'`); `'Policy  Ended '` \|\| date \|\| `' ,But due to that user have date admin privileges system will open claim'`; `'Policy  Ended '` \|\| date \|\| `' Patient well treated as cash patient '`; `'Policy Is Holed'`; `'Refral Required For This Class'`; `'Class Is Holed'` | Blocking or warning per branch | `PatientEligibilityRules.Evaluate` | `PatientEligibilityRulesTests` · `DR-03.json` |
 | DR-04 | T031 [05_Complex/Inv_Small_Cash.xml:47] | Clinic sex vs patient sex; age check needs `DAY_TO_DAYES` (OI-22) | `'Patient sex not suitable for this clinic'`; `'Patient age  not suitable for this clinic'` | Warning | `ClinicSuitabilityRules.CheckSex`, `ClinicSuitabilityRules.CheckAge` | `ClinicSuitabilityRulesTests` · `DR-04.json` |
 | DR-05 | T032 [05_Complex/Inv_Small_Cash.xml:50], T033 [05_Complex/Inv_Small_Cash.xml:53] | `NVL(DEPT_WISE,0)=1` at a clinic whose `SYS_CAT_TYPE` is not 'ER'; `CALL=1` alone never rejects | `'This open for GP at ER Clinic Only'` | Blocking | `ErClinicRule.Validate` | `ErClinicRuleTests` · `DR-05.json` |
-| DR-06 | T039 [05_Complex/Inv_Small_Cash.xml:74], T041 [05_Complex/Inv_Small_Cash.xml:78] | With no header offer, the final-discount percent (entered, or `round(finaldisc/pat_pay*100,2)` in value mode) above `USERS_TABLE.MAX_DISC` opens `DISC_ALERT`; "Maximum Discount" caps, "Cancel" zeroes and blocks; the amount is the package's (D-07, D-41) | `'Maximum discount allawed is' \|\| V_MAX_DISC` | Blocking unless "Maximum Discount" | `FinalDiscountLimitRule.Evaluate`, `FinalDiscountLimitRule.ApplyChoice` | `FinalDiscountLimitRuleTests` · `DR-06.json` |
+| DR-06 | T039 [05_Complex/Inv_Small_Cash.xml:74], T041 [05_Complex/Inv_Small_Cash.xml:78] | With no header offer, the final-discount percent (entered, or `round(finaldisc/pat_pay*100,2)` in value mode) above `USERS_TABLE.MAX_DISC` opens `DISC_ALERT`; "Maximum Discount" caps, "Cancel" zeroes and blocks; the amount is the package's (D-07, D-41). Non-legacy: a `DISC_T` other than null (value mode), 0 or 1 is refused with one blocking `DISC_T` message carrying the target text 'DISC_T must be 0 (Value Disc) or 1 (Rate Disc)', which is not an XML text (D-97) | `'Maximum discount allawed is' \|\| V_MAX_DISC` | Blocking unless "Maximum Discount" | `FinalDiscountLimitRule.Evaluate`, `FinalDiscountLimitRule.ApplyChoice` | `FinalDiscountLimitRuleTests` · `DR-06.json` |
 | DR-07 | T039 [05_Complex/Inv_Small_Cash.xml:74], T042 [05_Complex/Inv_Small_Cash.xml:81], T065 [05_Complex/Inv_Small_Cash.xml:388] | Allocation of the amount due between the two payment methods; the amount due is the package's `cash_collected` (D-40) | — | Value rule | `PaymentAllocationRules.AllocateSecondAmount`, `.ResetAfterDiscountChange`, `.DefaultFirstAmount` | `PaymentAllocationRulesTests` · `DR-07.json` |
 | DR-08 | PU30 [05_Complex/Inv_Small_Cash.xml:989], T043 [05_Complex/Inv_Small_Cash.xml:84] | Refund = `CASH_PAYED` − cash-method amounts when both are > 0, else 0 | — | Value rule | `PaymentAllocationRules.Refund` | `PaymentAllocationRulesTests` · `DR-08.json` |
 | DR-09 | `CASH_COLLECTED` formula [05_Complex/Inv_Small_Cash.xml:97] | Total collected = amount 1 + amount 2 | — | Value rule | `PaymentAllocationRules.TotalCollected` | `PaymentAllocationRulesTests` · `DR-09.json` |
@@ -317,7 +317,7 @@ None of these units is re-implemented in C#. Each is reached only through the re
 | DR-14 | T074 [05_Complex/Inv_Small_Cash.xml:439] | Credit, `X422_APPROV_CHECK=1`, `REQ_NEED_A<>0`, no `APPROV_REF_NO` | `:serviceid \|\| 'Need Approval'` | Blocking | `LineEntryRules.ValidateApproval` | `LineEntryRulesTests` · `DR-14.json` |
 | DR-15 | T066 [05_Complex/Inv_Small_Cash.xml:389] | Service missing | `'You Must Select Value'` | Blocking | `LineEntryRules.RequireService` | `LineEntryRulesTests` · `DR-15.json` |
 | DR-16 | T052 [05_Complex/Inv_Small_Cash.xml:559] | Insured, new invoice, `BEGIN_OF_CLAIM=0`, no matching `PAT_SERV_REQ` | `'This service not requested by doctor at this claim'` | Warning | `LineEntryRules.WarnNotRequested` | `LineEntryRulesTests` · `DR-16.json` |
-| DR-17 | T010 [05_Complex/Inv_Small_Cash.xml:362], T020 [05_Complex/Inv_Small_Cash.xml:372], T021 [05_Complex/Inv_Small_Cash.xml:373], T062 [05_Complex/Inv_Small_Cash.xml:569] | Queried and just-saved invoices are read-only (OI-56, D-36); delete refused; unsaved drafts take lines freely | `'You Cant Delete Invoice From Here'` | Blocking | `InvoiceStatePolicy.CanEdit`, `InvoiceStatePolicy.CanDelete` | `InvoiceStatePolicyTests` · `DR-17.json` |
+| DR-17 | T010 [05_Complex/Inv_Small_Cash.xml:362], T020 [05_Complex/Inv_Small_Cash.xml:372], T021 [05_Complex/Inv_Small_Cash.xml:373], T062 [05_Complex/Inv_Small_Cash.xml:569] | Legacy Form: T010 POST-QUERY sets `UPDATE_ALLOWED` and `DELETE_ALLOWED` false on `T_INV` and `D_INV`, so only a queried invoice is read-only [05_Complex/Inv_Small_Cash.xml:362]; T079 commits without clearing the record [05_Complex/Inv_Small_Cash.xml:737], so a just-saved invoice stays editable, and T062 adds lines to it while `UPDATE_ALLOWED` is true [05_Complex/Inv_Small_Cash.xml:569]; delete is refused (T020, T021); unsaved drafts take lines freely. Target: `InvoiceStatePolicy.CanEdit` is true only for an unsaved draft, so every saved invoice, queried or just saved, is read-only; the just-saved block is the target's policy, not the Form's (OI-56, D-36) | `'You Cant Delete Invoice From Here'` | Blocking | `InvoiceStatePolicy.CanEdit`, `InvoiceStatePolicy.CanDelete` | `InvoiceStatePolicyTests` · `DR-17.json` |
 | DR-18 | T085 [05_Complex/Inv_Small_Cash.xml:755] | Import needs a doctor; per-service notices from the selected rows' own flags; `BIL_IMPORT` decides the rows (PR-19, D-26) | `'Select doctor First'`; `r1.serviceid \|\| ' Rejected '`; `r1.serviceid \|\| ' Need Approval'` | Blocking (doctor); notices | `RequestImportRules.RequireDoctor`, `RequestImportRules.Notices` | `RequestImportRulesTests` · `DR-18.json` |
 | DR-19 | T089 [05_Complex/Inv_Small_Cash.xml:771] | Package import returning zero lines | `'No Serves Added'` | Warning | `PackageImportRules.Evaluate` | `PackageImportRulesTests` · `DR-19.json` |
 | DR-20 | T015 [05_Complex/Inv_Small_Cash.xml:367], T022 [05_Complex/Inv_Small_Cash.xml:13], T003 [05_Complex/Inv_Small_Cash.xml:1096] | New-draft defaults: home care → type 7; `SUB_PAYTYPE := 1`; draft date = database `SYSDATE` (D-39); claim preload; visit doctor | — | Value rule | `InvoiceDefaultsRule.Apply` | `InvoiceDefaultsRuleTests` · `DR-20.json` |
@@ -346,9 +346,9 @@ Every rule below is reached only through a retained PL/SQL call and is UNVERIFIE
 | PR-11 | `OLD_OR_NEW` from prior invoices [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1104-1118] | T011 | `CreateFullInvoice` | `PackageParityTests.PR11_OldOrNew` (SideEffects=Create) | `derivable` | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
 | PR-12 | `PFLAG` (hour ≥ 12 → PM), `THE_MONTH`, `THE_YEAR` [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:455-467, 2769-2771] | T015, T025, T011 | `CreateFullInvoice` | `PackageParityTests.PR12_PflagMonthYear` (SideEffects=Create) | `derivable` | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
 | PR-13 | Header validation (-20900, -20923, -20924, -20964, -20915) [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:493-540, 3135-3200] | T014 (re-check) | `CalculatePreview`, `CreateFullInvoice` | `PackageParityTests.PR13_HeaderValidation` | `derivable` | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
-| PR-14 | Line validation: a line, service id, positive whole quantity, ceiling 999999.99 (-20903, -20904, -20905) [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:171-182, 542-614] | T009, T068 (re-check) | `CalculatePreview`, `CreateFullInvoice` | `PackageParityTests.PR14_LineValidation` | `derivable` | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
+| PR-14 | Line validation: a line (-20903); service id (-20904) only when the line's offer metadata make the parent exemption false (`offer_type` set and not 0, or `offer_line_role` set and not 'PARENT'), so an ordinary line with both null is not rejected (§10); positive whole quantity (-20905); ceiling `trunc(c_max_invoice_qty)` = 999999 (constant 999999.99), applied only to package parent and component quantities (-20947, -20966) [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:171-182, 542-614, 974, 1583, 1698, 2461] | T009, T068 (re-check); the mandatory service is the Form's DR-15 (T066), not this check | `CalculatePreview`, `CreateFullInvoice` | `PackageParityTests.PR14_LineValidation` | `derivable` | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
 | PR-15 | Currency from the price list; mixed currencies rejected (-20917, -20918) [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1390-1420] | PU10 (`CURR_CODE`) | `CalculatePreview`, `CreateFullInvoice` | `PackageParityTests.PR15_Currency` | `derivable` | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
-| PR-16 | Standard-offer eligibility and conflicts (-20971, -20972) [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1867-1884] | PU19 `OKA` offer branch | `CalculatePreview`, `CreateFullInvoice` | `PackageParityTests.PR16_StandardOffers` | `derivable` (gate and validations); `pending-evidence` (offer applied, OI-07) | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
+| PR-16 | Standard-offer eligibility and conflicts (-20971, -20972) [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1867-1884] | T066 standard-offer branch; T085 repeats it on imported request lines | `CalculatePreview`, `CreateFullInvoice` | `PackageParityTests.PR16_StandardOffers` | `derivable` (gate and validations); `pending-evidence` (offer applied, OI-07) | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
 | PR-17 | Bundled offer: cash only (-20871), required fields and quantities (-20979), row validity (-20978), component qty = bundle qty × detail qty [05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:264-779] | T093 | `BilInvoiceApiGateway.GetBundledOfferLines`; expansion in preview / create | `PackageParityTests.PR17_BundledOffer` | `derivable` (gate and validations); `pending-evidence` (offer applied, OI-07) | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
 | PR-18 | Package expansion and definition token; stale package (-20944, -20946, -20969) [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:320-351, 1306-1322] | T089 | `BilInvoiceApiGateway.GetPackageLines` (D-38); preview / create | `PackageParityTests.PR18_PackageExpansion` | `derivable` | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
 | PR-19 | Request import: session-scoped selection, rejected rows skipped, credit rows needing approval skipped in mode 1 and imported in mode 0 (-20764 when raising) [05_Complex/APEX_Reference/backend/BIL_IMPORT.sql:389-565, 494-509] | T085 | `BilImportGateway.ImportRequestLines` (D-12) | `PackageParityTests.PR19_RequestImport` | `derivable` | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
@@ -357,7 +357,7 @@ Every rule below is reached only through a retained PL/SQL call and is UNVERIFIE
 | PR-22 | Idempotent create by request id (-20847, -20848, -20849; a replay returns the existing invoice) [05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:1303-1373] | — (replaces the Form's single-session commit) | `CreateFullInvoice` (D-54) | `PackageParityTests.PR22_IdempotentCreate` (SideEffects=Create) | `derivable` | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
 | PR-23 | Posting stages at create (payment, queue, stock) [05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:1385-1424]; print and SMS stages called with `'N'` (D-13, D-28) | T016, T061 | `CreateFullInvoice` | `PackageParityTests.PR23_PostingStages` (SideEffects=Create) | `pending-evidence` (OI-08 … OI-10) | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset; pending evidence (OI-08) |
 | PR-24 | Payer context (price list, VAT flags, cash flag) from `bil_patient_context.get_context` [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:3004-3018]; the engine's default pay type is not reached, because DR-24 always sends `paytype` [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:478-491] | T023, T027, PU16 `MAKE_CASH` | `CalculatePreview`, `CreateFullInvoice` | `PackageParityTests.PR24_PayerContext` | `pending-evidence` (OI-03) | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset; pending evidence (OI-03) |
-| PR-25 | Offer changed after calculation (-20970) [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1306-1322] | PU19 `OKA` offer branch | `CreateFullInvoice` | `PackageParityTests.PR25_OfferStale` (SideEffects=Create) | `derivable` | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
+| PR-25 | Offer changed after calculation (-20970) [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1306-1322] | T066 standard-offer branch; the Form reads the offer at service validation and never re-checks it at commit | `CreateFullInvoice` | `PackageParityTests.PR25_OfferStale` (SideEffects=Create) | `derivable` | UNVERIFIED — skipped, ORACLE_TEST_CONNECTION unset |
 
 `OracleBindingSmokeTests` (`Category=OracleIntegration`) exercises the binding mechanism of the six PL/SQL blocks; it is not parity and is not counted in the PR figure.
 
@@ -373,13 +373,13 @@ The APEX Page 48 export and its JavaScript are references only. Where they disag
 | `val-doctor-required` 'Doctor must have some value.' [05_Complex/APEX_Reference/hmisfox_page_48.apx:6260] | 'Doctor No is required ' (DR-01) |
 | `val-pay-type-required` 'Payer Type must have a value.' [05_Complex/APEX_Reference/hmisfox_page_48.apx:6343] | Pay type derived from company and patient context (DR-24, PR-24); credit without a company blocked by DR-01 |
 | Incomplete line 'Select a service or remove the incomplete invoice line.' [05_Complex/APEX_Reference/javascript/page48-invoice-preview.js:2530] | 'You Must Select Value' (DR-15) |
-| 'Quantity must be a positive whole number.' [05_Complex/APEX_Reference/javascript/page48-invoice-preview.js:2559] | 'Qty should be >=1' (DR-12); the package still rejects fractions (-20905) |
+| 'Quantity must be a positive whole number.' [05_Complex/APEX_Reference/javascript/page48-invoice-preview.js:2559] | 'Qty should be >=1' (DR-12); the package still rejects fractions (-20905, UNVERIFIED) |
 | Request import raises on blocked rows: Page 48 calls `BUILD_IMPORT_PREVIEW_COLLECTION` [05_Complex/APEX_Reference/hmisfox_page_48.apx:6977], which passes `p_raise_on_blocked => 'Y'` [05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:1127-1136] | T085 skips rejected and need-approval rows with a per-service notice: `p_raise_on_blocked => 'N'`, approval mode 0 when `X422_APPROV_CHECK=2` (D-12, D-26) |
 | SMS sent only on "create and print", to `PATIENT.PHONE_H` [05_Complex/APEX_Reference/hmisfox_page_48.apx:9090, 10129-10134] | T016 sends on every cash (company '0') save a link to `inv_small_cash.jsp` [05_Complex/Inv_Small_Cash.xml:368]; not reproducible (OI-12, OI-45), so no SMS is sent and the create response lists both (D-13, D-28) |
-| Request rows from the session-scoped `BIL_REQUEST_INV_SELECTION`, written by `BIL_IMPORT.SET_REQUEST_LINE_SELECTION` [05_Complex/APEX_Reference/backend/BIL_IMPORT.sql:94-103] and checked by `validate-request-invoice-context` [05_Complex/APEX_Reference/hmisfox_page_48.apx:10183-10384]; nothing in the page writes the selection (OI-39) | Rows flagged `SELECT_TO_INV=1` on the visit are imported (D-12) |
-| Line removal takes a whole package or bundled-offer occurrence and refuses mixed selections ('Remove bundled offer lines separately from normal or package lines.') [05_Complex/APEX_Reference/javascript/page48-invoice-services-init.js:947-1319] | T058 deletes the one current line and recalculates [05_Complex/Inv_Small_Cash.xml:565]; the package re-validates the rest (for example -20952) |
+| Request rows from the session-scoped `BIL_REQUEST_INV_SELECTION`, written by `BIL_IMPORT.SET_REQUEST_LINE_SELECTION` [05_Complex/APEX_Reference/backend/BIL_IMPORT.sql:94-103] (UNVERIFIED) and checked by `validate-request-invoice-context` [05_Complex/APEX_Reference/hmisfox_page_48.apx:10183-10384]; nothing in the page writes the selection (OI-39) | Rows flagged `SELECT_TO_INV=1` on the visit are imported (D-12) |
+| Line removal takes a whole package or bundled-offer occurrence and refuses mixed selections ('Remove bundled offer lines separately from normal or package lines.') [05_Complex/APEX_Reference/javascript/page48-invoice-services-init.js:947-1319] | T058 deletes the one current line and recalculates [05_Complex/Inv_Small_Cash.xml:565]; the package re-validates the rest (for example -20952, UNVERIFIED) |
 
-**APEX checks that duplicate package rules** (the package governs; nothing added): the discount-consistency validations [05_Complex/APEX_Reference/hmisfox_page_48.apx:5933-6004, 6044-6070, 6097-6147] duplicate engine -20906 … -20921; `doctor-belongs-to-specialty` [05_Complex/APEX_Reference/hmisfox_page_48.apx:6005] duplicates -20924; `val-final-disc-non-negative` [05_Complex/APEX_Reference/hmisfox_page_48.apx:6279] duplicates -20902.
+**APEX checks that duplicate package rules** (the package governs; nothing added; the duplication is UNVERIFIED): the discount-consistency validations [05_Complex/APEX_Reference/hmisfox_page_48.apx:5933-6004, 6044-6070, 6097-6147] duplicate engine -20906 … -20921; `doctor-belongs-to-specialty` [05_Complex/APEX_Reference/hmisfox_page_48.apx:6005] duplicates -20924; `val-final-disc-non-negative` [05_Complex/APEX_Reference/hmisfox_page_48.apx:6279] duplicates -20902.
 
 **APEX-only behaviours** (the Form is silent; not implemented):
 
@@ -390,7 +390,7 @@ The APEX Page 48 export and its JavaScript are references only. Where they disag
 - OI-38 JavaScript safeguards: stale-preview rejection [05_Complex/APEX_Reference/javascript/page48-invoice-preview.js:4555-4799], recalculation debounce [05_Complex/APEX_Reference/javascript/page48-invoice-preview.js:4856-4902], submit lock [05_Complex/APEX_Reference/javascript/page48-function-and-global-variable-declaration.js:191, 338], reserved print window [05_Complex/APEX_Reference/javascript/page48-function-and-global-variable-declaration.js:238]
 - OI-39 Draft persistence in `BIL_INV_DRAFT_LINES` [05_Complex/APEX_Reference/hmisfox_page_48.apx:8699-8866] and the request-selection UI
 - OI-57 Whole-occurrence package / bundle removal and refusal of mixed or malformed removal selections [05_Complex/APEX_Reference/javascript/page48-invoice-services-init.js:947-1319]
-- OI-58 Per-row editability locks: manual discount only where `ALLOW_MANUAL_DISCOUNT`, price override only where `ALLOW_PRICE_OVERRIDE`, package and offer component rows read-only [05_Complex/APEX_Reference/javascript/page48-invoice-preview.js:1154-1406]; the package's own checks (-20963, the discount errors) still apply
+- OI-58 Per-row editability locks: manual discount only where `ALLOW_MANUAL_DISCOUNT`, price override only where `ALLOW_PRICE_OVERRIDE`, package and offer component rows read-only [05_Complex/APEX_Reference/javascript/page48-invoice-preview.js:1154-1406]; the package's own checks (-20963, the discount errors) still apply (UNVERIFIED)
 
 **APEX is silent** on these Form rules the target keeps: the open-shift gate (PR-10), the `MAX_DISC` limit (DR-06), the refund (DR-08), clinic sex and age (DR-04), revisit limits (blocked, OI-32), the GP-at-ER rule (DR-05) and the invoice-admin bypass (not reproduced, OI-01).
 
@@ -399,55 +399,55 @@ The APEX Page 48 export and its JavaScript are references only. Where they disag
 - **Call count:** in each package source, every case-insensitive `raise_application_error\s*\(` outside `--` and `/* … */` comments: BIL_INVOICE_ENGINE 85, BIL_IMPORT 54, BIL_INVOICE_API 17, total 156.
 - **Extraction:** comments are stripped outside single-quoted literals; each call is scanned from its opening parenthesis with a quote-aware scanner (`''` is an escaped quote) that tracks nested parentheses; top-level commas split the arguments. Argument 1 is the number, argument 2 the message template with every whitespace run collapsed to one space.
 - **Numbers:** 119 distinct. One first argument is an identifier: `c_request_unavailable_error`, declared at [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:176] as -20931 and raised at line 619. Zero sites are unparsed.
-- **Columns:** `Line` is the 1-based line of the `raise_application_error` token. `Catalogue prefix` is the `OracleErrorCatalog` prefix for a catalogued site, else the template's leading literal (`—` when it starts with an expression). `Catalogued` is `Yes` when `OracleErrorCatalog.Rows` holds the package and number with a prefix that starts the leading literal. `Target handling` is the catalogue kind, the mapped field, a catalogued form-level 422, or `Generic 422`.
+- **Columns:** `Line` is the 1-based line of the `raise_application_error` token. `Catalogue prefix` is the `OracleErrorCatalog` prefix for a catalogued site (the longest, when several match), else the template's leading literal (`—` when it starts with an expression). The prefix is the exact text, except that its trailing blank is shown as `␠` (U+2420 SYMBOL FOR SPACE), which stands for exactly one space character and occurs in no package message. `Catalogued` is `Yes` when `OracleErrorCatalog.Rows` holds the package and number with a prefix that starts the leading literal. `Target handling` is the catalogue kind, the mapped field, a catalogued form-level 422, or `Generic 422`.
 
 | Package | Line | Number | Message template | Catalogue prefix | Catalogued | Target handling |
 |---|---|---|---|---|---|---|
 | BIL_INVOICE_ENGINE | 320 | -20945 | 'Invoice create failed: package definition is too large to validate.' | Invoice create failed: package definition is too large to validate. | No | Generic 422 |
-| BIL_INVOICE_ENGINE | 337 | -20944 | 'Invoice create failed: package ' \|\| p_package_serviceid \|\| ' has no configured components.' | Invoice create failed: package | No | Generic 422 |
-| BIL_INVOICE_ENGINE | 351 | -20946 | 'Invoice create failed: package ' \|\| p_package_serviceid \|\| ' is not active in list ' \|\| p_list_id \|\| '.' | Invoice create failed: package | No | Generic 422 |
+| BIL_INVOICE_ENGINE | 337 | -20944 | 'Invoice create failed: package ' \|\| p_package_serviceid \|\| ' has no configured components.' | Invoice create failed: package␠ | No | Generic 422 |
+| BIL_INVOICE_ENGINE | 351 | -20946 | 'Invoice create failed: package ' \|\| p_package_serviceid \|\| ' is not active in list ' \|\| p_list_id \|\| '.' | Invoice create failed: package␠ | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 500 | -20900 | 'Invoice create failed: patient number is required.' | Invoice create failed: patient number is required. | Yes | Field PATIENTNO |
 | BIL_INVOICE_ENGINE | 507 | -20901 | 'Invoice create failed: final discount percent must be between 0 and 100.' | Invoice create failed: final discount percent must be between 0 and 100. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 513 | -20902 | 'Invoice create failed: final discount amount cannot be negative.' | Invoice create failed: final discount amount cannot be negative. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 520 | -20923 | 'Invoice create failed: clinic is required when doctor is supplied.' | Invoice create failed: clinic is required when doctor is supplied. | Yes | Field CLINICID |
 | BIL_INVOICE_ENGINE | 534 | -20924 | 'Invoice create failed: selected doctor does not belong to the selected clinic.' | Invoice create failed: selected doctor does not belong to the selected clinic. | Yes | Field DOCIDX |
 | BIL_INVOICE_ENGINE | 550 | -20903 | 'Invoice create failed: at least one service line is required.' | Invoice create failed: at least one service line is required. | Yes | Form-level 422, legacy text 'Invoice without Details' |
-| BIL_INVOICE_ENGINE | 560 | -20904 | 'Invoice create failed: service ID is required on line ' \|\| l_idx \|\| '.' | Invoice create failed: service ID is required on line | No | Generic 422 |
-| BIL_INVOICE_ENGINE | 569 | -20905 | 'Invoice create failed: quantity must be a positive whole number on line ' \|\| l_idx \|\| '.' | Invoice create failed: quantity must be a positive whole number on line | Yes | Field QTY |
-| BIL_INVOICE_ENGINE | 575 | -20906 | 'Invoice create failed: discount percent cannot be negative on line ' \|\| l_idx \|\| '.' | Invoice create failed: discount percent cannot be negative on line | No | Generic 422 |
-| BIL_INVOICE_ENGINE | 581 | -20907 | 'Invoice create failed: discount amount cannot be negative on line ' \|\| l_idx \|\| '.' | Invoice create failed: discount amount cannot be negative on line | No | Generic 422 |
-| BIL_INVOICE_ENGINE | 588 | -20908 | 'Invoice create failed: discount type must be N, R or V on line ' \|\| l_idx \|\| '.' | Invoice create failed: discount type must be N, R or V on line | No | Generic 422 |
-| BIL_INVOICE_ENGINE | 595 | -20919 | 'Invoice create failed: no discount line must have zero discount percent and amount on line ' \|\| l_idx \|\| '.' | Invoice create failed: no discount line must have zero discount percent and amount on line | No | Generic 422 |
-| BIL_INVOICE_ENGINE | 601 | -20920 | 'Invoice create failed: percent discount line cannot have discount amount on line ' \|\| l_idx \|\| '.' | Invoice create failed: percent discount line cannot have discount amount on line | No | Generic 422 |
-| BIL_INVOICE_ENGINE | 607 | -20921 | 'Invoice create failed: amount discount line cannot have discount percent on line ' \|\| l_idx \|\| '.' | Invoice create failed: amount discount line cannot have discount percent on line | No | Generic 422 |
+| BIL_INVOICE_ENGINE | 560 | -20904 | 'Invoice create failed: service ID is required on line ' \|\| l_idx \|\| '.' | Invoice create failed: service ID is required on line␠ | No | Generic 422 |
+| BIL_INVOICE_ENGINE | 569 | -20905 | 'Invoice create failed: quantity must be a positive whole number on line ' \|\| l_idx \|\| '.' | Invoice create failed: quantity must be a positive whole number on line␠ | Yes | Field QTY |
+| BIL_INVOICE_ENGINE | 575 | -20906 | 'Invoice create failed: discount percent cannot be negative on line ' \|\| l_idx \|\| '.' | Invoice create failed: discount percent cannot be negative on line␠ | No | Generic 422 |
+| BIL_INVOICE_ENGINE | 581 | -20907 | 'Invoice create failed: discount amount cannot be negative on line ' \|\| l_idx \|\| '.' | Invoice create failed: discount amount cannot be negative on line␠ | No | Generic 422 |
+| BIL_INVOICE_ENGINE | 588 | -20908 | 'Invoice create failed: discount type must be N, R or V on line ' \|\| l_idx \|\| '.' | Invoice create failed: discount type must be N, R or V on line␠ | No | Generic 422 |
+| BIL_INVOICE_ENGINE | 595 | -20919 | 'Invoice create failed: no discount line must have zero discount percent and amount on line ' \|\| l_idx \|\| '.' | Invoice create failed: no discount line must have zero discount percent and amount on line␠ | No | Generic 422 |
+| BIL_INVOICE_ENGINE | 601 | -20920 | 'Invoice create failed: percent discount line cannot have discount amount on line ' \|\| l_idx \|\| '.' | Invoice create failed: percent discount line cannot have discount amount on line␠ | No | Generic 422 |
+| BIL_INVOICE_ENGINE | 607 | -20921 | 'Invoice create failed: amount discount line cannot have discount percent on line ' \|\| l_idx \|\| '.' | Invoice create failed: amount discount line cannot have discount percent on line␠ | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 619 | -20931 | 'One or more requested services were already invoiced or are no longer available.' | One or more requested services were already invoiced or are no longer available. | Yes | RequestLinesStale |
 | BIL_INVOICE_ENGINE | 887 | -20965 | 'Invoice create failed: configured cash company could not be resolved.' | Invoice create failed: configured cash company could not be resolved. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 965 | -20967 | 'Invoice create failed: package definition contains an invalid component.' | Invoice create failed: package definition contains an invalid component. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 976 | -20966 | 'Invoice create failed: multiplied package component quantity must be a positive whole number within the invoice quantity limit.' | Invoice create failed: multiplied package component quantity must be a positive whole number within the invoice quantity limit. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 1006 | -20968 | 'Invoice create failed: requested package has no components.' | Invoice create failed: requested package has no components. | No | Generic 422 |
-| BIL_INVOICE_ENGINE | 1065 | -20780 | 'Invoice line ' \|\| p_line_no \|\| ' uses price override but PRICE_OVERRIDE is null.' | Invoice line | Yes | Field PRICE |
-| BIL_INVOICE_ENGINE | 1072 | -20781 | 'Invoice line ' \|\| p_line_no \|\| ' price override cannot be negative.' | Invoice line | Yes | Field PRICE |
+| BIL_INVOICE_ENGINE | 1065 | -20780 | 'Invoice line ' \|\| p_line_no \|\| ' uses price override but PRICE_OVERRIDE is null.' | Invoice line␠ | Yes | Field PRICE |
+| BIL_INVOICE_ENGINE | 1072 | -20781 | 'Invoice line ' \|\| p_line_no \|\| ' price override cannot be negative.' | Invoice line␠ | Yes | Field PRICE |
 | BIL_INVOICE_ENGINE | 1098 | -20909 | 'Invoice create failed: could not generate a unique invoice number after 20 attempts.' | Invoice create failed: could not generate a unique invoice number after 20 attempts. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 1136 | -20910 | 'Invoice create failed: line discount percent cannot exceed 100.' | Invoice create failed: line discount percent cannot exceed 100. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 1145 | -20911 | 'Invoice create failed: line discount amount cannot exceed line gross amount.' | Invoice create failed: line discount amount cannot exceed line gross amount. | No | Generic 422 |
-| BIL_INVOICE_ENGINE | 1192 | -20912 | 'Invoice create failed: VAT rate must be between 0 and 100 for service ' \|\| p_service_context.serviceid | Invoice create failed: VAT rate must be between 0 and 100 for service | No | Generic 422 |
+| BIL_INVOICE_ENGINE | 1192 | -20912 | 'Invoice create failed: VAT rate must be between 0 and 100 for service ' \|\| p_service_context.serviceid | Invoice create failed: VAT rate must be between 0 and 100 for service␠ | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 1250 | -20913 | 'Invoice create failed: final discount cannot be negative.' | Invoice create failed: final discount cannot be negative. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 1256 | -20914 | 'Invoice create failed: final discount cannot exceed patient share.' | Invoice create failed: final discount cannot exceed patient share. | Yes | Field FINALDISC, legacy text 'discount is greater than cash payed amount' |
-| BIL_INVOICE_ENGINE | 1308 | -20969 | 'The package definition changed after the invoice was calculated. ' \|\| 'Refresh the invoice and review the package lines.' | The package definition changed after the invoice was calculated. | Yes | DefinitionStale |
-| BIL_INVOICE_ENGINE | 1317 | -20970 | 'The offer changed after the invoice was calculated. ' \|\| 'Refresh the invoice and review the updated pricing.' | The offer changed after the invoice was calculated. | Yes | DefinitionStale |
-| BIL_INVOICE_ENGINE | 1399 | -20917 | 'Invoice create failed: currency is missing from price list/service for line ' \|\| p_line_no \|\| ', service ' \|\| p_serviceid \|\| '.' | Invoice create failed: currency is missing from price list/service for line | No | Generic 422 |
-| BIL_INVOICE_ENGINE | 1411 | -20918 | 'Invoice create failed: mixed currencies are not allowed. Expected ' \|\| io_result.curr_code \|\| ' but line ' \|\| p_line_no \|\| ' uses ' \|\| l_curr_code \|\| '.' | Invoice create failed: mixed currencies are not allowed. Expected | No | Generic 422 |
-| BIL_INVOICE_ENGINE | 1445 | -20940 | 'Invoice create failed: package line ' \|\| p_line_no \|\| ' cannot use a price override.' | Invoice create failed: package line | No | Generic 422 |
-| BIL_INVOICE_ENGINE | 1460 | -20941 | 'Invoice create failed: package line ' \|\| p_line_no \|\| ' cannot use a manual discount.' | Invoice create failed: package line | No | Generic 422 |
-| BIL_INVOICE_ENGINE | 1486 | -20942 | 'Invoice create failed: package ' \|\| p_package_serviceid \|\| ' has a blank component.' | Invoice create failed: package | No | Generic 422 |
-| BIL_INVOICE_ENGINE | 1497 | -20943 | 'Invoice create failed: package ' \|\| p_package_serviceid \|\| ' has an invalid component quantity.' | Invoice create failed: package | No | Generic 422 |
-| BIL_INVOICE_ENGINE | 1510 | -20944 | 'Invoice create failed: package ' \|\| p_package_serviceid \|\| ' has no configured components.' | Invoice create failed: package | No | Generic 422 |
+| BIL_INVOICE_ENGINE | 1308 | -20969 | 'The package definition changed after the invoice was calculated. ' \|\| 'Refresh the invoice and review the package lines.' | The package definition changed after the invoice was calculated.␠ | Yes | DefinitionStale |
+| BIL_INVOICE_ENGINE | 1317 | -20970 | 'The offer changed after the invoice was calculated. ' \|\| 'Refresh the invoice and review the updated pricing.' | The offer changed after the invoice was calculated.␠ | Yes | DefinitionStale |
+| BIL_INVOICE_ENGINE | 1399 | -20917 | 'Invoice create failed: currency is missing from price list/service for line ' \|\| p_line_no \|\| ', service ' \|\| p_serviceid \|\| '.' | Invoice create failed: currency is missing from price list/service for line␠ | No | Generic 422 |
+| BIL_INVOICE_ENGINE | 1411 | -20918 | 'Invoice create failed: mixed currencies are not allowed. Expected ' \|\| io_result.curr_code \|\| ' but line ' \|\| p_line_no \|\| ' uses ' \|\| l_curr_code \|\| '.' | Invoice create failed: mixed currencies are not allowed. Expected␠ | No | Generic 422 |
+| BIL_INVOICE_ENGINE | 1445 | -20940 | 'Invoice create failed: package line ' \|\| p_line_no \|\| ' cannot use a price override.' | Invoice create failed: package line␠ | No | Generic 422 |
+| BIL_INVOICE_ENGINE | 1460 | -20941 | 'Invoice create failed: package line ' \|\| p_line_no \|\| ' cannot use a manual discount.' | Invoice create failed: package line␠ | No | Generic 422 |
+| BIL_INVOICE_ENGINE | 1486 | -20942 | 'Invoice create failed: package ' \|\| p_package_serviceid \|\| ' has a blank component.' | Invoice create failed: package␠ | No | Generic 422 |
+| BIL_INVOICE_ENGINE | 1497 | -20943 | 'Invoice create failed: package ' \|\| p_package_serviceid \|\| ' has an invalid component quantity.' | Invoice create failed: package␠ | No | Generic 422 |
+| BIL_INVOICE_ENGINE | 1510 | -20944 | 'Invoice create failed: package ' \|\| p_package_serviceid \|\| ' has no configured components.' | Invoice create failed: package␠ | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 1554 | -20948 | 'Invoice create failed: package occurrence contains an invalid line role.' | Invoice create failed: package occurrence contains an invalid line role. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 1564 | -20948 | 'Invoice create failed: package occurrence must contain exactly one parent.' | Invoice create failed: package occurrence must contain exactly one parent. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 1574 | -20949 | 'Invoice create failed: package parent service metadata was changed.' | Invoice create failed: package parent service metadata was changed. | No | Generic 422 |
-| BIL_INVOICE_ENGINE | 1585 | -20947 | 'Invoice create failed: package parent quantity must be a positive whole number not greater than ' \|\| trunc(c_max_invoice_qty) \|\| ' for package ' \|\| l_package_serviceid \|\| '.' | Invoice create failed: package parent quantity must be a positive whole number not greater than | No | Generic 422 |
-| BIL_INVOICE_ENGINE | 1604 | -20946 | 'Invoice create failed: package ' \|\| l_package_serviceid \|\| ' is not active in the patient price list.' | Invoice create failed: package | No | Generic 422 |
-| BIL_INVOICE_ENGINE | 1613 | -20946 | 'Invoice create failed: invalid package pricing method for package ' \|\| l_package_serviceid \|\| '.' | Invoice create failed: invalid package pricing method for package | No | Generic 422 |
+| BIL_INVOICE_ENGINE | 1585 | -20947 | 'Invoice create failed: package parent quantity must be a positive whole number not greater than ' \|\| trunc(c_max_invoice_qty) \|\| ' for package ' \|\| l_package_serviceid \|\| '.' | Invoice create failed: package parent quantity must be a positive whole number not greater than␠ | No | Generic 422 |
+| BIL_INVOICE_ENGINE | 1604 | -20946 | 'Invoice create failed: package ' \|\| l_package_serviceid \|\| ' is not active in the patient price list.' | Invoice create failed: package␠ | No | Generic 422 |
+| BIL_INVOICE_ENGINE | 1613 | -20946 | 'Invoice create failed: invalid package pricing method for package ' \|\| l_package_serviceid \|\| '.' | Invoice create failed: invalid package pricing method for package␠ | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 1632 | -20951 | 'Invoice create failed: package components are missing or extra.' | Invoice create failed: package components are missing or extra. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 1642 | -20955 | 'Invoice create failed: package line parent metadata was changed.' | Invoice create failed: package line parent metadata was changed. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 1650 | -20962 | 'Invoice create failed: package pricing method metadata was changed.' | Invoice create failed: package pricing method metadata was changed. | No | Generic 422 |
@@ -455,23 +455,23 @@ The APEX Page 48 export and its JavaScript are references only. Where they disag
 | BIL_INVOICE_ENGINE | 1700 | -20966 | 'Invoice create failed: multiplied package component quantity must be a positive whole number within the invoice quantity limit.' | Invoice create failed: multiplied package component quantity must be a positive whole number within the invoice quantity limit. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 1905 | -20971 | 'A manual price cannot be combined with a Standard Offer.' | A manual price cannot be combined with a Standard Offer. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 1908 | -20972 | 'A manual line discount cannot be combined with a Standard Offer.' | A manual line discount cannot be combined with a Standard Offer. | No | Generic 422 |
-| BIL_INVOICE_ENGINE | 1925 | -20963 | 'Invoice create failed: service ' \|\| p_line.serviceid \|\| ' does not allow a price override on line ' \|\| p_line_no \|\| '.' | Invoice create failed: service | No | Generic 422 |
-| BIL_INVOICE_ENGINE | 1956 | -20945 | 'Invoice create failed: plan discount must be between 0 and 100 for service ' \|\| p_line.serviceid \|\| '.' | Invoice create failed: plan discount must be between 0 and 100 for service | No | Generic 422 |
-| BIL_INVOICE_ENGINE | 1966 | -20922 | 'Invoice create failed: service ' \|\| p_line.serviceid \|\| ' is non-discountable on line ' \|\| p_line_no \|\| '.' | Invoice create failed: service | No | Generic 422 |
-| BIL_INVOICE_ENGINE | 1992 | -20961 | 'Invoice create failed: combined plan and manual discount cannot exceed gross amount on line ' \|\| p_line_no \|\| '.' | Invoice create failed: combined plan and manual discount cannot exceed gross amount on line | No | Generic 422 |
+| BIL_INVOICE_ENGINE | 1925 | -20963 | 'Invoice create failed: service ' \|\| p_line.serviceid \|\| ' does not allow a price override on line ' \|\| p_line_no \|\| '.' | Invoice create failed: service␠ | No | Generic 422 |
+| BIL_INVOICE_ENGINE | 1956 | -20945 | 'Invoice create failed: plan discount must be between 0 and 100 for service ' \|\| p_line.serviceid \|\| '.' | Invoice create failed: plan discount must be between 0 and 100 for service␠ | No | Generic 422 |
+| BIL_INVOICE_ENGINE | 1966 | -20922 | 'Invoice create failed: service ' \|\| p_line.serviceid \|\| ' is non-discountable on line ' \|\| p_line_no \|\| '.' | Invoice create failed: service␠ | No | Generic 422 |
+| BIL_INVOICE_ENGINE | 1992 | -20961 | 'Invoice create failed: combined plan and manual discount cannot exceed gross amount on line ' \|\| p_line_no \|\| '.' | Invoice create failed: combined plan and manual discount cannot exceed gross amount on line␠ | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 2184 | -20973 | 'Bundled Offer instance identity is required.' | Bundled Offer instance identity is required. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 2199 | -20974 | 'Bundled Offer line role is invalid.' | Bundled Offer line role is invalid. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 2206 | -20975 | 'Bundled Offer occurrence must contain exactly one parent.' | Bundled Offer occurrence must contain exactly one parent. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 2222 | -20976 | 'Bundled Offer parent was changed.' | Bundled Offer parent was changed. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 2366 | -20966 | 'Invoice create failed: bundled offer component quantity must be a positive whole number.' | Invoice create failed: bundled offer component quantity must be a positive whole number. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 2388 | -20977 | 'Bundled Offer components cannot be service packages.' | Bundled Offer components cannot be service packages. | No | Generic 422 |
-| BIL_INVOICE_ENGINE | 2451 | -20946 | 'Invoice create failed: invalid package pricing method for package ' \|\| p_lines(l_idx).serviceid \|\| '.' | Invoice create failed: invalid package pricing method for package | No | Generic 422 |
-| BIL_INVOICE_ENGINE | 2463 | -20947 | 'Invoice create failed: package parent quantity must be a positive whole number not greater than ' \|\| trunc(c_max_invoice_qty) \|\| ' for package ' \|\| p_lines(l_idx).serviceid \|\| '.' | Invoice create failed: package parent quantity must be a positive whole number not greater than | No | Generic 422 |
+| BIL_INVOICE_ENGINE | 2451 | -20946 | 'Invoice create failed: invalid package pricing method for package ' \|\| p_lines(l_idx).serviceid \|\| '.' | Invoice create failed: invalid package pricing method for package␠ | No | Generic 422 |
+| BIL_INVOICE_ENGINE | 2463 | -20947 | 'Invoice create failed: package parent quantity must be a positive whole number not greater than ' \|\| trunc(c_max_invoice_qty) \|\| ' for package ' \|\| p_lines(l_idx).serviceid \|\| '.' | Invoice create failed: package parent quantity must be a positive whole number not greater than␠ | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 2474 | -20948 | 'Invoice create failed: package parent role was changed.' | Invoice create failed: package parent role was changed. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 2478 | -20949 | 'Invoice create failed: package parent service metadata was changed.' | Invoice create failed: package parent service metadata was changed. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 2482 | -20962 | 'Invoice create failed: package pricing method metadata was changed.' | Invoice create failed: package pricing method metadata was changed. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 2496 | -20949 | 'Invoice create failed: package instance identity is required.' | Invoice create failed: package instance identity is required. | Yes | UnexpandedPackageParent |
-| BIL_INVOICE_ENGINE | 2505 | -20950 | 'Invoice create failed: fixed-price package ' \|\| p_lines(l_idx).serviceid \|\| ' has no valid package plan price.' | Invoice create failed: fixed-price package | No | Generic 422 |
+| BIL_INVOICE_ENGINE | 2505 | -20950 | 'Invoice create failed: fixed-price package ' \|\| p_lines(l_idx).serviceid \|\| ' has no valid package plan price.' | Invoice create failed: fixed-price package␠ | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 2549 | -20951 | 'Invoice create failed: package component line is missing.' | Invoice create failed: package component line is missing. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 2552 | -20952 | 'Invoice create failed: package component service was changed or reordered.' | Invoice create failed: package component service was changed or reordered. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 2555 | -20966 | 'Invoice create failed: authoritative package component quantity is missing.' | Invoice create failed: authoritative package component quantity is missing. | No | Generic 422 |
@@ -483,14 +483,14 @@ The APEX Page 48 export and its JavaScript are references only. Where they disag
 | BIL_INVOICE_ENGINE | 2596 | -20958 | 'Invoice create failed: nested packages are not supported.' | Invoice create failed: nested packages are not supported. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 2650 | -20959 | 'Invoice create failed: package component was submitted without its package parent.' | Invoice create failed: package component was submitted without its package parent. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 2817 | -20960 | 'Invoice create failed: component parent line metadata is invalid.' | Invoice create failed: component parent line metadata is invalid. | No | Generic 422 |
-| BIL_INVOICE_ENGINE | 2958 | -20930 | 'Invoice create failed: request line ' \|\| p_calc_lines(l_idx).pat_serv_req_row_id \|\| ' was already invoiced by another session.' | Invoice create failed: request line | Yes | RequestLinesStale |
+| BIL_INVOICE_ENGINE | 2958 | -20930 | 'Invoice create failed: request line ' \|\| p_calc_lines(l_idx).pat_serv_req_row_id \|\| ' was already invoiced by another session.' | Invoice create failed: request line␠ | Yes | RequestLinesStale |
 | BIL_INVOICE_ENGINE | 3062 | -20916 | 'Invoice preview failed: cash collected cannot be negative.' | Invoice preview failed: cash collected cannot be negative. | Yes | Form-level 422 |
 | BIL_INVOICE_ENGINE | 3156 | -20964 | 'Invoice create failed: creation date/time is required.' | Invoice create failed: creation date/time is required. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 3170 | -20915 | 'Invoice create failed: user number is required.' | Invoice create failed: user number is required. | No | Generic 422 |
 | BIL_INVOICE_ENGINE | 3229 | -20916 | 'Invoice create failed: cash collected cannot be negative.' | Invoice create failed: cash collected cannot be negative. | Yes | Form-level 422 |
 | BIL_IMPORT | 188 | -20759 | p_name \|\| ' must be Y or N.' | — | No | Generic 422 |
 | BIL_IMPORT | 243 | -20760 | 'Import failed: pay type must be 1 Cash or 2 Credit.' | Import failed: pay type must be 1 Cash or 2 Credit. | No | Generic 422 |
-| BIL_IMPORT | 257 | -20761 | 'Import failed: service ID is required. Context: ' \|\| p_context | Import failed: service ID is required. Context: | No | Generic 422 |
+| BIL_IMPORT | 257 | -20761 | 'Import failed: service ID is required. Context: ' \|\| p_context | Import failed: service ID is required. Context:␠ | No | Generic 422 |
 | BIL_IMPORT | 271 | -20690 | 'Request package expansion failed: request row ID is required.' | Request package expansion failed: request row ID is required. | No | Generic 422 |
 | BIL_IMPORT | 279 | -20691 | 'Request package expansion failed: package instance ID exceeds 64 characters.' | Request package expansion failed: package instance ID exceeds 64 characters. | No | Generic 422 |
 | BIL_IMPORT | 307 | -20692 | 'Request price validation failed: invoice date/time is required.' | Request price validation failed: invoice date/time is required. | No | Generic 422 |
@@ -499,7 +499,7 @@ The APEX Page 48 export and its JavaScript are references only. Where they disag
 | BIL_IMPORT | 329 | -20695 | 'Request price validation failed: payer type and company context are inconsistent.' | Request price validation failed: payer type and company context are inconsistent. | No | Generic 422 |
 | BIL_IMPORT | 350 | -20696 | 'Request price validation failed: a FREE package cannot have a nonzero request price.' | Request price validation failed: a FREE package cannot have a nonzero request price. | No | Generic 422 |
 | BIL_IMPORT | 355 | -20697 | 'Request price validation failed: a COMPONENT_PRICE package parent cannot have a nonzero request price.' | Request price validation failed: a COMPONENT_PRICE package parent cannot have a nonzero request price. | No | Generic 422 |
-| BIL_IMPORT | 366 | -20698 | 'Request price validation failed: service ' \|\| p_service_context.serviceid \|\| ' has a fixed price and the changed request price cannot be honored.' | Request price validation failed: service | No | Generic 422 |
+| BIL_IMPORT | 366 | -20698 | 'Request price validation failed: service ' \|\| p_service_context.serviceid \|\| ' has a fixed price and the changed request price cannot be honored.' | Request price validation failed: service␠ | No | Generic 422 |
 | BIL_IMPORT | 375 | -20699 | 'Request price validation failed: changed request prices are allowed only for the configured cash company.' | Request price validation failed: changed request prices are allowed only for the configured cash company. | No | Generic 422 |
 | BIL_IMPORT | 409 | -20762 | 'Request import failed: patient number is required.' | Request import failed: patient number is required. | No | Generic 422 |
 | BIL_IMPORT | 415 | -20763 | 'Request import failed: visit unique is required.' | Request import failed: visit unique is required. | No | Generic 422 |
@@ -507,14 +507,14 @@ The APEX Page 48 export and its JavaScript are references only. Where they disag
 | BIL_IMPORT | 427 | -20779 | 'Request import failed: application session is required.' | Request import failed: application session is required. | Yes | OperatorContextMissing |
 | BIL_IMPORT | 433 | -20782 | 'Request import failed: application user is required.' | Request import failed: application user is required. | Yes | OperatorContextMissing |
 | BIL_IMPORT | 440 | -20758 | 'Request import failed: approval check mode must be 0 or 1.' | Request import failed: approval check mode must be 0 or 1. | No | Generic 422 |
-| BIL_IMPORT | 501 | -20764 | 'Request import failed: service ' \|\| r.serviceid \|\| ' needs approval before import.' | Request import failed: service | No | Generic 422 |
-| BIL_IMPORT | 511 | -20770 | 'Request import failed: selected request line ' \|\| r.pat_serv_req_row_id \|\| ' has no service ID.' | Request import failed: selected request line | No | Generic 422 |
-| BIL_IMPORT | 519 | -20771 | 'Request import failed: selected request line ' \|\| r.pat_serv_req_row_id \|\| ' has invalid quantity.' | Request import failed: selected request line | Yes | Form-level 422 |
+| BIL_IMPORT | 501 | -20764 | 'Request import failed: service ' \|\| r.serviceid \|\| ' needs approval before import.' | Request import failed: service␠ | No | Generic 422 |
+| BIL_IMPORT | 511 | -20770 | 'Request import failed: selected request line ' \|\| r.pat_serv_req_row_id \|\| ' has no service ID.' | Request import failed: selected request line␠ | No | Generic 422 |
+| BIL_IMPORT | 519 | -20771 | 'Request import failed: selected request line ' \|\| r.pat_serv_req_row_id \|\| ' has invalid quantity.' | Request import failed: selected request line␠ | Yes | Form-level 422 |
 | BIL_IMPORT | 594 | -20692 | 'Request package expansion failed: invoice date/time is required.' | Request package expansion failed: invoice date/time is required. | No | Generic 422 |
 | BIL_IMPORT | 628 | -20694 | 'Request package expansion failed: configured cash company could not be resolved.' | Request package expansion failed: configured cash company could not be resolved. | No | Generic 422 |
-| BIL_IMPORT | 699 | -20773 | 'Request package expansion failed: invalid component definition for package ' \|\| l_line.serviceid \|\| '.' | Request package expansion failed: invalid component definition for package | Yes | Form-level 422 |
-| BIL_IMPORT | 709 | -20771 | 'Request package expansion failed: multiplied quantity exceeds the supported two-decimal quantity precision for component ' \|\| r.sub_serviceid \|\| '.' | Request package expansion failed: multiplied quantity exceeds the supported two-decimal quantity precision for component | Yes | Form-level 422 |
-| BIL_IMPORT | 748 | -20774 | 'Request package expansion failed: package ' \|\| l_line.serviceid \|\| ' has no components.' | Request package expansion failed: package | Yes | Form-level 422 |
+| BIL_IMPORT | 699 | -20773 | 'Request package expansion failed: invalid component definition for package ' \|\| l_line.serviceid \|\| '.' | Request package expansion failed: invalid component definition for package␠ | Yes | Form-level 422 |
+| BIL_IMPORT | 709 | -20771 | 'Request package expansion failed: multiplied quantity exceeds the supported two-decimal quantity precision for component ' \|\| r.sub_serviceid \|\| '.' | Request package expansion failed: multiplied quantity exceeds the supported two-decimal quantity precision for component␠ | Yes | Form-level 422 |
+| BIL_IMPORT | 748 | -20774 | 'Request package expansion failed: package ' \|\| l_line.serviceid \|\| ' has no components.' | Request package expansion failed: package␠ | Yes | Form-level 422 |
 | BIL_IMPORT | 783 | -20772 | 'Request selection failed: patient number is required.' | Request selection failed: patient number is required. | Yes | Form-level 422 |
 | BIL_IMPORT | 790 | -20773 | 'Request selection failed: visit unique is required.' | Request selection failed: visit unique is required. | Yes | Form-level 422 |
 | BIL_IMPORT | 797 | -20774 | 'Request selection failed: request line row ID is required.' | Request selection failed: request line row ID is required. | Yes | Form-level 422 |
@@ -528,10 +528,10 @@ The APEX Page 48 export and its JavaScript are references only. Where they disag
 | BIL_IMPORT | 925 | -20779 | 'Request selection clear failed: application session is required.' | Request selection clear failed: application session is required. | Yes | OperatorContextMissing |
 | BIL_IMPORT | 932 | -20782 | 'Request selection clear failed: application user is required.' | Request selection clear failed: application user is required. | Yes | OperatorContextMissing |
 | BIL_IMPORT | 964 | -20766 | 'Package import failed: list ID is required.' | Package import failed: list ID is required. | No | Generic 422 |
-| BIL_IMPORT | 978 | -20767 | 'Package import failed: service ' \|\| p_package_serviceid \|\| ' is not a package in list ' \|\| p_list_id \|\| '.' | Package import failed: service | No | Generic 422 |
-| BIL_IMPORT | 988 | -20768 | 'Package import failed: package pricing method is invalid for service ' \|\| p_package_serviceid \|\| '.' | Package import failed: package pricing method is invalid for service | No | Generic 422 |
-| BIL_IMPORT | 1062 | -20772 | 'Package import failed: package service ' \|\| p_package_serviceid \|\| ' has a blank sub-service in PACKAGE_DTL.' | Package import failed: package service | Yes | Form-level 422 |
-| BIL_IMPORT | 1070 | -20773 | 'Package import failed: package service ' \|\| p_package_serviceid \|\| ' has invalid quantity for sub-service ' \|\| r.sub_serviceid \|\| '.' | Package import failed: package service | Yes | Form-level 422 |
+| BIL_IMPORT | 978 | -20767 | 'Package import failed: service ' \|\| p_package_serviceid \|\| ' is not a package in list ' \|\| p_list_id \|\| '.' | Package import failed: service␠ | No | Generic 422 |
+| BIL_IMPORT | 988 | -20768 | 'Package import failed: package pricing method is invalid for service ' \|\| p_package_serviceid \|\| '.' | Package import failed: package pricing method is invalid for service␠ | No | Generic 422 |
+| BIL_IMPORT | 1062 | -20772 | 'Package import failed: package service ' \|\| p_package_serviceid \|\| ' has a blank sub-service in PACKAGE_DTL.' | Package import failed: package service␠ | Yes | Form-level 422 |
+| BIL_IMPORT | 1070 | -20773 | 'Package import failed: package service ' \|\| p_package_serviceid \|\| ' has invalid quantity for sub-service ' \|\| r.sub_serviceid \|\| '.' | Package import failed: package service␠ | Yes | Form-level 422 |
 | BIL_IMPORT | 1154 | -20750 | 'Visit import failed: patient number is required.' | Visit import failed: patient number is required. | No | Generic 422 |
 | BIL_IMPORT | 1160 | -20751 | 'Visit import failed: doctor is required.' | Visit import failed: doctor is required. | No | Generic 422 |
 | BIL_IMPORT | 1167 | -20756 | 'Visit import failed: invoice date/time is required.' | Visit import failed: invoice date/time is required. | No | Generic 422 |
@@ -545,7 +545,7 @@ The APEX Page 48 export and its JavaScript are references only. Where they disag
 | BIL_INVOICE_API | 296 | -20979 | 'Patient, payer type, invoice date, info center and Bundled Offer are required.' | Patient, payer type, invoice date, info center and Bundled Offer are required. | No | Generic 422 |
 | BIL_INVOICE_API | 306 | -20979 | 'Bundled Offer quantity must be a positive whole number.' | Bundled Offer quantity must be a positive whole number. | No | Generic 422 |
 | BIL_INVOICE_API | 313 | -20871 | 'Bundled Offers are available only for Cash invoices.' | Bundled Offers are available only for Cash invoices. | Yes | Field OFERID |
-| BIL_INVOICE_API | 442 | -20978 | 'Bundled Offer invoice rows are invalid. ' \|\| p_message | Bundled Offer invoice rows are invalid. | No | Generic 422 |
+| BIL_INVOICE_API | 442 | -20978 | 'Bundled Offer invoice rows are invalid. ' \|\| p_message | Bundled Offer invoice rows are invalid.␠ | No | Generic 422 |
 | BIL_INVOICE_API | 1008 | -20896 | 'Imported service quantity must be a positive whole number.' | Imported service quantity must be a positive whole number. | No | Generic 422 |
 | BIL_INVOICE_API | 1053 | -20890 | 'Import preview collection name is required.' | Import preview collection name is required. | No | Generic 422 |
 | BIL_INVOICE_API | 1057 | -20891 | 'Invalid import preview source mode.' | Invalid import preview source mode. | No | Generic 422 |
@@ -554,11 +554,11 @@ The APEX Page 48 export and its JavaScript are references only. Where they disag
 | BIL_INVOICE_API | 1086 | -20894 | 'The new-visit service changed for the selected payer context. Refresh the visit and try again.' | The new-visit service changed for the selected payer context. Refresh the visit and try again. | No | Generic 422 |
 | BIL_INVOICE_API | 1164 | -20898 | 'Import preview failed: engine line mapping is incomplete.' | Import preview failed: engine line mapping is incomplete. | No | Generic 422 |
 | BIL_INVOICE_API | 1180 | -20897 | 'No invoice lines were found for this source invoice.' | No invoice lines were found for this source invoice. | No | Generic 422 |
-| BIL_INVOICE_API | 1289 | -20848 | 'Invoice request ' \|\| l_request_id \|\| ' refers to unavailable invoice ' \|\| p_inv_no \|\| '.' | Invoice request | Yes | IdempotencyConflict |
+| BIL_INVOICE_API | 1289 | -20848 | 'Invoice request ' \|\| l_request_id \|\| ' refers to unavailable invoice ' \|\| p_inv_no \|\| '.' | Invoice request␠ | Yes | IdempotencyConflict |
 | BIL_INVOICE_API | 1307 | -20847 | 'Invoice create request ID must contain between 1 and 64 bytes.' | Invoice create request ID must contain between 1 and 64 bytes. | No | Generic 422 |
-| BIL_INVOICE_API | 1335 | -20848 | 'Invoice request ' \|\| l_request_id \|\| ' exists but has no completed invoice.' | Invoice request | Yes | IdempotencyConflict |
-| BIL_INVOICE_API | 1345 | -20849 | 'Invoice request ' \|\| l_request_id \|\| ' already belongs to invoice ' \|\| l_existing_inv_no \|\| ' for another patient.' | Invoice request | Yes | IdempotencyConflict |
-| BIL_INVOICE_API | 1467 | -20848 | 'Invoice request ' \|\| l_request_id \|\| ' could not be completed for invoice ' \|\| l_inv_no \|\| '.' | Invoice request | Yes | IdempotencyConflict |
+| BIL_INVOICE_API | 1335 | -20848 | 'Invoice request ' \|\| l_request_id \|\| ' exists but has no completed invoice.' | Invoice request␠ | Yes | IdempotencyConflict |
+| BIL_INVOICE_API | 1345 | -20849 | 'Invoice request ' \|\| l_request_id \|\| ' already belongs to invoice ' \|\| l_existing_inv_no \|\| ' for another patient.' | Invoice request␠ | Yes | IdempotencyConflict |
+| BIL_INVOICE_API | 1467 | -20848 | 'Invoice request ' \|\| l_request_id \|\| ' could not be completed for invoice ' \|\| l_inv_no \|\| '.' | Invoice request␠ | Yes | IdempotencyConflict |
 
 Reuse flags:
 
@@ -598,14 +598,14 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Block\|FORM\|T_INV\|-\|10 | — | PR-13, DR-01, OI-15.01 | `InvoiceHeaderDraft`; `InvoiceQueries.GetInvoice` applies the block WHERE |
 | Item\|T_INV\|INVTYPEID\|-\|11 | — | DR-20, OI-15.20 | `InvoiceHeaderDraft.InvTypeId`; list from `LookupQueries.GetInvoiceTypes` |
 | Trigger\|T_INV\|INVTYPEID\|WHEN-VALIDATE-ITEM\|13 | T022 | DR-20, OI-33 | Home-care type in `InvoiceDefaultsRule.Apply`; `IS_STATE` not carried (OI-33) |
-| Item\|T_INV\|INV_NO\|-\|15 | — | PR-09, DR-17 | `InvoiceHeaderDraft.InvNo`; number assigned inside `CreateFullInvoice` |
+| Item\|T_INV\|INV_NO\|-\|15 | — | PR-09, DR-17 | `InvoiceHeaderDraft.InvNo`; number assigned inside `CreateFullInvoice` (UNVERIFIED) |
 | Item\|T_INV\|INVDATE\|-\|16 | — | DR-20, DR-03, DR-10, PR-12 | `InvoiceHeaderDraft.DraftDate`, bound as `invdate` (D-39); `InvoiceHeaderDraft.InvDate` on a saved invoice |
 | Item\|T_INV\|PATIENTNO\|-\|17 | — | DR-01, DR-03, PR-13 | `InvoiceHeaderDraft.PatientNo` |
 | Trigger\|T_INV\|PATIENTNO\|WHEN-VALIDATE-ITEM\|18 | T023 | DR-03, DR-24, PR-24, OI-03, OI-24, OI-21 | `PatientEligibilityRules.Evaluate` over `LookupQueries.GetPatientCoverage`; pay type `PayTypeSelectionRule.Decide`; payer context PR-24 via `BIL_PATIENT_CONTEXT` (OI-03); `GET_PRICE_PLAN` not built (OI-24); pre-authorisation not derived (OI-21, D-52) |
 | Item\|T_INV\|PATIENTNAME\|-\|20 | — | PR-24, OI-15.05, OI-15.01 | `PatientCoverageSnapshot.PatientName` on a draft; `InvoiceViewResponse.Display["PATIENTNAME"]` on a saved invoice |
 | Trigger\|T_INV\|PATIENTNAME\|KEY-NEXT-ITEM\|21 | T024 | N | UI mechanics: focus navigation |
 | Item\|T_INV\|INV_TIME\|-\|23 | — | OI-33, PR-12 | Not carried by the package inputs and not written by .NET; `InvoiceViewResponse.Display["INV_TIME"]` on a saved invoice |
-| Trigger\|T_INV\|INV_TIME\|WHEN-VALIDATE-ITEM\|24 | T025 | PR-12 | Engine derives `PFLAG` (D-06) |
+| Trigger\|T_INV\|INV_TIME\|WHEN-VALIDATE-ITEM\|24 | T025 | PR-12 | Engine derives `PFLAG` (D-06, UNVERIFIED) |
 | Item\|T_INV\|COMP_CODE\|-\|26 | — | DR-01, DR-24, PR-24 | `InvoiceHeaderDraft.CompCode` |
 | Trigger\|T_INV\|COMP_CODE\|WHEN-VALIDATE-ITEM\|27 | T026 | DR-24, PR-04 | `PayTypeSelectionRule.Decide` with `LookupQueries.GetCompanyType`; direct share PR-04 |
 | Item\|T_INV\|SUB_COMP_CODE\|-\|29 | — | PR-24, OI-32, OI-21 | `InvoiceHeaderDraft.SubCompCode`, read by `OpenItemGate.Evaluate` |
@@ -633,7 +633,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Item\|T_INV\|USER_NO\|-\|61 | — | OI-30 | `OperatorContext.UserNo` (header `X-His-User-No`), bound as `user_no`; `InvoiceHeaderDraft.UserNo` on a saved invoice |
 | Item\|T_INV\|PAT_PAYX\|-\|62 | — | PR-07 | `PreviewTotals.PatPay` and `PreviewTotals.VatTotalPat` in `PreviewResponse.Totals` |
 | Item\|T_INV\|COMP_PAY\|-\|63 | — | PR-04 | `PreviewTotals.CompPay`; `InvoiceViewResponse.Display["COMP_PAY"]` |
-| Item\|T_INV\|APPROV_LIMIT\|-\|64 | — | PR-24 | Written by `insert_header` from the patient context; not displayed |
+| Item\|T_INV\|APPROV_LIMIT\|-\|64 | — | PR-24 | Written by `insert_header` from the patient context (UNVERIFIED); not displayed |
 | Item\|T_INV\|DISC_T\|-\|65 | — | DR-06, PR-06 | `InvoiceHeaderDraft.DiscT`; selects the bound final-discount field (D-41) |
 | Trigger\|T_INV\|DISC_T\|WHEN-VALIDATE-ITEM\|68 | T035 | N | UI mechanics; the mode is `InvoiceHeaderDraft.DiscT` |
 | Trigger\|T_INV\|DISC_T\|WHEN-LIST-CHANGED\|69 | T036 | N | UI mechanics; the mode is `InvoiceHeaderDraft.DiscT` |
@@ -643,7 +643,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Trigger\|T_INV\|FINALDISC_PERC\|WHEN-VALIDATE-ITEM\|74 | T039 | DR-06, DR-07, PR-06 | Limit `FinalDiscountLimitRule.Evaluate` / `.ApplyChoice`; reset `PaymentAllocationRules.ResetAfterDiscountChange`; amount PR-06 |
 | Item\|T_INV\|FINALDISC\|-\|76 | — | DR-06, PR-06 | `InvoiceHeaderDraft.FinalDisc` |
 | Trigger\|T_INV\|FINALDISC\|KEY-NEXT-ITEM\|77 | T040 | DR-22 | `HeaderRecordRules.ApplyPaymentTypeDefault`; navigation is UI mechanics |
-| Trigger\|T_INV\|FINALDISC\|WHEN-VALIDATE-ITEM\|78 | T041 | DR-06, DR-07, PR-06 | Limit `FinalDiscountLimitRule.Evaluate`; exceed check PR-06 (-20914, legacy text via `OracleErrorCatalog`); reset `PaymentAllocationRules.ResetAfterDiscountChange` |
+| Trigger\|T_INV\|FINALDISC\|WHEN-VALIDATE-ITEM\|78 | T041 | DR-06, DR-07, PR-06 | Limit `FinalDiscountLimitRule.Evaluate`; exceed check PR-06 (-20914, UNVERIFIED, legacy text via `OracleErrorCatalog`); reset `PaymentAllocationRules.ResetAfterDiscountChange` |
 | Item\|T_INV\|AMOUNT_1\|-\|80 | — | DR-07, DR-08, DR-09, PR-08 | `InvoiceHeaderDraft.Amount1` |
 | Trigger\|T_INV\|AMOUNT_1\|WHEN-VALIDATE-ITEM\|81 | T042 | DR-07 | `PaymentAllocationRules.AllocateSecondAmount` |
 | Item\|T_INV\|AMOUNT_2\|-\|83 | — | DR-07, DR-08, DR-09 | `InvoiceHeaderDraft.Amount2` |
@@ -653,7 +653,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Trigger\|T_INV\|SUB_PAYTYPE\|KEY-NEXT-ITEM\|88 | T045 | N | UI mechanics: focus navigation |
 | Item\|T_INV\|SUB_PAYTYPE2\|-\|90 | — | DR-08, DR-22, OI-15.15 | `InvoiceHeaderDraft.SubPayType2`; picker `PAY_TYPE2` |
 | Trigger\|T_INV\|SUB_PAYTYPE2\|KEY-NEXT-ITEM\|91 | T046 | N | UI mechanics: focus navigation |
-| Item\|T_INV\|CASH_PAYED\|-\|93 | — | DR-08, OI-33 | `InvoiceHeaderDraft.CashPayed`; tendered cash not persisted (the engine stores `cash_collected`) |
+| Item\|T_INV\|CASH_PAYED\|-\|93 | — | DR-08, OI-33 | `InvoiceHeaderDraft.CashPayed`; tendered cash not persisted (the engine stores `cash_collected`, UNVERIFIED) |
 | Trigger\|T_INV\|CASH_PAYED\|KEY-NEXT-ITEM\|94 | T047 | N | UI mechanics: focus navigation |
 | Trigger\|T_INV\|CASH_PAYED\|WHEN-VALIDATE-ITEM\|95 | T048 | N | Empty trigger |
 | Item\|T_INV\|CASH_COLLECTED\|-\|97 | — | DR-09, DR-22 | `PreviewResponse.TotalCollected` from `PaymentAllocationRules.TotalCollected`; `InvoiceViewResponse.Display["TOTAL_COLLECTED"]` |
@@ -674,20 +674,20 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Item\|T_INV\|PHARMACY_INV_NO\|-\|112 | — | DR-01, OI-15.01 | `PHARMACY_INV_NO IS NULL` predicate of `InvoiceQueries.GetInvoice` and `.GetLastInvoiceNo` |
 | Item\|T_INV\|PAYED_BEFORE\|-\|113 | — | OI-23 | Not built: `GET_PAYID_VALUE` is missing, so the value is not shown |
 | Item\|T_INV\|REUND\|-\|114 | — | DR-08, OI-33 | `PreviewResponse.Refund` from `PaymentAllocationRules.Refund`; not persisted |
-| Item\|T_INV\|THE_MONTH\|-\|115 | — | PR-12 | Written by `insert_header` |
-| Item\|T_INV\|THE_YEAR\|-\|116 | — | PR-12 | Written by `insert_header` |
-| Item\|T_INV\|PFLAG\|-\|117 | — | PR-12 | Derived by the engine (D-06); `InvoiceViewResponse.Display["PFLAG"]` |
+| Item\|T_INV\|THE_MONTH\|-\|115 | — | PR-12 | Written by `insert_header` (UNVERIFIED) |
+| Item\|T_INV\|THE_YEAR\|-\|116 | — | PR-12 | Written by `insert_header` (UNVERIFIED) |
+| Item\|T_INV\|PFLAG\|-\|117 | — | PR-12 | Derived by the engine (D-06, UNVERIFIED); `InvoiceViewResponse.Display["PFLAG"]` |
 | Item\|T_INV\|MACHINE_N\|-\|121 | — | OI-30 | `OperatorContext.MachineName` (header `X-His-Machine`), bound as `machine_n`; `InvoiceHeaderDraft.MachineN` on a saved invoice |
 | Item\|T_INV\|INIT_P_SEVER\|-\|122 | — | OI-33, OI-30 | Not carried by the package inputs and not written by .NET; filled from the unused report global `r_server` |
 | Item\|T_INV\|IS_NEW\|-\|123 | — | N | UI mechanics: display flag read only by dead `NEW_WATING_NOXXXXX` |
 | Item\|T_INV\|SHOW_RALA\|-\|124 | — | OI-15.18, OI-33 | Show reservations action: `GET /api/lov/RESERV_NO` through `LovQueries.ReservNo`, view-only |
 | Trigger\|T_INV\|SHOW_RALA\|WHEN-BUTTON-PRESSED\|125 | T049 | OI-15.18, OI-33 | `LovQueries.ReservNo` (view-only); the chosen `SEQ_NO` is not persistable (OI-33) |
-| Item\|T_INV\|SEQ_NO\|-\|127 | — | OI-33, OI-09 | `InvoiceHeaderDraft.SeqNo`, display-only; the queue number is the posting stage |
+| Item\|T_INV\|SEQ_NO\|-\|127 | — | OI-33, OI-09 | `InvoiceHeaderDraft.SeqNo`, display-only; the queue number is the posting stage (UNVERIFIED) |
 | Item\|T_INV\|UPD_USER_NO\|-\|128 | — | OI-33, OI-56 | `InvoiceViewResponse.Display["UPD_USER_NO"]`; update audit of a saved invoice is blocked |
 | Item\|T_INV\|CLAIM_NO\|-\|129 | — | DR-10, DR-20 | `InvoiceHeaderDraft.ClaimNo` |
-| Item\|T_INV\|SHIFT_SYSTEM_UNIQUE\|-\|130 | — | PR-10, OI-01 | Written by `insert_header` from the shift assert; `FullInvoiceResultRow.ShiftSystemUnique` |
+| Item\|T_INV\|SHIFT_SYSTEM_UNIQUE\|-\|130 | — | PR-10, OI-01 | Written by `insert_header` from the shift assert (UNVERIFIED); `FullInvoiceResultRow.ShiftSystemUnique` |
 | Item\|T_INV\|G_NAME\|-\|131 | — | OI-15.13 | `InvoiceViewResponse.Display["G_NAME"]` |
-| Item\|T_INV\|XGROUP\|-\|132 | — | PR-24 | Written by `insert_header` from the patient context; group name shown as `G_NAME` |
+| Item\|T_INV\|XGROUP\|-\|132 | — | PR-24 | Written by `insert_header` from the patient context (UNVERIFIED); group name shown as `G_NAME` |
 | Item\|T_INV\|PAT_PAY\|-\|133 | — | PR-04 | `PreviewTotals.PatPay`; `InvoiceViewResponse.Display["PAT_PAY"]` |
 | Item\|T_INV\|DHS_CLAIM_NO\|-\|134 | — | OI-33 | Not carried by the package inputs and not written by .NET; on no canvas |
 | Item\|T_INV\|TRANSCATION_STATUS\|-\|135 | — | OI-33 | Not carried by the package inputs and not written by .NET; on no canvas |
@@ -712,13 +712,13 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Item\|T_INV\|NOT_SEEN\|-\|158 | — | OI-33 | Not carried by the package inputs and not written by .NET; on no canvas |
 | Item\|T_INV\|RESERV_THE_TIME\|-\|159 | — | OI-33 | `InvoiceViewResponse.Display["RESERV_THE_TIME"]`; the `RESERV_NO` list is view-only |
 | Item\|T_INV\|RESERV_THE_TIMEX\|-\|160 | — | OI-42 | Not built: reservation-time display field omitted (`GET_HTFN2` missing) |
-| Item\|T_INV\|DEDUCT_TYPE\|-\|161 | — | PR-04, OI-33 | Deductible type inside the package share calculation; not carried by the package inputs and not written by .net |
+| Item\|T_INV\|DEDUCT_TYPE\|-\|161 | — | PR-04, OI-33 | Deductible type inside the package share calculation (UNVERIFIED); not carried by the package inputs and not written by .net |
 | Item\|T_INV\|ADD_TO_LIST\|-\|162 | — | DR-23 | `InvoiceHeaderDraft.AddToList`, set by `AddToListRule.Derive` |
 | Item\|T_INV\|VAT_TOTAL_CO\|-\|163 | — | PR-05 | `PreviewTotals.VatTotalCo`; `InvoiceViewResponse.Display["VAT_TOTAL_CO"]` |
 | Item\|T_INV\|VAT_TOTAL_PAT\|-\|164 | — | PR-05, PR-07 | `PreviewTotals.VatTotalPat`; `InvoiceViewResponse.Display["VAT_TOTAL_PAT"]` |
 | Item\|T_INV\|VAT_TOTAL\|-\|165 | — | PR-05 | `FullInvoiceResultRow.VatTotal`; `InvoiceViewResponse.Display["VAT_TOTAL"]` |
 | Item\|T_INV\|IS_STATE\|-\|166 | — | OI-33 | Not carried by the package inputs and not written by .NET |
-| Item\|T_INV\|ROW_TYPE\|-\|167 | — | OI-15.01, OI-33 | `ROW_TYPE` filter of `InvoiceQueries.GetInvoice` and predicate of `.GetLastInvoiceNo`; not written by the package |
+| Item\|T_INV\|ROW_TYPE\|-\|167 | — | OI-15.01, OI-33 | `ROW_TYPE` filter of `InvoiceQueries.GetInvoice` and predicate of `.GetLastInvoiceNo`; not written by the package (UNVERIFIED) |
 | Item\|T_INV\|CLAIM_FLAG\|-\|168 | — | DR-10, DR-20 | `InvoiceHeaderDraft.ClaimFlag` |
 | Item\|T_INV\|PRIORITY_VALUE\|-\|169 | — | OI-33 | Not carried by the package inputs and not written by .NET |
 | Item\|T_INV\|BANK_TRANS_NO\|-\|170 | — | OI-33 | Not carried by the package inputs and not written by .NET |
@@ -727,16 +727,16 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Trigger\|T_INV\|OFERID\|KEY-NEXT-ITEM\|173 | T051 | N | UI mechanics: focus navigation |
 | Item\|T_INV\|OFFER_NAME\|-\|175 | — | OI-15.19, OI-33 | `OFFERS` rows of `LovResponse.Rows`; `InvoiceViewResponse.Display["OFFER_NAME"]` is null |
 | Item\|T_INV\|NOTE_NO\|-\|176 | — | OI-15.01 | `InvoiceHeaderDraft.NoteNo`, bound as `note_no` |
-| Item\|T_INV\|OLD_OR_NEW\|-\|177 | — | PR-11 | Derived and written by the engine |
+| Item\|T_INV\|OLD_OR_NEW\|-\|177 | — | PR-11 | Derived and written by the engine (UNVERIFIED) |
 | Item\|T_INV\|SUB_PAYTYPE_NAME\|-\|178 | — | OI-15.15 | `PAY_TYPE1` rows of `LovResponse.Rows`; `InvoiceViewResponse.Display["SUB_PAYTYPE_NAME"]` |
 | Item\|T_INV\|SUB_PAYTYPE2_NAME\|-\|179 | — | OI-15.15 | `PAY_TYPE2` rows of `LovResponse.Rows`; `InvoiceViewResponse.Display["SUB_PAYTYPE2_NAME"]` |
 | Relation\|T_INV\|T_INV_D_INV\|-\|360 | — | N, OI-15.01, OI-15.02 | UI mechanics: master-detail coordination; join `D_INV.INV_NO = T_INV.INV_NO` in `InvoiceQueries.GetInvoice` |
 | Relation\|T_INV\|T_INV_T_INV_TRANS_M\|-\|361 | — | N, OI-15.01, OI-15.03 | UI mechanics: master-detail coordination; join `IMP_FROM_T_INV_NO = INV_NO` in `InvoiceQueries.GetMoreDetails` |
 | Trigger\|T_INV\|T_INV\|POST-QUERY\|362 | T010 | DR-17, OI-15.01 | `InvoiceQueries.GetInvoice` (display lookups in `InvoiceViewResponse.Display`); read-only → `InvoiceStatePolicy.CanEdit` |
-| Trigger\|T_INV\|T_INV\|PRE-INSERT\|363 | T011 | PR-09, PR-10, PR-11, PR-12, DR-21, OI-09, OI-19, OI-33 | Numbering PR-09; `OLD_OR_NEW` PR-11; month/year PR-12; shift PR-10 (the re-check only warned); queue number → queue posting (D-14, OI-09); `IS_STATE` not carried (OI-33); PATIENT clear DR-21 `ReceptionTransferRule.ShouldClear` + `PatientTransferCommand.ClearReceptionTransfer` (failure swallowed, D-44) |
+| Trigger\|T_INV\|T_INV\|PRE-INSERT\|363 | T011 | PR-09, PR-10, PR-11, PR-12, DR-21, OI-09, OI-19, OI-33 | Numbering PR-09; `OLD_OR_NEW` PR-11; month/year PR-12; shift PR-10 (the re-check only warned); queue number → queue posting (D-14, OI-09, UNVERIFIED); `IS_STATE` not carried (OI-33); PATIENT clear DR-21 `ReceptionTransferRule.ShouldClear` + `PatientTransferCommand.ClearReceptionTransfer` (failure swallowed, D-44) |
 | Trigger\|T_INV\|T_INV\|PRE-QUERY\|364 | T012 | OI-15.01 | `ROW_TYPE` filter in `InvoiceQueries.GetInvoice` |
 | Trigger\|T_INV\|T_INV\|PRE-UPDATE\|365 | T013 | OI-56 | Saved-invoice update blocked: `InvoicesController.Update` → 501 (D-36) |
-| Trigger\|T_INV\|T_INV\|WHEN-VALIDATE-RECORD\|366 | T014 | DR-01, DR-22, PR-13 | `HeaderRecordRules.ValidateRecord`, `HeaderRecordRules.ApplyPaymentTypeDefault`; engine header checks re-check |
+| Trigger\|T_INV\|T_INV\|WHEN-VALIDATE-RECORD\|366 | T014 | DR-01, DR-22, PR-13 | `HeaderRecordRules.ValidateRecord`, `HeaderRecordRules.ApplyPaymentTypeDefault`; engine header checks re-check (UNVERIFIED) |
 | Trigger\|T_INV\|T_INV\|WHEN-CREATE-RECORD\|367 | T015 | DR-20, DR-24, PR-12, OI-23 | `InvoiceDefaultsRule.Apply` (claim preload `InvoiceQueries.GetClaimPreload`, visit doctor `LookupQueries.GetVisitDoctor`, draft date `LookupQueries.GetDatabaseTime`, D-39); pay type `PayTypeSelectionRule.Decide`; `PFLAG` PR-12; `payed_before` not built (OI-23) |
 | Trigger\|T_INV\|T_INV\|POST-INSERT\|368 | T016 | OI-13, OI-09, OI-12, OI-45 | Audit → engine `BIL_AUDIT` call (OI-13, UNVERIFIED); visit list → queue posting (OI-09, D-14, UNVERIFIED); SMS with the `inv_small_cash.jsp` link not sent (OI-12, OI-45, D-28) |
 | Trigger\|T_INV\|T_INV\|POST-UPDATE\|369 | T017 | OI-56 | Saved-invoice update blocked: `InvoicesController.Update` → 501 (D-36) |
@@ -751,13 +751,13 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Item\|D_INV\|XVAT_VAL_CO\|-\|379 | — | PR-05 | `PreviewTotals.VatTotalCo` |
 | Item\|D_INV\|XVAT_VAL_PAT\|-\|380 | — | PR-05 | `PreviewTotals.VatTotalPat` |
 | Item\|D_INV\|SERV_C\|-\|381 | — | DR-02 | Line count passed to `InvoiceDetailRules.RequireDetails` |
-| Item\|D_INV\|INV_NO\|-\|382 | — | OI-15.02 | Join column of relation `T_INV_D_INV`; `InvoiceQueries.GetInvoice` lines bind `:invNo`; set by `insert_lines` |
+| Item\|D_INV\|INV_NO\|-\|382 | — | OI-15.02 | Join column of relation `T_INV_D_INV`; `InvoiceQueries.GetInvoice` lines bind `:invNo`; set by `insert_lines` (UNVERIFIED) |
 | Item\|D_INV\|CATID\|-\|383 | — | OI-15.11 | `InvoiceLineDraft.CatId`, filled by `LovQueries.Cat`; not carried by `T_LINE_INPUT`, so `EditablePreviewLine.CatId` governs after a preview |
 | Trigger\|D_INV\|CATID\|KEY-NEXT-ITEM\|384 | T064 | N | UI mechanics: focus navigation |
 | Item\|D_INV\|XCAT_NAMEX\|-\|386 | — | OI-15.11 | `CAT` rows of `LovResponse.Rows`; `InvoiceViewResponse.Display["LINE_DISPLAY"]` `XCAT_NAMEX` |
 | Item\|D_INV\|SERVICEID\|-\|387 | — | DR-12, DR-15, DR-16, DR-23, PR-14, OI-24 | `InvoiceLineDraft.ServiceId`, entered by id (the `SERVICES` LOV is blocked) |
 | Trigger\|D_INV\|SERVICEID\|KEY-NEXT-ITEM\|388 | T065 | DR-07 | `PaymentAllocationRules.DefaultFirstAmount`; navigation is UI mechanics |
-| Trigger\|D_INV\|SERVICEID\|WHEN-VALIDATE-ITEM\|389 | T066 | DR-15, DR-23, PR-16, PR-04, PR-01, OI-32, OI-31 | `LineEntryRules.RequireService`; `AddToListRule.Derive`; offer PR-16; share PR-04; untraced sub-rules → `OpenItemGate.Evaluate` blockers (OI-32); `PRICE` editability → price-override binding (D-42); consumption blocked (OI-31); recalculation PR-01 … PR-08 via `InvoiceWorkflowService.Preview` |
+| Trigger\|D_INV\|SERVICEID\|WHEN-VALIDATE-ITEM\|389 | T066 | DR-15, DR-23, PR-16, PR-25, PR-04, PR-01, OI-32, OI-31 | `LineEntryRules.RequireService`; `AddToListRule.Derive`; standard-offer branch → PR-16, PR-25 inside the package (UNVERIFIED); share PR-04; untraced sub-rules → `OpenItemGate.Evaluate` blockers (OI-32); `PRICE` editability → price-override binding (D-42); consumption blocked (OI-31); recalculation PR-01 … PR-08 via `InvoiceWorkflowService.Preview` |
 | Item\|D_INV\|SERVICEDESC\|-\|391 | — | OI-15.02 | `EditablePreviewLine.ServiceDesc`; `InvoiceViewResponse.Display["LINE_DISPLAY"]` `SERVICEDESC` |
 | Item\|D_INV\|PRICE\|-\|392 | — | PR-01 | `InvoiceLineDraft.Price` (displayed) and `InvoiceLineDraft.PriceOverride` (bound only under D-42) |
 | Trigger\|D_INV\|PRICE\|WHEN-VALIDATE-ITEM\|393 | T067 | PR-01 | Re-preview through `BilInvoiceApiGateway.CalculatePreview` |
@@ -769,9 +769,9 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Item\|D_INV\|MY_DISC\|-\|402 | — | PR-02 | `InvoiceLineDraft.MyDisc` |
 | Trigger\|D_INV\|MY_DISC\|WHEN-VALIDATE-ITEM\|403 | T071 | PR-02 | Re-preview through `BilInvoiceApiGateway.CalculatePreview` |
 | Item\|D_INV\|FIXPAY\|-\|405 | — | PR-04, OI-33 | `InvoiceLineDraft.FixPay`, display-only; operator override not carried |
-| Trigger\|D_INV\|FIXPAY\|WHEN-VALIDATE-ITEM\|406 | T072 | PR-04, OI-33 | Payer share inside the package; operator override not carried (OI-33) |
+| Trigger\|D_INV\|FIXPAY\|WHEN-VALIDATE-ITEM\|406 | T072 | PR-04, OI-33 | Payer share inside the package (UNVERIFIED); operator override not carried (OI-33) |
 | Item\|D_INV\|PAYRATE\|-\|408 | — | PR-04, OI-33 | `InvoiceLineDraft.PayRate`, display-only; operator override not carried |
-| Trigger\|D_INV\|PAYRATE\|WHEN-VALIDATE-ITEM\|409 | T073 | PR-04, OI-33 | Payer share inside the package; operator override not carried (OI-33) |
+| Trigger\|D_INV\|PAYRATE\|WHEN-VALIDATE-ITEM\|409 | T073 | PR-04, OI-33 | Payer share inside the package (UNVERIFIED); operator override not carried (OI-33) |
 | Item\|D_INV\|S_PRICE\|-\|411 | — | PR-01 | `PreviewTotals.TotalGross`; `InvoiceViewResponse.Display["TOTAL_GROSS"]` |
 | Item\|D_INV\|S_DISC\|-\|412 | — | PR-02 | `PreviewTotals.TotalDiscount`; `InvoiceViewResponse.Display["TOTAL_DISCOUNT"]` |
 | Item\|D_INV\|XMY_NET\|-\|413 | — | PR-01, PR-02 | `EditablePreviewLine.MyNet` |
@@ -779,8 +779,8 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Item\|D_INV\|CLINICNAME2\|-\|415 | — | N | UI mechanics: on no canvas and read by no trigger |
 | Item\|D_INV\|NET\|-\|416 | — | PR-07, DR-07 | `PreviewTotals.CashCollected`, the amount due passed to `PaymentAllocationRules` (D-40) |
 | Item\|D_INV\|S_PAY\|-\|417 | — | PR-04 | `PreviewTotals.PatPay` |
-| Item\|D_INV\|D_INV_ROW_ID\|-\|418 | — | PR-20, OI-40.03 | Assigned by `insert_lines` from `D_INV_SEQ`; `InvoiceViewResponse.Display["LINE_DISPLAY"]` `D_INV_ROW_ID` |
-| Item\|D_INV\|SRV_STATE\|-\|419 | — | OI-15.02 | Written as 0 by `insert_lines`; not displayed |
+| Item\|D_INV\|D_INV_ROW_ID\|-\|418 | — | PR-20, OI-40.03 | Assigned by `insert_lines` from `D_INV_SEQ` (UNVERIFIED); `InvoiceViewResponse.Display["LINE_DISPLAY"]` `D_INV_ROW_ID` |
+| Item\|D_INV\|SRV_STATE\|-\|419 | — | OI-15.02 | Written as 0 by `insert_lines` (UNVERIFIED); not displayed |
 | Item\|D_INV\|MY_NET\|-\|420 | — | PR-02 | `EditablePreviewLine.MyNet`; `InvoiceViewResponse.Display["LINE_DISPLAY"]` `MY_NET` |
 | Item\|D_INV\|THE_FIX\|-\|421 | — | PR-04 | `InvoiceViewResponse.Display["LINE_DISPLAY"]` `THE_FIX` |
 | Item\|D_INV\|THE_RATE\|-\|422 | — | PR-04 | `InvoiceViewResponse.Display["LINE_DISPLAY"]` `THE_RATE` |
@@ -811,23 +811,23 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Item\|D_INV\|VAT_VAL_CO\|-\|452 | — | PR-05 | `EditablePreviewLine.VatValCo`; `InvoiceViewResponse.Display["LINE_DISPLAY"]` `VAT_VAL_CO` |
 | Item\|D_INV\|VAT_VAL_PAT\|-\|453 | — | PR-05 | `EditablePreviewLine.VatValPat`; `InvoiceViewResponse.Display["LINE_DISPLAY"]` `VAT_VAL_PAT` |
 | Item\|D_INV\|VAT_VAL_PAT_EX\|-\|454 | — | PR-05 | `EditablePreviewLine.VatValPatEx`; `InvoiceViewResponse.Display["LINE_DISPLAY"]` `VAT_VAL_PAT_EX` |
-| Item\|D_INV\|SFDA_CODE\|-\|455 | — | OI-15.02 | Written by `insert_lines` from the service; not displayed |
-| Item\|D_INV\|IMP_FROM_PKG\|-\|456 | — | PR-18, OI-33 | Superseded by `InvoiceLineDraft.PackageServiceId` / `PackageInstanceId` from `GET_PACKAGE_LINES`; the column is not written |
-| Item\|D_INV\|REF_SERV_ROW\|-\|457 | — | PR-18, OI-33 | Superseded by `InvoiceLineDraft.PackageParentLineId`; the column is not written |
+| Item\|D_INV\|SFDA_CODE\|-\|455 | — | OI-15.02 | Written by `insert_lines` from the service (UNVERIFIED); not displayed |
+| Item\|D_INV\|IMP_FROM_PKG\|-\|456 | — | PR-18, OI-33 | Superseded by `InvoiceLineDraft.PackageServiceId` / `PackageInstanceId` from `GET_PACKAGE_LINES`; the column is not written (UNVERIFIED) |
+| Item\|D_INV\|REF_SERV_ROW\|-\|457 | — | PR-18, OI-33 | Superseded by `InvoiceLineDraft.PackageParentLineId`; the column is not written (UNVERIFIED) |
 | Item\|D_INV\|INS_EMP\|-\|458 | — | OI-33, OI-15.27 | `InvoiceLineDraft.InsEmp`, display-only; `MoreDetailsResponse.Lines` `INS_EMP` |
-| Item\|D_INV\|IS_DELETED\|-\|459 | — | OI-15.02 | Written by `insert_lines`; saved-line deletion is blocked (OI-56) |
-| Item\|D_INV\|INFO_CENTER_ID\|-\|460 | — | OI-30 | Written by `insert_lines` from the header `info_center_id` (`OperatorContext.InfoCenterId`) |
+| Item\|D_INV\|IS_DELETED\|-\|459 | — | OI-15.02 | Written by `insert_lines` (UNVERIFIED); saved-line deletion is blocked (OI-56) |
+| Item\|D_INV\|INFO_CENTER_ID\|-\|460 | — | OI-30 | Written by `insert_lines` from the header `info_center_id` (`OperatorContext.InfoCenterId`), UNVERIFIED |
 | Item\|D_INV\|REQ_A_STATUS\|-\|461 | — | DR-18, PR-19 | `InvoiceLineDraft.ReqAStatus`, read-only |
 | Trigger\|D_INV\|D_INV\|WHEN-VALIDATE-RECORD\|559 | T052 | DR-16, PR-04 | `LineEntryRules.WarnNotRequested`; pay rate PR-04 |
 | Trigger\|D_INV\|D_INV\|WHEN-NEW-RECORD-INSTANCE\|560 | T053 | N, OI-25 | UI mechanics: per-block permission toggling; permissions not built (OI-25) |
-| Trigger\|D_INV\|D_INV\|WHEN-CREATE-RECORD\|561 | T054 | PR-04 | Payer share inside the package calls of preview and create |
-| Trigger\|D_INV\|D_INV\|PRE-INSERT\|562 | T055 | PR-20, OI-40.03 | Engine `insert_lines` [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2794-2968] |
+| Trigger\|D_INV\|D_INV\|WHEN-CREATE-RECORD\|561 | T054 | PR-04 | Payer share inside the package calls of preview and create (UNVERIFIED) |
+| Trigger\|D_INV\|D_INV\|PRE-INSERT\|562 | T055 | PR-20, OI-40.03 | Engine `insert_lines` [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2794-2968] (UNVERIFIED) |
 | Trigger\|D_INV\|D_INV\|POST-QUERY\|563 | T056 | OI-15.27 | `InvoiceQueries.GetMoreDetails` |
 | Trigger\|D_INV\|D_INV\|PRE-UPDATE\|564 | T057 | OI-56 | Saved-line update blocked (D-36) |
 | Trigger\|D_INV\|D_INV\|KEY-DELREC\|565 | T058 | PR-01, PR-02, PR-03, PR-04, PR-05, PR-06, PR-07, PR-08, OI-56 | Unsaved line: removed from the draft and re-previewed (`InvoiceWorkflowService.Preview`). Saved line of a just-saved invoice: blocked (OI-56, D-36) |
 | Trigger\|D_INV\|D_INV\|PRE-DELETE\|566 | T059 | OI-56 | Saved-line deletion blocked (D-36) |
 | Trigger\|D_INV\|D_INV\|POST-DELETE\|567 | T060 | OI-56 | Saved-line deletion blocked (D-36) |
-| Trigger\|D_INV\|D_INV\|POST-INSERT\|568 | T061 | PR-20, OI-09, OI-31 | Link PR-20 inside `CreateFullInvoice`; locations → queue posting (OI-09, D-14); package consumption blocked (OI-31) |
+| Trigger\|D_INV\|D_INV\|POST-INSERT\|568 | T061 | PR-20, OI-09, OI-31 | Link PR-20 inside `CreateFullInvoice`; locations → queue posting (OI-09, D-14, UNVERIFIED); package consumption blocked (OI-31) |
 | Trigger\|D_INV\|D_INV\|KEY-CREREC\|569 | T062 | OI-56, DR-17 | Blocked on a saved invoice (D-36); unsaved drafts add lines freely (`InvoiceStatePolicy.CanEdit`) |
 | Trigger\|D_INV\|D_INV\|POST-UPDATE\|570 | T063 | OI-56 | Saved-line update blocked (D-36) |
 | Block\|FORM\|T_INV_TRANS_M\|-\|572 | — | DR-17, OI-15.03 | `InvoiceQueries.GetMoreDetails`, read-only |
@@ -867,7 +867,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Item\|TOOL\|PUSH_BUTTON1062\|-\|751 | — | OI-50 | Not rendered: opens another Form |
 | Trigger\|TOOL\|PUSH_BUTTON1062\|WHEN-BUTTON-PRESSED\|752 | T084 | OI-50 | Not built: other Form, out of scope |
 | Item\|TOOL\|DO_IMP2\|-\|754 | — | DR-18, PR-19 | Import requests action: `ImportsController.Requests` |
-| Trigger\|TOOL\|DO_IMP2\|WHEN-BUTTON-PRESSED\|755 | T085 | DR-18, PR-19, OI-15.08 | `RequestImportRules.RequireDoctor`, `RequestImportRules.Notices` (D-26); `InvoiceQueries.GetSelectedRequestRows`; `BilImportGateway.ImportRequestLines` with approval mode 0 / 1 (D-12) |
+| Trigger\|TOOL\|DO_IMP2\|WHEN-BUTTON-PRESSED\|755 | T085 | DR-18, PR-19, PR-16, OI-15.08 | `RequestImportRules.RequireDoctor`, `RequestImportRules.Notices` (D-26); `InvoiceQueries.GetSelectedRequestRows`; `BilImportGateway.ImportRequestLines` with approval mode 0 / 1 (D-12); standard offer on imported cash lines → PR-16 inside the package at preview and create (UNVERIFIED) |
 | Item\|TOOL\|PUSH_BUTTON934\|-\|757 | — | N | UI mechanics: canvas switch, the More details action of Web `App` |
 | Trigger\|TOOL\|PUSH_BUTTON934\|WHEN-BUTTON-PRESSED\|758 | T086 | N | UI mechanics: canvas switch, realised as the Web `App` screen toggle |
 | Item\|TOOL\|CMD_LANG\|-\|760 | — | N | UI mechanics: language toggle, not rendered (D-18) |
@@ -896,14 +896,14 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | ModuleParameter\|FORM\|NEW_PAT_INV\|-\|815 | — | N | Unused |
 | ModuleParameter\|FORM\|THE_DOC\|-\|816 | — | DR-11 | `InvoiceEntryParameters.TheDoc` → `DoctorSelectionRules.Validate` |
 | ModuleParameter\|FORM\|COMP_TYPE\|-\|817 | — | PR-04 | `InvoiceEntryParameters.CompType`; line payer rate is payer share inside the package (UNVERIFIED) |
-| ModuleParameter\|FORM\|PAY_VAT_CO\|-\|818 | — | PR-05 | `InvoiceEntryParameters.PayVatCo`; VAT flags inside the package |
+| ModuleParameter\|FORM\|PAY_VAT_CO\|-\|818 | — | PR-05 | `InvoiceEntryParameters.PayVatCo`; VAT flags inside the package (UNVERIFIED) |
 | ModuleParameter\|FORM\|FROM_CHK\|-\|819 | — | N | UI mechanics: item toggling |
 | ModuleParameter\|FORM\|CLAIM_FLAG\|-\|820 | — | DR-10, DR-20, DR-25, OI-24 | `InvoiceEntryParameters.ClaimFlag` → `ClaimNumberRule.Build`, `InvoiceDefaultsRule.Apply`; also filters the blocked `SERVICES` LOV |
 | ModuleParameter\|FORM\|CASH_OR_CREDIT\|-\|821 | — | DR-24 | `InvoiceEntryParameters.CashOrCredit` → `PayTypeSelectionRule.Decide` |
 | ModuleParameter\|FORM\|DO_REVIEW\|-\|822 | — | DR-25 | `InvoiceEntryParameters.DoReview` → `VisitLineRule.Choose` |
 | ModuleParameter\|FORM\|THE_COUNTRY\|-\|823 | — | N | Unused |
 | ModuleParameter\|FORM\|CLAIM_DATE\|-\|824 | — | N | Unused |
-| ModuleParameter\|FORM\|PAY_VAT\|-\|825 | — | PR-05 | `InvoiceEntryParameters.PayVat`; VAT flags inside the package |
+| ModuleParameter\|FORM\|PAY_VAT\|-\|825 | — | PR-05 | `InvoiceEntryParameters.PayVat`; VAT flags inside the package (UNVERIFIED) |
 | ModuleParameter\|FORM\|ONE_VISIT_960\|-\|826 | — | OI-32 | `InvoiceEntryParameters.OneVisit960`; claim / revisit sub-rule blocked |
 | ModuleParameter\|FORM\|DIRECT_CALL\|-\|827 | — | N | UI mechanics: item toggling |
 | ModuleParameter\|FORM\|X422_APPROV_CHECK\|-\|828 | — | DR-14, DR-18, PR-19 | `InvoiceEntryParameters.X422ApprovCheck` → `LineEntryRules.ValidateApproval`, `RequestImportRules.Notices`, `BilImportGateway.ApprovalCheckMode` (D-12) |
@@ -955,10 +955,10 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | ProgramUnit\|FORM\|CLEAR_ALL_MASTER_DETAILS\|-\|973 | PU14 | N | UI mechanics: master-detail coordination |
 | ProgramUnit\|FORM\|NEW_WATING_NOXXXXX\|-\|974 | PU15 | N | Dead code: never called |
 | ProgramUnit\|FORM\|MAKE_CASH\|-\|975 | PU16 | DR-24, PR-24, OI-03, OI-24 | Pay type `PayTypeSelectionRule.Decide`; payer context PR-24 (OI-03); price plan not built (OI-24) |
-| ProgramUnit\|FORM\|DO_DISC\|-\|976 | PU17 | PR-02, DR-13 | Engine discount calculation; its message is covered by `LineEntryRules.ValidateDiscountType` |
+| ProgramUnit\|FORM\|DO_DISC\|-\|976 | PU17 | PR-02, DR-13 | Engine discount calculation (UNVERIFIED); its message is covered by `LineEntryRules.ValidateDiscountType` |
 | ProgramUnit\|FORM\|GET_NOTES\|-\|977 | PU18 | OI-09 | Queue posting stage (UNVERIFIED) |
-| ProgramUnit\|FORM\|OKA\|-\|978 | PU19 | PR-03, PR-04, PR-16, PR-25, DR-23, OI-31, OI-32 | Package pricing and offers; `AddToListRule.Derive` (D-37); untraced sub-rules → `OpenItemGate.Evaluate` blockers (OI-32); consumption blocked (OI-31) |
-| ProgramUnit\|FORM\|ROUND_FOR_CASH\|-\|979 | PU20 | PR-07 | Engine `cash_collected` |
+| ProgramUnit\|FORM\|OKA\|-\|978 | PU19 | PR-03, PR-04, DR-23, OI-31, OI-32 | Package pricing context: discountability PR-03 and payer share PR-04 inside the package (UNVERIFIED); `AddToListRule.Derive` (D-37); untraced sub-rules → `OpenItemGate.Evaluate` blockers (OI-32); consumption blocked (OI-31); no offer branch: standard offers are traced to T066 and T085 |
+| ProgramUnit\|FORM\|ROUND_FOR_CASH\|-\|979 | PU20 | PR-07 | Engine `cash_collected` (UNVERIFIED) |
 | ProgramUnit\|FORM\|CHG_PRMPT2\|-\|980 | PU21 | N, OI-43 | UI mechanics: prompt translation |
 | ProgramUnit\|FORM\|CHK_LIC_SEC\|-\|981 | PU22 | N | Dead code: never called |
 | ProgramUnit\|FORM\|CHK_ADV_CLASS\|-\|982 | PU23 | PR-04, OI-23, OI-32 | Share and advanced classes PR-04; advanced-class deductible blocked (OI-23, D-51); cash card blocked (OI-32) |
@@ -994,7 +994,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Trigger\|FORM\|FORM\|WHEN-FORM-NAVIGATE\|1099 | T006 | N | UI mechanics: form navigation state |
 | Trigger\|FORM\|FORM\|ON-CLEAR-DETAILS\|1100 | T007 | N | UI mechanics: the API returns header and lines together |
 | Trigger\|FORM\|FORM\|WHEN-WINDOW-ACTIVATED\|1101 | T008 | N | UI mechanics: window activation state |
-| Trigger\|FORM\|FORM\|PRE-COMMIT\|1102 | T009 | DR-02, PR-14 | `InvoiceDetailRules.RequireDetails`; engine -20903 re-checks |
+| Trigger\|FORM\|FORM\|PRE-COMMIT\|1102 | T009 | DR-02, PR-14 | `InvoiceDetailRules.RequireDetails`; engine -20903 re-checks (UNVERIFIED) |
 | VisualAttribute\|FORM\|DISPLAY\|-\|1103 | — | N, OI-54 | UI mechanics: styling inherited from `BUSINESSXP.olb` |
 | VisualAttribute\|FORM\|REQUIRED\|-\|1104 | — | N, OI-54 | UI mechanics: styling inherited from `BUSINESSXP.olb` |
 | VisualAttribute\|FORM\|NORMAL\|-\|1105 | — | N, OI-54 | UI mechanics: styling inherited from `BUSINESSXP.olb` |
@@ -1078,7 +1078,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Billing.Invoicing.Api.Services.InvoiceWorkflowService.ImportRequests | T085 (DR-18, PR-19) |
 | Billing.Invoicing.Api.Services.InvoiceWorkflowService.ImportVisitLine | T029, T030 (DR-25, PR-21) |
 | Billing.Invoicing.Api.Services.InvoiceWorkflowService.NewDraft | T015, T022, T003 (DR-20, DR-24; OI-31) |
-| Billing.Invoicing.Api.Services.InvoiceWorkflowService.Preview | PU10 `SMALL_CALC` (PR-01 … PR-08; DR-08, DR-09; OI-23) |
+| Billing.Invoicing.Api.Services.InvoiceWorkflowService.Preview | PU10 `SMALL_CALC` (T058, T060, T065 … T073; PR-01 … PR-08; DR-08, DR-09; OI-23) |
 | Billing.Invoicing.Api.Services.InvoiceWorkflowService.SendSms | T081 (OI-12, OI-45) |
 | Billing.Invoicing.Api.Services.InvoiceWorkflowService.TransferStock | T091 (OI-10, OI-44) |
 | Billing.Invoicing.Api.Services.InvoiceWorkflowService.Update | T013, T017, T057 … T060, T062, T063 (OI-56) |
@@ -1097,7 +1097,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Billing.Invoicing.Data.Commands.PatientTransferCommand | T011 (DR-21) |
 | Billing.Invoicing.Data.Commands.PatientTransferCommand.ClearReceptionTransfer | T011 (DR-21, D-44) |
 | Billing.Invoicing.Data.Errors.DataFailure | Infrastructure: error-contract payload (status, kind, number, package, field, legacy text, open item) |
-| Billing.Invoicing.Data.Errors.OracleErrorCatalog | Infrastructure: catalogued rows of the §8 register, matched on package, number and prefix (D-24) |
+| Billing.Invoicing.Data.Errors.OracleErrorCatalog | Infrastructure: catalogued rows of the §8 register, matched on package, number and prefix (D-24), including T041's legacy text for -20914 |
 | Billing.Invoicing.Data.Errors.OracleErrorCatalog.Find | Infrastructure: three-part catalogue lookup (D-24) |
 | Billing.Invoicing.Data.Errors.OracleErrorInfo | Infrastructure: Oracle error record copied from `OracleException` |
 | Billing.Invoicing.Data.Errors.OracleErrorParser | Infrastructure: ORA stack parsing into number, text and frames |
@@ -1119,8 +1119,8 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Billing.Invoicing.Data.Plsql.BilImportGateway.ImportRequestLines | T085 (PR-19) |
 | Billing.Invoicing.Data.Plsql.BilInvoiceApiGateway | PU10 `SMALL_CALC`, PU17 `DO_DISC`, PU23 `CHK_ADV_CLASS`, PU19 `OKA`, PU20 `ROUND_FOR_CASH`, T009, T011, T016, T061, T079, T089, T093 |
 | Billing.Invoicing.Data.Plsql.BilInvoiceApiGateway.BuildPrintUrl | T079, PU25 (OI-11) |
-| Billing.Invoicing.Data.Plsql.BilInvoiceApiGateway.CalculatePreview | PU10 `SMALL_CALC`, PU17 `DO_DISC`, PU23 `CHK_ADV_CLASS`, PU19 `OKA`, PU20 `ROUND_FOR_CASH` (PR-01 … PR-08, PR-13 … PR-16, PR-24) |
-| Billing.Invoicing.Data.Plsql.BilInvoiceApiGateway.CreateFullInvoice | T009, T011, T016, T061, T079 (PR-09 … PR-14, PR-20, PR-22 … PR-25) |
+| Billing.Invoicing.Data.Plsql.BilInvoiceApiGateway.CalculatePreview | PU10 `SMALL_CALC`, PU17 `DO_DISC`, PU23 `CHK_ADV_CLASS`, PU19 `OKA`, PU20 `ROUND_FOR_CASH`; T067, T070, T071 re-preview (PR-01 … PR-08, PR-13 … PR-15, PR-24); T066 standard-offer branch, repeated by T085 on imported request lines (PR-16) |
+| Billing.Invoicing.Data.Plsql.BilInvoiceApiGateway.CreateFullInvoice | T009, T011, T016, T061, T079; T003 shift gate as PR-10 (PR-09 … PR-14, PR-20, PR-22 … PR-25) |
 | Billing.Invoicing.Data.Plsql.BilInvoiceApiGateway.GetBundledOfferLines | T093 (PR-17) |
 | Billing.Invoicing.Data.Plsql.BilInvoiceApiGateway.GetPackageLines | T089 (PR-18, D-38) |
 | Billing.Invoicing.Data.Plsql.BilInvoiceApiGateway.SealDraftDate | T015 (`INVDATE := sysdate` at record creation): seal of the draft date issued with the draft, under `Invoicing:DraftSealKey` (D-39) |
@@ -1182,7 +1182,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Billing.Invoicing.Data.Queries.LovQueries.Company | LOV `COMPANY1_2`, record group `COMPANY` (OI-15.12) |
 | Billing.Invoicing.Data.Queries.LovQueries.Doc | LOV `DOC`, record group `DOC` (OI-15.16, OI-15.17) |
 | Billing.Invoicing.Data.Queries.LovQueries.Offers | LOV `OFFERS`, record group `OFFERS` (OI-15.19) |
-| Billing.Invoicing.Data.Queries.LovQueries.PayTypes | LOVs `PAY_TYPE1`, `PAY_TYPE2`, record group `PAY_TYPE` (OI-15.15) |
+| Billing.Invoicing.Data.Queries.LovQueries.PayTypes | LOVs `PAY_TYPE1`, `PAY_TYPE2`, record group `PAY_TYPE` (OI-15.15); T044 payment-type name display |
 | Billing.Invoicing.Data.Queries.LovQueries.ReservNo | LOV `RESERV_NO` (T049), record group `RESERV_NO` (OI-15.18) |
 | Billing.Invoicing.Data.Queries.LovQueries.SubCompany | LOV `SUB_COMPANY`, record group `SUB_COMP` (OI-15.13) |
 | Billing.Invoicing.Data.Queries.LovQueries.TheClass | LOV `THE_CLASS`, record group `THE_CLASS` (OI-15.14) |
@@ -1204,7 +1204,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Billing.Invoicing.Domain.Model.VisitLineChoice | T029 visit-line branches (DR-25) |
 | Billing.Invoicing.Domain.Model.VisitLineChoice.FixedService | T029 service '2000' branch (DR-25) |
 | Billing.Invoicing.Domain.Rules.AddToListRule | DR-23 (T029, T066, PU19 `OKA`) |
-| Billing.Invoicing.Domain.Rules.AddToListRule.Derive | DR-23 (T029, T066, PU19 `OKA`) |
+| Billing.Invoicing.Domain.Rules.AddToListRule.Derive | DR-23 (T029, T066, T089, PU19 `OKA`) |
 | Billing.Invoicing.Domain.Rules.ClaimNumberRule | DR-10 (T029) |
 | Billing.Invoicing.Domain.Rules.ClaimNumberRule.Build | DR-10 (T029) |
 | Billing.Invoicing.Domain.Rules.ClinicSuitabilityRules | DR-04 (T031) |
@@ -1227,7 +1227,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Billing.Invoicing.Domain.Rules.LineEntryRules | DR-12 … DR-16 (T068, T077, T078, T074, T066, T052) |
 | Billing.Invoicing.Domain.Rules.LineEntryRules.RequireService | DR-15 (T066) |
 | Billing.Invoicing.Domain.Rules.LineEntryRules.ValidateApproval | DR-14 (T074) |
-| Billing.Invoicing.Domain.Rules.LineEntryRules.ValidateDiscountType | DR-13 (T077, T078) |
+| Billing.Invoicing.Domain.Rules.LineEntryRules.ValidateDiscountType | DR-13 (T077, T078; PU17 `DO_DISC` message) |
 | Billing.Invoicing.Domain.Rules.LineEntryRules.ValidateQuantity | DR-12 (T068) |
 | Billing.Invoicing.Domain.Rules.LineEntryRules.WarnNotRequested | DR-16 (T052) |
 | Billing.Invoicing.Domain.Rules.PackageImportRules | DR-19 (T089) |
@@ -1240,7 +1240,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Billing.Invoicing.Domain.Rules.PaymentAllocationRules.AllocateSecondAmount | DR-07 (T042) |
 | Billing.Invoicing.Domain.Rules.PaymentAllocationRules.DefaultFirstAmount | DR-07 (T065) |
 | Billing.Invoicing.Domain.Rules.PaymentAllocationRules.Refund | DR-08 (PU30, T043) |
-| Billing.Invoicing.Domain.Rules.PaymentAllocationRules.ResetAfterDiscountChange | DR-07 (T039) |
+| Billing.Invoicing.Domain.Rules.PaymentAllocationRules.ResetAfterDiscountChange | DR-07 (T039, T041) |
 | Billing.Invoicing.Domain.Rules.PaymentAllocationRules.TotalCollected | DR-09 (`CASH_COLLECTED` formula) |
 | Billing.Invoicing.Domain.Rules.ReceptionTransferRule | DR-21 (T011) |
 | Billing.Invoicing.Domain.Rules.ReceptionTransferRule.ShouldClear | DR-21 (T011, D-44) |
@@ -1250,7 +1250,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Billing.Invoicing.Domain.Rules.VisitLineRule | DR-25 (T029) |
 | Billing.Invoicing.Domain.Rules.VisitLineRule.Choose | DR-25 (T029) |
 | Billing.Invoicing.Domain.Workflow.InvoiceStatePolicy | DR-17 (T010, T020, T021, T062); OI-56 |
-| Billing.Invoicing.Domain.Workflow.InvoiceStatePolicy.CanDelete | DR-17 (T020, T021) |
+| Billing.Invoicing.Domain.Workflow.InvoiceStatePolicy.CanDelete | DR-17 (T020, T021; T019, whose detail delete never runs) |
 | Billing.Invoicing.Domain.Workflow.InvoiceStatePolicy.CanEdit | DR-17 (T010, T062); OI-56 |
 | Billing.Invoicing.Domain.Workflow.OpenItemGate | OI-32 conditions of PU19 `OKA`, T066, PU23 `CHK_ADV_CLASS`; OI-31; the OI-23 deductible condition (D-51) |
 | Billing.Invoicing.Domain.Workflow.OpenItemGate.Evaluate | OI-32, OI-31 and OI-23 conditions (PU19 `OKA`, T066, PU23 `CHK_ADV_CLASS`, T061; D-51, D-52) |
@@ -1281,6 +1281,7 @@ Recorded, not fixed; the Form export and the packages stay unchanged.
 - **Dead company-type branches:** T026 tests `V_type=1`, but `V_type` is never assigned, so only "company 0 → cash, otherwise credit" is live [05_Complex/Inv_Small_Cash.xml:27] (DR-24).
 - **Unused parameter:** `PARAMETER.LESS_PAYMENT_970` is filled in T003 and never read [05_Complex/Inv_Small_Cash.xml:844, 1096].
 - **Commented-out messages:** T044's 'Please select payment type' and 'You can select uncollected with credit invoice and consultaion only' sit inside comments, so they are not rules [05_Complex/Inv_Small_Cash.xml:87] (D-27).
-- **PFLAG at noon:** T015 / T025 yield AM at 12:00:00 – 12:00:59; the engine yields PM [05_Complex/Inv_Small_Cash.xml:24, 367], [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:455-467] (D-06).
-- **Final-discount percent base:** T039 uses `PAT_PAYX`; the engine uses total net [05_Complex/Inv_Small_Cash.xml:74], [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1234-1262] (D-07).
-- **Tendered cash:** the engine stores `cash_payed = cash_collected` [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2766]; the Form's tendered `CASH_PAYED` and `REUND` are not persisted (OI-33).
+- **PFLAG at noon:** T015 / T025 yield AM at 12:00:00 – 12:00:59; the engine yields PM [05_Complex/Inv_Small_Cash.xml:24, 367], [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:455-467] (D-06, UNVERIFIED).
+- **Final-discount percent base:** T039 uses `PAT_PAYX`; the engine uses total net [05_Complex/Inv_Small_Cash.xml:74], [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1234-1262] (D-07, UNVERIFIED).
+- **Tendered cash:** the engine stores `cash_payed = cash_collected` [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2766] (UNVERIFIED); the Form's tendered `CASH_PAYED` and `REUND` are not persisted (OI-33).
+- **-20904 skipped on ordinary lines:** `assert_lines_valid` raises -20904 only when `trim_to_null(serviceid) is null and not (offer_type = 0 and upper_trim_to_null(offer_line_role) = 'PARENT')` [05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:557-563] (UNVERIFIED). On an ordinary line `offer_type` and `offer_line_role` are both null, so the parenthesised test is NULL, `not` NULL is NULL and the line is not rejected (UNVERIFIED). It continues into `calculate_lines` and the missing `bil_service_context` (OI-04), so its outcome is UNVERIFIED. -20904 is reachable only when `offer_type` is set and not 0, or `offer_line_role` is set and not 'PARENT', as in the PR-14 fixture's service-missing case (`offerType` 1, `offerLineRole` 'SERVICE') (UNVERIFIED). The package stays unchanged; the target's guard is DR-15 'You Must Select Value' (T066, `LineEntryRules.RequireService`), run on line validation and in the create pre-flight (D-04).

@@ -21,7 +21,6 @@ public sealed class BilInvoiceApiGateway : IBilInvoiceApiGateway
     private const string AutoNo = "N";
 
     private const string MaxOutputLinesKey = "Invoicing:MaxOutputLines";
-    private const string CommandTimeoutSecondsKey = "Invoicing:CommandTimeoutSeconds";
 
     private const string PreviewLineCountName = "pl_count";
     private const string EngineLineCountName = "el_count";
@@ -40,7 +39,7 @@ public sealed class BilInvoiceApiGateway : IBilInvoiceApiGateway
     /// <summary>Stores the data-layer settings and the draft-seal key; opens nothing.</summary>
     /// <param name="options">Command timeout, OUT-array capacity and draft-seal key applied to every call.</param>
     /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
-    /// <exception cref="ArgumentOutOfRangeException"><see cref="InvoicingDataOptions.MaxOutputLines"/> or <see cref="InvoicingDataOptions.CommandTimeoutSeconds"/> is below 1.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><see cref="InvoicingDataOptions.MaxOutputLines"/> is below 1, or <see cref="InvoicingDataOptions.CommandTimeoutSeconds"/> is below 1 or above <see cref="InvoicingDataOptions.MaxCommandTimeoutSeconds"/>.</exception>
     /// <exception cref="ArgumentException"><see cref="InvoicingDataOptions.DraftSealKey"/> is set but is not base64 of at least <see cref="MinDraftSealKeyBytes"/> bytes.</exception>
     public BilInvoiceApiGateway(InvoicingDataOptions options)
     {
@@ -54,13 +53,7 @@ public sealed class BilInvoiceApiGateway : IBilInvoiceApiGateway
                 $"{MaxOutputLinesKey} ({nameof(InvoicingDataOptions)}.{nameof(InvoicingDataOptions.MaxOutputLines)}) must be at least 1.");
         }
 
-        if (options.CommandTimeoutSeconds < 1)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(options),
-                options.CommandTimeoutSeconds,
-                $"{CommandTimeoutSecondsKey} ({nameof(InvoicingDataOptions)}.{nameof(InvoicingDataOptions.CommandTimeoutSeconds)}) must be at least 1.");
-        }
+        options.EnsureCommandTimeout(nameof(options));
 
         _options = options;
         _draftSealKey = DraftSealKeyFrom(options.DraftSealKey, nameof(options));

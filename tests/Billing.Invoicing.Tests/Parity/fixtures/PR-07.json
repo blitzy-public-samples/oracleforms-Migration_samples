@@ -26,12 +26,11 @@
           { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": {} }
         ],
         "context": [
-          { "package": "bil_price_rule", "operation": "resolve_price", "field": "billing_price", "value": 250.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2428" },
-          { "package": "bil_service_context", "operation": "get_context", "field": "curr_code", "value": "SAR", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2427" },
-          { "package": "bil_service_context", "operation": "get_context", "field": "vat_rate", "value": 0, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1189" },
-          { "package": "bil_patient_context", "operation": "get_context", "field": "pay_vat", "value": 1, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1213" },
-          { "package": "bil_class_rule", "operation": "resolve_share", "field": "the_pay", "value": 250.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2016" },
-          { "package": "bil_class_rule", "operation": "resolve_share", "field": "the_comp", "value": 0.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2016" }
+          { "name": "bil_price_rule.billing_price", "value": 250.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2428" },
+          { "name": "bil_service_context.curr_code", "value": "SAR", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2427" },
+          { "name": "bil_service_context.vat_rate", "value": 0, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1189" },
+          { "name": "bil_class_rule.the_pay", "value": 250.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2016" },
+          { "name": "bil_class_rule.the_comp", "value": 0.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2016" }
         ]
       },
       "expected": {
@@ -52,15 +51,15 @@
       "requires": {
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "V_PAT_DATA", "key": { "PATIENTNO": "990000001" }, "columns": { "PAY_VAT": "Y" } },
           { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": {} }
         ],
         "context": [
-          { "package": "bil_price_rule", "operation": "resolve_price", "field": "billing_price", "value": 300.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2428" },
-          { "package": "bil_service_context", "operation": "get_context", "field": "curr_code", "value": "SAR", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2427" },
-          { "package": "bil_service_context", "operation": "get_context", "field": "vat_rate", "value": 15, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1189" },
-          { "package": "bil_patient_context", "operation": "get_context", "field": "pay_vat", "value": 1, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1213" },
-          { "package": "bil_class_rule", "operation": "resolve_share", "field": "the_pay", "value": 300.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2016" },
-          { "package": "bil_class_rule", "operation": "resolve_share", "field": "the_comp", "value": 0.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2016" }
+          { "name": "bil_price_rule.billing_price", "value": 300.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2428" },
+          { "name": "bil_service_context.curr_code", "value": "SAR", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2427" },
+          { "name": "bil_service_context.vat_rate", "value": 15, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1189" },
+          { "name": "bil_class_rule.the_pay", "value": 300.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2016" },
+          { "name": "bil_class_rule.the_comp", "value": 0.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2016" }
         ]
       },
       "expected": {
@@ -81,15 +80,15 @@
       "requires": {
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "V_PAT_DATA", "key": { "PATIENTNO": "990000001" }, "columns": { "PAY_VAT": "Y" } },
           { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": {} }
         ],
         "context": [
-          { "package": "bil_price_rule", "operation": "resolve_price", "field": "billing_price", "value": 500.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2428" },
-          { "package": "bil_service_context", "operation": "get_context", "field": "curr_code", "value": "SAR", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2427" },
-          { "package": "bil_service_context", "operation": "get_context", "field": "vat_rate", "value": 15, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1189" },
-          { "package": "bil_patient_context", "operation": "get_context", "field": "pay_vat", "value": 1, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1213" },
-          { "package": "bil_class_rule", "operation": "resolve_share", "field": "the_pay", "value": 100.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2016" },
-          { "package": "bil_class_rule", "operation": "resolve_share", "field": "the_comp", "value": 400.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2016" }
+          { "name": "bil_price_rule.billing_price", "value": 500.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2428" },
+          { "name": "bil_service_context.curr_code", "value": "SAR", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2427" },
+          { "name": "bil_service_context.vat_rate", "value": 15, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1189" },
+          { "name": "bil_class_rule.the_pay", "value": 100.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2016" },
+          { "name": "bil_class_rule.the_comp", "value": 400.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2016" }
         ]
       },
       "expected": {
@@ -113,13 +112,11 @@
           { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": {} }
         ],
         "context": [
-          { "package": "bil_price_rule", "operation": "resolve_price", "field": "billing_price", "value": 500.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2428" },
-          { "package": "bil_service_context", "operation": "get_context", "field": "curr_code", "value": "SAR", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2427" },
-          { "package": "bil_service_context", "operation": "get_context", "field": "vat_rate", "value": 15, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1189" },
-          { "package": "bil_service_context", "operation": "get_context", "field": "non_medical", "value": 0, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1190" },
-          { "package": "bil_patient_context", "operation": "get_context", "field": "pay_vat", "value": 0, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1213" },
-          { "package": "bil_class_rule", "operation": "resolve_share", "field": "the_pay", "value": 0.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2016" },
-          { "package": "bil_class_rule", "operation": "resolve_share", "field": "the_comp", "value": 500.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2016" }
+          { "name": "bil_price_rule.billing_price", "value": 500.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2428" },
+          { "name": "bil_service_context.curr_code", "value": "SAR", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2427" },
+          { "name": "bil_service_context.vat_rate", "value": 15, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1189" },
+          { "name": "bil_class_rule.the_pay", "value": 0.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2016" },
+          { "name": "bil_class_rule.the_comp", "value": 500.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2016" }
         ]
       },
       "expected": {

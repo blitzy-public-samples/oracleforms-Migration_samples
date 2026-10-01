@@ -648,4 +648,3 @@ public sealed class LookupQueries : ILookupQueries
         public decimal? ADD_TO_QUE { get; set; }
     }
 }
-

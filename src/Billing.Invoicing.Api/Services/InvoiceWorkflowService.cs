@@ -310,9 +310,9 @@ public sealed class InvoiceWorkflowService
             sanitized.Lines, LineLists(sanitized.Lines, preview, context.Preload), header, operatorContext, cancellationToken);
         var profiles = await BuildProfiles(sanitized.Lines, lists, profileReads, cancellationToken);
         var findings = new Findings();
-        var isDirect = CompanyIsDirect(header, cancellationToken);
+        var isDirect = profileReads.CompanyIsDirect(header, cancellationToken);
         await AddPriceOverrideRules(
-            findings, header, sanitized.Lines, profiles.ByLine, preview, cancellationToken, isDirect: isDirect);
+            findings, header, sanitized.Lines, profiles.ByLine, preview, isDirect, cancellationToken);
         var priceEditableClientIds = new List<string>();
         for (var index = 0; index < sanitized.Lines.Count; index++)
         {
@@ -458,7 +458,7 @@ public sealed class InvoiceWorkflowService
                 lines, succeeded, context.Preload, header.ClaimNo, profileReads, cancellationToken);
             if (!findings.IsBlocking
                 && !LineRulesBlock(header, lines, Enumerable.Range(0, lines.Count), lineContext.Preview, x422, lineContext.Profiles, requested)
-                && !await PriceOverridesBlock(header, lines, lineContext.Profiles.ByLine, cancellationToken)
+                && !await PriceOverridesBlock(header, lines, lineContext.Profiles.ByLine, profileReads, cancellationToken)
                 && !DiscountBlocks(header, maxDisc, draft.DiscountLimitChoice))
             {
                 throw;
@@ -492,7 +492,8 @@ public sealed class InvoiceWorkflowService
                 findings, header, lines[index], profiles.ByLine[index], lineContext.Preview, x422, RequestedFor(requested, profiles.Lists, index));
         }
 
-        await AddPriceOverrideRules(findings, header, lines, profiles.ByLine, lineContext.Preview, cancellationToken);
+        await AddPriceOverrideRules(
+            findings, header, lines, profiles.ByLine, lineContext.Preview, profileReads.CompanyIsDirect(header, cancellationToken), cancellationToken);
 
         var gateIds = new SortedSet<string>(
             OpenItemGate.Evaluate(header, profiles.TopLevel, gate.CardId, gate.MaxDeductable, gate.UseAdvanced, parameters),
@@ -1484,7 +1485,7 @@ public sealed class InvoiceWorkflowService
             if (!findings.IsBlocking
                 && !LineRulesBlock(header, draft.Lines, new[] { index }, lineContext.Preview, x422, lineContext.Profiles, requested)
                 && !await PriceOverridesBlock(
-                    header, new[] { draft.Lines[index] }, new[] { lineContext.Profiles.ByLine[index] }, cancellationToken))
+                    header, new[] { draft.Lines[index] }, new[] { lineContext.Profiles.ByLine[index] }, profileReads, cancellationToken))
             {
                 throw;
             }
@@ -1493,9 +1494,9 @@ public sealed class InvoiceWorkflowService
         var profiles = lineContext.Profiles;
         var profile = profiles.ByLine[index];
         AddLineRules(findings, header, line, profile, lineContext.Preview, x422, RequestedFor(requested, profiles.Lists, index));
-        var isDirect = CompanyIsDirect(header, cancellationToken);
+        var isDirect = profileReads.CompanyIsDirect(header, cancellationToken);
         await AddPriceOverrideRules(
-            findings, header, new[] { line }, new[] { profile }, lineContext.Preview, cancellationToken, isDirect: isDirect);
+            findings, header, new[] { line }, new[] { profile }, lineContext.Preview, isDirect, cancellationToken);
         var priceEditable = await PriceEditable(header, line, profile, lineContext.Preview, isDirect);
         if (lineContext.Resolved)
         {
@@ -1571,6 +1572,7 @@ public sealed class InvoiceWorkflowService
         InvoiceHeaderDraft header,
         IReadOnlyList<InvoiceLineDraft> lines,
         IReadOnlyList<ServiceProfile?> profiles,
+        ProfileReads profileReads,
         CancellationToken cancellationToken)
     {
         var known = Enumerable.Range(0, lines.Count).Where(index => profiles[index] is not null).ToArray();
@@ -1586,6 +1588,7 @@ public sealed class InvoiceWorkflowService
             known.Select(index => lines[index]).ToArray(),
             known.Select(index => profiles[index]).ToArray(),
             null,
+            profileReads.CompanyIsDirect(header, cancellationToken),
             cancellationToken);
         return scratch.IsBlocking;
     }
@@ -1626,10 +1629,9 @@ public sealed class InvoiceWorkflowService
         IReadOnlyList<InvoiceLineDraft> lines,
         IReadOnlyList<ServiceProfile?> profiles,
         PreviewResult? preview,
-        CancellationToken cancellationToken,
-        Lazy<Task<int?>>? isDirect = null)
+        Lazy<Task<int?>> isDirect,
+        CancellationToken cancellationToken)
     {
-        isDirect ??= CompanyIsDirect(header, cancellationToken);
         for (var index = 0; index < lines.Count; index++)
         {
             var line = lines[index];
@@ -1691,11 +1693,6 @@ public sealed class InvoiceWorkflowService
             PriceJudgedPatientNo = Trimmed(draft.Header.PatientNo),
             PriceJudgedCompCode = Trimmed(draft.Header.CompCode),
         };
-
-    private Lazy<Task<int?>> CompanyIsDirect(InvoiceHeaderDraft header, CancellationToken cancellationToken) =>
-        new(() => IsBlank(header.CompCode)
-            ? Task.FromResult<int?>(null)
-            : _lookups.GetCompanyIsDirect(header.CompCode!, cancellationToken));
 
     private static async Task<bool> PriceOverrideAllowed(
         InvoiceHeaderDraft header,
@@ -2032,7 +2029,7 @@ public sealed class InvoiceWorkflowService
             return probe;
         }
 
-        var isDirect = CompanyIsDirect(header, cancellationToken);
+        var isDirect = profileReads.CompanyIsDirect(header, cancellationToken);
         var listsByClientId = ListsByClientId(probe.Lines);
         var firstListId = FirstPreviewList(probe);
         var overrides = manual
@@ -3105,11 +3102,12 @@ public sealed class InvoiceWorkflowService
         };
     }
 
-    /// <summary>Service profiles of one workflow call, read once per price list (a lone service through GetServiceProfile, several through GetServiceProfiles) and kept by list and service id.</summary>
+    /// <summary>Service profiles of one workflow call, read once per price list (a lone service through GetServiceProfile, several through GetServiceProfiles) and kept by list and service id, and its COMPANYS.IS_DIRECT reads, at most one per company code.</summary>
     private sealed class ProfileReads
     {
         private readonly ILookupQueries _lookups;
         private readonly Dictionary<(decimal ListId, string ServiceId), ServiceProfile?> _read = new();
+        private readonly Dictionary<string, Lazy<Task<int?>>> _isDirect = new(StringComparer.Ordinal);
 
         /// <summary>Creates an empty set of reads over the lookups.</summary>
         public ProfileReads(ILookupQueries lookups) => _lookups = lookups;
@@ -3165,5 +3163,23 @@ public sealed class InvoiceWorkflowService
         /// <exception cref="KeyNotFoundException">The service was not loaded on the list.</exception>
         public ServiceProfile? Get(decimal? listId, string? serviceId) =>
             listId is { } list && serviceId is { } service ? _read[(list, service)] : null;
+
+        /// <summary>Returns the deferred COMPANYS.IS_DIRECT read of the header's company, the same one for every call with that company code; a blank company reads as null without a read.</summary>
+        public Lazy<Task<int?>> CompanyIsDirect(InvoiceHeaderDraft header, CancellationToken cancellationToken)
+        {
+            if (IsBlank(header.CompCode))
+            {
+                return new Lazy<Task<int?>>(() => Task.FromResult<int?>(null));
+            }
+
+            var compCode = header.CompCode!;
+            if (!_isDirect.TryGetValue(compCode, out var isDirect))
+            {
+                isDirect = new Lazy<Task<int?>>(() => _lookups.GetCompanyIsDirect(compCode, cancellationToken));
+                _isDirect[compCode] = isDirect;
+            }
+
+            return isDirect;
+        }
     }
 }

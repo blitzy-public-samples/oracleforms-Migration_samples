@@ -1,3 +1,4 @@
+using System.Data;
 using System.Globalization;
 using System.Reflection;
 using System.Text.RegularExpressions;
@@ -115,13 +116,17 @@ public sealed class PatientTransferCommandTests
     public void Command_CarriesTheConfiguredTimeoutAndTheCallersTransactionAndToken()
     {
         var command = new PatientTransferCommand(new InvoicingDataOptions { CommandTimeoutSeconds = ConfiguredTimeoutSeconds });
+        var transaction = new CountingTransaction();
         using var cancellation = new CancellationTokenSource();
 
-        CommandDefinition definition = command.ClearReceptionTransferCommand(PatientNo, null, cancellation.Token);
+        CommandDefinition definition = command.ClearReceptionTransferCommand(PatientNo, transaction, cancellation.Token);
 
         Assert.Equal(ConfiguredTimeoutSeconds, definition.CommandTimeout);
         Assert.Equal(PatientTransferCommand.ClearReceptionTransferSql, definition.CommandText);
-        Assert.Null(definition.Transaction);
+        Assert.Same(transaction, definition.Transaction);
+        Assert.Equal(0, transaction.Commits);
+        Assert.Equal(0, transaction.Rollbacks);
+        Assert.Equal(0, transaction.Disposals);
         Assert.Equal(cancellation.Token, definition.CancellationToken);
 
         object? parameters = definition.Parameters;
@@ -129,6 +134,16 @@ public sealed class PatientTransferCommandTests
         PropertyInfo bind = Assert.Single(parameters.GetType().GetProperties());
         Assert.Equal("patientNo", bind.Name);
         Assert.Equal(PatientNo, bind.GetValue(parameters));
+    }
+
+    [Fact]
+    public void Command_WithoutATransaction_CarriesNoTransaction()
+    {
+        var command = new PatientTransferCommand(new InvoicingDataOptions { CommandTimeoutSeconds = ConfiguredTimeoutSeconds });
+
+        CommandDefinition definition = command.ClearReceptionTransferCommand(PatientNo, null, CancellationToken.None);
+
+        Assert.Null(definition.Transaction);
     }
 
     /// <summary>Collapses whitespace runs to one space, trims, and upper-cases invariantly.</summary>
@@ -160,5 +175,37 @@ public sealed class PatientTransferCommandTests
         Assert.True(whereIndex >= 0, "WHERE keyword not found.");
 
         return sql[(whereIndex + WhereKeyword.Length)..].TrimEnd(';').Trim();
+    }
+
+    /// <summary>Non-database <see cref="IDbTransaction"/> that counts its commit, rollback and dispose calls.</summary>
+    private sealed class CountingTransaction : IDbTransaction
+    {
+        private int _commits;
+        private int _rollbacks;
+        private int _disposals;
+
+        /// <summary>Number of <see cref="Commit"/> calls.</summary>
+        public int Commits => _commits;
+
+        /// <summary>Number of <see cref="Rollback"/> calls.</summary>
+        public int Rollbacks => _rollbacks;
+
+        /// <summary>Number of <see cref="Dispose"/> calls.</summary>
+        public int Disposals => _disposals;
+
+        /// <summary>Always null; the double has no connection.</summary>
+        public IDbConnection? Connection => null;
+
+        /// <summary>Always <see cref="IsolationLevel.ReadCommitted"/>.</summary>
+        public IsolationLevel IsolationLevel => IsolationLevel.ReadCommitted;
+
+        /// <summary>Counts the call.</summary>
+        public void Commit() => _commits++;
+
+        /// <summary>Counts the call.</summary>
+        public void Rollback() => _rollbacks++;
+
+        /// <summary>Counts the call.</summary>
+        public void Dispose() => _disposals++;
     }
 }

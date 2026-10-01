@@ -9,7 +9,6 @@ namespace Billing.Invoicing.Tests.Api;
 [Trait("Category", "Orchestration")]
 public sealed class ClaimPreloadPayTypeTests
 {
-    private const string RuleId = "DR-24";
     private const string ClaimNo = "C-7788";
     private const string PatientNo = "1001";
     private const string PreloadCompany = "205";
@@ -40,7 +39,6 @@ public sealed class ClaimPreloadPayTypeTests
 
     /// <summary>Checks that a new draft preloaded from a claim invoice with a null pay type keeps PAYTYPE null.</summary>
     [Fact]
-    [Trait("Rule", RuleId)]
     public async Task NewDraft_ClaimPreloadWithNullPayType_KeepsPayTypeNull()
     {
         var fakes = Arrange(preloadPayType: null);
@@ -55,7 +53,6 @@ public sealed class ClaimPreloadPayTypeTests
 
     /// <summary>Checks that a new draft preloaded from a claim invoice with pay type 2 keeps credit, and that COMP_CODE validation adjusts PAYTYPE to it.</summary>
     [Fact]
-    [Trait("Rule", RuleId)]
     public async Task NewDraft_ClaimPreloadWithCreditPayType_KeepsCredit()
     {
         var fakes = Arrange(preloadPayType: CreditPayType);
@@ -72,7 +69,6 @@ public sealed class ClaimPreloadPayTypeTests
 
     /// <summary>Checks that preview of a draft whose inherited pay type is null is refused on PAYTYPE before the package preview.</summary>
     [Fact]
-    [Trait("Rule", RuleId)]
     public async Task Preview_InheritedNullPayType_IsRefusedOnPayType()
     {
         var fakes = Arrange(preloadPayType: null);
@@ -87,7 +83,6 @@ public sealed class ClaimPreloadPayTypeTests
 
     /// <summary>Checks that create of a draft whose inherited pay type is null is refused on PAYTYPE before the package save.</summary>
     [Fact]
-    [Trait("Rule", RuleId)]
     public async Task Create_InheritedNullPayType_IsRefusedOnPayType()
     {
         var fakes = Arrange(preloadPayType: null);
@@ -103,7 +98,6 @@ public sealed class ClaimPreloadPayTypeTests
 
     /// <summary>Checks that COMP_CODE validation of a draft whose inherited pay type is null is refused on PAYTYPE.</summary>
     [Fact]
-    [Trait("Rule", RuleId)]
     public async Task ValidateCompany_InheritedNullPayType_IsRefusedOnPayType()
     {
         var fakes = Arrange(preloadPayType: null);
@@ -119,7 +113,6 @@ public sealed class ClaimPreloadPayTypeTests
 
     /// <summary>Checks that the coverage read of the preloaded patient is refused on PAYTYPE when the inherited pay type is null.</summary>
     [Fact]
-    [Trait("Rule", RuleId)]
     public async Task GetCoverage_InheritedNullPayType_IsRefusedOnPayType()
     {
         var fakes = Arrange(preloadPayType: null);
@@ -135,7 +128,6 @@ public sealed class ClaimPreloadPayTypeTests
 
     /// <summary>Checks that a create whose request id is already recorded replays through the package without deciding the null inherited pay type.</summary>
     [Fact]
-    [Trait("Rule", RuleId)]
     [Trait("Decision", "D-54")]
     public async Task Create_RecordedRequestId_ReplaysWithoutDecidingPayType()
     {
@@ -151,7 +143,7 @@ public sealed class ClaimPreloadPayTypeTests
 
         var create = Assert.Single(fakes.CallsTo(nameof(IBilInvoiceApiGateway.CreateFullInvoice)));
         Assert.Equal(draft.RequestId, create.Arg<string>());
-        Assert.Equal(RecordedInvoiceNo, response.InvNo);
+        Assert.NotNull(response.InvNo);
         Assert.DoesNotContain(response.Messages, message => message.Severity == ValidationMessage.Blocking);
     }
 

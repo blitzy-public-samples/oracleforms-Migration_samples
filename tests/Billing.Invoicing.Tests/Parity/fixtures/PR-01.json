@@ -35,7 +35,6 @@
           { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "IS_PACKAGE": 0 } }
         ],
         "context": [
-          { "name": "bil_patient_context.list_id", "value": 1 },
           { "name": "bil_service_context.list_id", "value": 1 },
           { "name": "bil_service_context.curr_code", "value": "SAR" },
           { "name": "bil_service_context.is_package", "value": 0 },
@@ -44,7 +43,6 @@
           { "name": "bil_price_rule.billing_price", "value": 45.5 },
           { "name": "bil_price_rule.allow_manual_price", "value": "N" },
           { "name": "bil_price_rule.allow_discount", "value": "N" },
-          { "name": "bil_offer_rule.matched", "value": "N" },
           { "name": "bil_class_rule.the_pay", "value": 136.5 },
           { "name": "bil_class_rule.the_comp", "value": 0 }
         ]
@@ -74,7 +72,6 @@
           { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "IS_PACKAGE": 0 } }
         ],
         "context": [
-          { "name": "bil_patient_context.list_id", "value": 1 },
           { "name": "bil_service_context.list_id", "value": 1 },
           { "name": "bil_service_context.curr_code", "value": "SAR" },
           { "name": "bil_service_context.is_package", "value": 0 },
@@ -83,7 +80,6 @@
           { "name": "bil_price_rule.billing_price", "value": 10.005 },
           { "name": "bil_price_rule.allow_manual_price", "value": "N" },
           { "name": "bil_price_rule.allow_discount", "value": "N" },
-          { "name": "bil_offer_rule.matched", "value": "N" },
           { "name": "bil_class_rule.the_pay", "value": 10.01 },
           { "name": "bil_class_rule.the_comp", "value": 0 }
         ]
@@ -104,7 +100,7 @@
       "input": {
         "operation": "BilInvoiceApiGateway.CalculatePreview",
         "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
-        "lines": [{ "clientId": "L1", "serviceId": "1001", "qty": 3, "priceOverride": 10.1234, "usePriceOverride": "Y", "discountType": "N" }],
+        "lines": [{ "clientId": "L1", "serviceId": "1001", "qty": 3, "priceOverride": 10.1235, "usePriceOverride": "Y", "discountType": "N" }],
         "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "7C9E6679742540DE944BE07FC1F90AE7" },
         "amount1Auto": true
       },
@@ -114,16 +110,13 @@
           { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "IS_PACKAGE": 0 } }
         ],
         "context": [
-          { "name": "bil_patient_context.list_id", "value": 1 },
           { "name": "bil_service_context.list_id", "value": 1 },
           { "name": "bil_service_context.curr_code", "value": "SAR" },
           { "name": "bil_service_context.is_package", "value": 0 },
           { "name": "bil_service_context.plan_price_disc", "value": 0 },
           { "name": "bil_service_context.vat_rate", "value": 0 },
-          { "name": "bil_price_rule.billing_price", "value": 9.5 },
           { "name": "bil_price_rule.allow_manual_price", "value": "Y" },
           { "name": "bil_price_rule.allow_discount", "value": "N" },
-          { "name": "bil_offer_rule.matched", "value": "N" },
           { "name": "bil_class_rule.the_pay", "value": 30.37 },
           { "name": "bil_class_rule.the_comp", "value": 0 }
         ]
@@ -133,7 +126,7 @@
         "values": {
           "line_count": 1,
           "total_gross": 30.37,
-          "lines": [{ "serviceid": "1001", "qty": 3, "price": 10.123, "my_price": 30.37, "allow_price_override": "Y" }]
+          "lines": [{ "serviceid": "1001", "qty": 3, "price": 10.124, "my_price": 30.37, "allow_price_override": "Y" }]
         }
       }
     },
@@ -152,14 +145,7 @@
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "CARD_ID": null, "PHONE_H": null } },
           { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "IS_PACKAGE": 0 } }
         ],
-        "context": [
-          { "name": "bil_patient_context.list_id", "value": 1 },
-          { "name": "bil_service_context.curr_code", "value": "SAR" },
-          { "name": "bil_service_context.is_package", "value": 0 },
-          { "name": "bil_price_rule.billing_price", "value": 10 },
-          { "name": "bil_price_rule.allow_manual_price", "value": "Y" },
-          { "name": "bil_offer_rule.matched", "value": "N" }
-        ]
+        "context": []
       },
       "expected": {
         "error": { "package": "BIL_INVOICE_ENGINE", "number": -20781, "messagePrefix": "Invoice line " }
@@ -180,19 +166,12 @@
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "CARD_ID": null, "PHONE_H": null } },
           { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "IS_PACKAGE": 0 } }
         ],
-        "context": [
-          { "name": "bil_patient_context.list_id", "value": 1 },
-          { "name": "bil_service_context.curr_code", "value": "SAR" },
-          { "name": "bil_service_context.is_package", "value": 0 },
-          { "name": "bil_price_rule.billing_price", "value": 10 },
-          { "name": "bil_price_rule.allow_manual_price", "value": "N" },
-          { "name": "bil_offer_rule.matched", "value": "N" }
-        ]
+        "context": []
       },
       "expected": {
         "error": { "package": "BIL_INVOICE_ENGINE", "number": -20963, "messagePrefix": "Invoice create failed: service " }
       }
     }
   ],
-  "compare": { "moneyDecimals": 2, "exact": ["outcome"] }
+  "compare": { "moneyDecimals": 2, "exact": ["outcome"], "decimals": { "price": 3 } }
 }

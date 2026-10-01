@@ -29,9 +29,7 @@
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } }
         ],
-        "context": [
-          { "package": "BIL_PATIENT_CONTEXT", "operation": "get_context", "values": { "patientno": "990000001", "is_cash": "Y", "list_id": 1 } }
-        ]
+        "context": []
       },
       "expected": { "error": { "package": "BIL_INVOICE_ENGINE", "number": -20903, "messagePrefix": "Invoice create failed: at least one service line is required." } }
     },
@@ -51,9 +49,7 @@
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } }
         ],
-        "context": [
-          { "package": "BIL_PATIENT_CONTEXT", "operation": "get_context", "values": { "patientno": "990000001", "is_cash": "Y", "list_id": 1 } }
-        ]
+        "context": []
       },
       "expected": { "error": { "package": "BIL_INVOICE_ENGINE", "number": -20904, "messagePrefix": "Invoice create failed: service ID is required on line " } }
     },
@@ -73,9 +69,7 @@
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } }
         ],
-        "context": [
-          { "package": "BIL_PATIENT_CONTEXT", "operation": "get_context", "values": { "patientno": "990000001", "is_cash": "Y", "list_id": 1 } }
-        ]
+        "context": []
       },
       "expected": { "error": { "package": "BIL_INVOICE_ENGINE", "number": -20905, "messagePrefix": "Invoice create failed: quantity must be a positive whole number on line " } }
     },
@@ -95,9 +89,7 @@
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } }
         ],
-        "context": [
-          { "package": "BIL_PATIENT_CONTEXT", "operation": "get_context", "values": { "patientno": "990000001", "is_cash": "Y", "list_id": 1 } }
-        ]
+        "context": []
       },
       "expected": { "error": { "package": "BIL_INVOICE_ENGINE", "number": -20905, "messagePrefix": "Invoice create failed: quantity must be a positive whole number on line " } }
     },
@@ -117,9 +109,7 @@
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } }
         ],
-        "context": [
-          { "package": "BIL_PATIENT_CONTEXT", "operation": "get_context", "values": { "patientno": "990000001", "is_cash": "Y", "list_id": 1 } }
-        ]
+        "context": []
       },
       "expected": { "error": { "package": "BIL_INVOICE_ENGINE", "number": -20905, "messagePrefix": "Invoice create failed: quantity must be a positive whole number on line " } }
     },
@@ -141,7 +131,6 @@
           { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
         ],
         "context": [
-          { "package": "BIL_PATIENT_CONTEXT", "operation": "get_context", "values": { "patientno": "990000001", "is_cash": "Y", "list_id": 1 } },
           { "package": "BIL_SERVICE_CONTEXT", "operation": "get_context", "values": { "serviceid": "1001", "curr_code": "SAR", "is_package": 0 } },
           { "package": "BIL_PRICE_RULE", "operation": "resolve_price", "values": { "serviceid": "1001", "billing_price": 100.00 } }
         ]

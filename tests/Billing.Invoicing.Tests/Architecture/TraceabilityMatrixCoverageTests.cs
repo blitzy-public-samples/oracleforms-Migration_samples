@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text.RegularExpressions;
 using System.Xml;
 using System.Xml.Linq;
+using Billing.Invoicing.Domain.Model;
 using Billing.Invoicing.Tests.Oracle;
 
 namespace Billing.Invoicing.Tests.Architecture;
@@ -21,7 +22,11 @@ public sealed class TraceabilityMatrixCoverageTests
     private const string ItemKind = "Item";
     private const string RelationKind = "Relation";
     private const string TriggerKind = "Trigger";
+    private const string ProgramUnitKind = "ProgramUnit";
+    private const string TriggerIdPrefix = "T";
+    private const string ProgramUnitIdPrefix = "PU";
     private const int ExpectedKeyCount = 413;
+    private const int ExpectedOpenItemCount = 58;
 
     private const string KeyHeader = "Key";
     private const string CodesHeader = "Code";
@@ -31,13 +36,17 @@ public sealed class TraceabilityMatrixCoverageTests
     private const string InfrastructurePrefix = "Infrastructure:";
     private const string NotMigratedCode = "N";
     private const string OpenItemCodePrefix = "OI-";
+    private const string DecisionIdPrefix = "D-";
+    private const string AssemblyKeyPrefix = "Billing.";
 
     private const string RuleTrait = "Rule";
     private const string SideEffectsTrait = "SideEffects";
+    private const string CategoryTrait = "Category";
+    private const string DomainParityCategory = "DomainParity";
+    private const string OracleParityCategory = "OracleParity";
     private const string DomainRulePrefix = "DR";
     private const string PackageRulePrefix = "PR";
     private const int RuleCount = 25;
-    private const int CreatePathSmokeTestCount = 1;
 
     private const int ListingCap = 50;
 
@@ -69,14 +78,27 @@ public sealed class TraceabilityMatrixCoverageTests
     private static readonly string[] CreatePathPackageRules =
         ["PR-09", "PR-10", "PR-11", "PR-12", "PR-20", "PR-22", "PR-23", "PR-25"];
 
+    private static readonly string[] CreatePathSmokeTests = [nameof(OracleBindingSmokeTests.Create_BindRoundTrip)];
+
     private static readonly Regex UnescapedPipe = new(@"(?<!\\)\|", RegexOptions.CultureInvariant);
     private static readonly Regex SeparatorCell = new(@"^:?-{3,}:?$", RegexOptions.CultureInvariant);
     private static readonly Regex HeadingLine = new(@"^(#{1,6})\s", RegexOptions.CultureInvariant);
     private static readonly Regex MatrixCode = new(@"^(DR-[0-9]{2}|PR-[0-9]{2}|OI-[0-9]{2}(\.[0-9]{2})?|N)$", RegexOptions.CultureInvariant);
-    private static readonly Regex ConstructIdToken = new(@"\b(T[0-9]{3}|PU[0-9]{2}|DR-[0-9]{2}|PR-[0-9]{2}|OI-[0-9]{2})\b", RegexOptions.CultureInvariant);
+    private static readonly Regex SourceIdToken = new(
+        @"(?<![A-Za-z0-9_])(T[0-9]{3}|PU[0-9]{2}|DR-[0-9]{2}|PR-[0-9]{2}|OI-[0-9]{2}(?:\.[0-9]{2})?|D-[0-9]{2,3})(?![A-Za-z0-9_]|\.[0-9])",
+        RegexOptions.CultureInvariant);
+    private static readonly Regex SourceIdRange = new(
+        @"(?<![A-Za-z0-9_])(T[0-9]{3}|PU[0-9]{2}|DR-[0-9]{2}|PR-[0-9]{2}|OI-[0-9]{2})\s*…\s*(T[0-9]{3}|PU[0-9]{2}|DR-[0-9]{2}|PR-[0-9]{2}|OI-[0-9]{2})(?![A-Za-z0-9_]|\.[0-9])",
+        RegexOptions.CultureInvariant);
+    private static readonly Regex SchemaItemRow = new(@"^\|\s*(OI-[0-9]{2}\.[0-9]{2})\s*\|", RegexOptions.CultureInvariant);
+    private static readonly Regex DecisionRow = new(@"^\|\s*(D-[0-9]{2,3})\b", RegexOptions.CultureInvariant);
+    private static readonly Regex CodeSpan = new("`([^`]*)`", RegexOptions.CultureInvariant);
+    private static readonly Regex MemberSpan = new(@"^[A-Z][A-Za-z0-9]*\.[A-Z][A-Za-z0-9]*$", RegexOptions.CultureInvariant);
+    private static readonly Regex TypeSpan = new(@"^[A-Z][A-Za-z0-9]*$", RegexOptions.CultureInvariant);
 
     private static readonly Lazy<string> RepositoryRoot = new(FindRepositoryRoot);
     private static readonly Lazy<FormInventory> Inventory = new(LoadFormInventory);
+    private static readonly Lazy<IReadOnlySet<string>> KnownIds = new(LoadKnownIds);
     private static readonly Lazy<MatrixSection> Section9 = new(ReadSection9);
     private static readonly Lazy<Regex> ForwardSegment = new(BuildForwardSegmentPattern);
     private static readonly Lazy<IReadOnlyList<TestMethodRecord>> TestMethods = new(DiscoverTestMethods);
@@ -187,16 +209,12 @@ public sealed class TraceabilityMatrixCoverageTests
             ("N or OI rows without a target or reason", missingReasons));
     }
 
-    /// <summary>Asserts §9.2 holds exactly one row per generated reverse key, each naming a source construct or an Infrastructure reason.</summary>
+    /// <summary>Asserts §9.2 holds exactly one row per generated reverse key, each citing only known ids and naming a source construct or an Infrastructure: reason.</summary>
     [Fact]
     public void ReverseHalf_CoversEveryGeneratedKeyExactlyOnce()
     {
         var expectedSet = ReverseMatrixKeys.Generate();
-        var rows = Section9.Value.Reverse;
-
-        var entries = rows
-            .Select(row => (Row: row, Key: row.Cell(row.Column(KeyHeader, 0)), Source: row.Cell(row.Column(SourceHeader, 1))))
-            .ToList();
+        var entries = ReverseRows();
 
         var rowKeySet = entries.Select(entry => entry.Key).ToHashSet(StringComparer.Ordinal);
 
@@ -204,25 +222,129 @@ public sealed class TraceabilityMatrixCoverageTests
 
         var extra = entries
             .Where(entry => !expectedSet.Contains(entry.Key))
-            .Select(entry => $"line {entry.Row.LineNumber}: '{entry.Key}'")
+            .Select(entry => $"line {entry.LineNumber}: '{entry.Key}'")
             .ToList();
 
-        var duplicates = DuplicateKeys(entries.Select(entry => (entry.Key, entry.Row.LineNumber)));
+        var duplicates = DuplicateKeys(entries.Select(entry => (entry.Key, entry.LineNumber)));
 
-        var unsourced = entries
-            .Where(entry => !IsInfrastructureReason(entry.Source) && !NamesSourceConstruct(entry.Source))
-            .Select(entry => $"line {entry.Row.LineNumber}: '{entry.Key}' source '{entry.Source}'")
-            .ToList();
+        var sources = CheckSourceCells(entries, KnownIds.Value, ForwardSegment.Value);
 
         AssertNoProblems(
             "docs/legacy-form-spec.md §9 reverse half",
             ("Generated keys with no row", omitted),
             ("Rows whose key is not generated", extra),
             ("Keys on more than one row", duplicates),
-            ("Rows with neither a source construct nor an Infrastructure: reason", unsourced));
+            ("Rows citing an id that does not exist", sources.UnknownIds),
+            ("Rows with Infrastructure: without a reason", sources.MissingReasons),
+            ("Rows with neither a source construct nor an Infrastructure: reason", sources.Unsourced));
     }
 
-    /// <summary>Asserts every domain rule id has a parity fixture and at least one test carrying its Rule trait.</summary>
+    /// <summary>Asserts every reverse row that a §9.1 trigger or program-unit row names as its target cites that construct's legacy id.</summary>
+    [Fact]
+    public void ReverseHalf_CitesEveryTriggerAndProgramUnitThatNamesIt()
+    {
+        var inventory = Inventory.Value;
+        var keysByText = inventory.Keys
+            .DistinctBy(key => key.Text, StringComparer.Ordinal)
+            .ToDictionary(key => key.Text, StringComparer.Ordinal);
+
+        var links = new List<ForwardLink>();
+        foreach (var row in Section9.Value.Forward)
+        {
+            var keyText = row.Cell(row.Column(KeyHeader, 0));
+            if (!inventory.LegacyIds.TryGetValue(keyText, out var legacyId) || !keysByText.TryGetValue(keyText, out var key))
+            {
+                continue;
+            }
+
+            var unitName = key.Kind == ProgramUnitKind ? key.Name : null;
+            links.Add(new ForwardLink(row.LineNumber, legacyId, unitName, row.CellsFrom(row.Column(CodesHeader, 1) + 1)));
+        }
+
+        AssertNoProblems(
+            "docs/legacy-form-spec.md §9 forward-to-reverse links",
+            ("Reverse rows that do not cite the trigger or program unit naming them", UncitedReverseLinks(links, ReverseRows())));
+    }
+
+    /// <summary>Asserts the reverse source-cell checks flag invented ids, empty Infrastructure: reasons and cells naming no construct, and pass real ones.</summary>
+    [Fact]
+    public void SourceCellChecks_FlagInventedIdsEmptyReasonsAndUnnamedConstructs()
+    {
+        ReverseRow[] rows =
+        [
+            new(1, "Billing.Sample.Invented", "T999 (DR-99)"),
+            new(2, "Billing.Sample.OutOfRange", "PU31, PR-26, OI-59, OI-15.99, D-999"),
+            new(3, "Billing.Sample.Real", "T079 (PR-22); T082 (OI-15.01, D-49)"),
+            new(4, "Billing.Sample.Bare", "Infrastructure:"),
+            new(5, "Billing.Sample.Dot", "Infrastructure: ."),
+            new(6, "Billing.Sample.Reasoned", "Infrastructure: DI and hosting"),
+            new(7, "Billing.Sample.DecisionOnly", "D-24"),
+        ];
+
+        var report = CheckSourceCells(rows, KnownIds.Value, ForwardSegment.Value);
+
+        Assert.Equal(
+            [
+                "line 1: 'Billing.Sample.Invented' unknown id(s) T999, DR-99",
+                "line 2: 'Billing.Sample.OutOfRange' unknown id(s) PU31, PR-26, OI-59, OI-15.99, D-999",
+            ],
+            report.UnknownIds);
+        Assert.Equal(
+            [
+                "line 4: 'Billing.Sample.Bare' source 'Infrastructure:'",
+                "line 5: 'Billing.Sample.Dot' source 'Infrastructure: .'",
+            ],
+            report.MissingReasons);
+        Assert.Equal(
+            [
+                "line 1: 'Billing.Sample.Invented' source 'T999 (DR-99)'",
+                "line 2: 'Billing.Sample.OutOfRange' source 'PU31, PR-26, OI-59, OI-15.99, D-999'",
+                "line 7: 'Billing.Sample.DecisionOnly' source 'D-24'",
+            ],
+            report.Unsourced);
+    }
+
+    /// <summary>Asserts the forward-to-reverse check flags a reverse row citing the wrong trigger and accepts a direct id, an id range or a program-unit name.</summary>
+    /// <param name="createSource">Source cell of the InvoiceWorkflowService.Create reverse row.</param>
+    /// <param name="expectedProblems">Expected problem lines, separated by '\n'; empty when none.</param>
+    [Theory]
+    [InlineData(
+        "T010 (DR-17)",
+        "forward line 10 T079 → Billing.Invoicing.Api.Services.InvoiceWorkflowService.Create: reverse line 2 does not cite T079")]
+    [InlineData("T014, T079 (PR-22)", "")]
+    [InlineData("T057 … T080", "")]
+    public void ForwardToReverseCheck_FlagsWrongIdsAndAcceptsIdsRangesAndUnitNames(string createSource, string expectedProblems)
+    {
+        ForwardLink[] links =
+        [
+            new(10, "T079", null, "`InvoiceWorkflowService.Create`"),
+            new(20, "PU10", "SMALL_CALC", "`BilInvoiceApiGateway.CalculatePreview`"),
+            new(30, "PU10", "SMALL_CALC", "`InvoiceWorkflowService.Preview`"),
+            new(40, "T041", null, "legacy text via `OracleErrorCatalog`; shown by `FieldMessage`; `InvoiceHeaderDraft.DiscT`"),
+        ];
+
+        ReverseRow[] rows =
+        [
+            new(1, "Billing.Invoicing.Api.Services.InvoiceWorkflowService", "T079"),
+            new(2, "Billing.Invoicing.Api.Services.InvoiceWorkflowService.Create", createSource),
+            new(3, "Billing.Invoicing.Api.Services.InvoiceWorkflowService.Preview", "`SMALL_CALC` totals"),
+            new(4, "Billing.Invoicing.Data.Plsql.BilInvoiceApiGateway", "Infrastructure: gateway"),
+            new(5, "Billing.Invoicing.Data.Plsql.BilInvoiceApiGateway.CalculatePreview", "PU10 `SMALL_CALC`"),
+            new(6, "Billing.Invoicing.Data.Errors.OracleErrorCatalog", "Infrastructure: catalogued rows of the error register"),
+            new(7, "components/FieldMessage", "PU08 `MESSAG`"),
+        ];
+
+        string[] expected =
+        [
+            .. expectedProblems.Split('\n', StringSplitOptions.RemoveEmptyEntries),
+            "forward line 40 T041 → Billing.Invoicing.Data.Errors.OracleErrorCatalog: reverse line 6 does not cite T041",
+            "forward line 40 T041 → components/FieldMessage: reverse line 7 does not cite T041",
+        ];
+
+        Assert.Equal(expected, UncitedReverseLinks(links, rows));
+    }
+
+    /// <summary>Asserts every domain rule id has a parity fixture and at least one Category=DomainParity test carrying its Rule trait.</summary>
     [Fact]
     public void EveryDomainRule_HasFixtureAndRuleTest()
     {
@@ -234,16 +356,16 @@ public sealed class TraceabilityMatrixCoverageTests
                 missing.Add($"{id}: fixture {FixtureRelativePath(id)} not found");
             }
 
-            if (!TestMethods.Value.Any(test => test.HasTrait(RuleTrait, id)))
+            if (!TestMethods.Value.Any(test => test.HasTrait(CategoryTrait, DomainParityCategory) && test.HasTrait(RuleTrait, id)))
             {
-                missing.Add($"{id}: no test method carries [Trait(\"{RuleTrait}\", \"{id}\")]");
+                missing.Add($"{id}: no {DomainParityCategory} test method carries [Trait(\"{RuleTrait}\", \"{id}\")]");
             }
         }
 
-        AssertNoProblems("Domain rule evidence", ("Missing fixtures or rule tests", missing));
+        AssertNoProblems("Domain rule evidence", ("Missing fixtures or domain parity tests", missing));
     }
 
-    /// <summary>Asserts every package rule id has a parity fixture and at least one [OracleFact] test carrying its Rule trait.</summary>
+    /// <summary>Asserts every package rule id has a parity fixture and at least one Category=OracleParity [OracleFact] test carrying its Rule trait.</summary>
     [Fact]
     public void EveryPackageRule_HasFixtureAndOracleFact()
     {
@@ -255,13 +377,44 @@ public sealed class TraceabilityMatrixCoverageTests
                 missing.Add($"{id}: fixture {FixtureRelativePath(id)} not found");
             }
 
-            if (!TestMethods.Value.Any(test => test.IsOracleFact && test.HasTrait(RuleTrait, id)))
+            if (!TestMethods.Value.Any(test =>
+                    test.IsOracleFact && test.HasTrait(CategoryTrait, OracleParityCategory) && test.HasTrait(RuleTrait, id)))
             {
-                missing.Add($"{id}: no [OracleFact] test method carries [Trait(\"{RuleTrait}\", \"{id}\")]");
+                missing.Add($"{id}: no {OracleParityCategory} [OracleFact] test method carries [Trait(\"{RuleTrait}\", \"{id}\")]");
             }
         }
 
-        AssertNoProblems("Package rule evidence", ("Missing fixtures or Oracle rule tests", missing));
+        AssertNoProblems("Package rule evidence", ("Missing fixtures or Oracle parity tests", missing));
+    }
+
+    /// <summary>Asserts every Rule trait sits on a Category=DomainParity test with a DR id or a Category=OracleParity test with a PR id.</summary>
+    [Fact]
+    public void RuleTraits_AreCarriedOnlyByParityTests()
+    {
+        var domainRules = RuleIds(DomainRulePrefix).ToHashSet(StringComparer.Ordinal);
+        var packageRules = RuleIds(PackageRulePrefix).ToHashSet(StringComparer.Ordinal);
+
+        var offenders = new List<string>();
+        foreach (var test in TestMethods.Value)
+        {
+            var categories = test.TraitValues(CategoryTrait).ToList();
+            var isDomainParity = categories.Contains(DomainParityCategory, StringComparer.Ordinal);
+            var isOracleParity = categories.Contains(OracleParityCategory, StringComparer.Ordinal);
+            foreach (var rule in test.TraitValues(RuleTrait))
+            {
+                if ((isDomainParity && domainRules.Contains(rule)) || (isOracleParity && packageRules.Contains(rule)))
+                {
+                    continue;
+                }
+
+                var categoryText = categories.Count == 0 ? "none" : string.Join(", ", categories);
+                offenders.Add($"{test.DisplayName}: {RuleTrait}={rule} ({CategoryTrait}={categoryText})");
+            }
+        }
+
+        AssertNoProblems(
+            $"[Trait(\"{RuleTrait}\", …)] placement",
+            ($"Rule traits outside a {DomainParityCategory} DR or {OracleParityCategory} PR test", offenders));
     }
 
     /// <summary>Asserts the create-path SideEffects attribute property and trait mark the same tests, and only the expected package parity and binding smoke tests.</summary>
@@ -293,7 +446,7 @@ public sealed class TraceabilityMatrixCoverageTests
         var packageRules = packageTests.SelectMany(test => test.TraitValues(RuleTrait)).ToHashSet(StringComparer.Ordinal);
 
         var shapeMismatches = new List<string>();
-        var expectedTotal = CreatePathPackageRules.Length + CreatePathSmokeTestCount;
+        var expectedTotal = CreatePathPackageRules.Length + CreatePathSmokeTests.Length;
         if (createPath.Count != expectedTotal)
         {
             shapeMismatches.Add($"expected {expectedTotal} create-path tests, found {createPath.Count}");
@@ -312,10 +465,12 @@ public sealed class TraceabilityMatrixCoverageTests
                 + $"expected [{string.Join(", ", CreatePathPackageRules)}]");
         }
 
-        if (smokeTests.Count != CreatePathSmokeTestCount)
+        var smokeNames = smokeTests.Select(test => test.Method.Name).ToHashSet(StringComparer.Ordinal);
+        if (!smokeNames.SetEquals(CreatePathSmokeTests))
         {
             shapeMismatches.Add(
-                $"{nameof(OracleBindingSmokeTests)}: expected {CreatePathSmokeTestCount} create-path test, found {smokeTests.Count}");
+                $"{nameof(OracleBindingSmokeTests)}: create-path tests are [{string.Join(", ", smokeNames.Order(StringComparer.Ordinal))}], "
+                + $"expected [{string.Join(", ", CreatePathSmokeTests)}]");
         }
 
         AssertNoProblems(
@@ -342,8 +497,8 @@ public sealed class TraceabilityMatrixCoverageTests
         throw new InvalidOperationException($"No directory containing {SolutionFileName} was found at or above {start}.");
     }
 
-    /// <summary>Loads the Form XML export and builds its forward keys and document-wide trigger and item totals.</summary>
-    /// <returns>The forward keys in document order with the descendant totals.</returns>
+    /// <summary>Loads the Form XML export and builds its forward keys, trigger and program-unit legacy ids, and document-wide trigger and item totals.</summary>
+    /// <returns>The forward keys in document order with their legacy ids and the descendant totals.</returns>
     private static FormInventory LoadFormInventory()
     {
         var path = Path.Combine(RepositoryRoot.Value, "05_Complex", "Inv_Small_Cash.xml");
@@ -383,9 +538,51 @@ public sealed class TraceabilityMatrixCoverageTests
 
         return new FormInventory(
             keys,
+            NumberLegacyIds(formModule, ns),
             document.Descendants(ns + TriggerKind).Count(),
             document.Descendants(ns + ItemKind).Count());
     }
+
+    /// <summary>Numbers the triggers T001 … (form triggers by line, then per block in document order its own triggers by line and its item triggers by line) and the program units PU01 … by line.</summary>
+    /// <param name="formModule">FormModule element.</param>
+    /// <param name="ns">Forms XML namespace.</param>
+    /// <returns>Legacy id by forward key text.</returns>
+    private static Dictionary<string, string> NumberLegacyIds(XElement formModule, XNamespace ns)
+    {
+        var triggers = ByLine(formModule.Elements(ns + TriggerKind))
+            .Select(trigger => NewKey(TriggerKind, FormOwner, FormOwner, NameOf(trigger), trigger))
+            .ToList();
+
+        foreach (var block in formModule.Elements(ns + BlockKind))
+        {
+            var blockName = NameOf(block);
+            triggers.AddRange(ByLine(block.Elements(ns + TriggerKind))
+                .Select(trigger => NewKey(TriggerKind, blockName, blockName, NameOf(trigger), trigger)));
+            triggers.AddRange(ByLine(block.Elements(ns + ItemKind).SelectMany(item => item.Elements(ns + TriggerKind)))
+                .Select(trigger => NewKey(TriggerKind, blockName, NameOf(trigger.Parent!), NameOf(trigger), trigger)));
+        }
+
+        var units = ByLine(formModule.Elements(ns + ProgramUnitKind))
+            .Select(unit => NewKey(ProgramUnitKind, FormOwner, NameOf(unit), NoEvent, unit));
+
+        var ids = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (key, index) in triggers.Select((key, index) => (key, index)))
+        {
+            ids.TryAdd(key.Text, TriggerIdPrefix + (index + 1).ToString("000", CultureInfo.InvariantCulture));
+        }
+
+        foreach (var (key, index) in units.Select((key, index) => (key, index)))
+        {
+            ids.TryAdd(key.Text, ProgramUnitIdPrefix + (index + 1).ToString("00", CultureInfo.InvariantCulture));
+        }
+
+        return ids;
+    }
+
+    /// <summary>Orders elements by start-tag line, keeping document order for equal lines.</summary>
+    /// <param name="elements">Forms XML elements.</param>
+    private static IEnumerable<XElement> ByLine(IEnumerable<XElement> elements) =>
+        elements.OrderBy(element => ((IXmlLineInfo)element).LineNumber);
 
     /// <summary>Adds the relation, block-trigger, item and item-trigger keys of one block.</summary>
     /// <param name="block">Block element.</param>
@@ -598,15 +795,228 @@ public sealed class TraceabilityMatrixCoverageTests
             .Select(group => $"'{group.Key}' (lines {string.Join(", ", group.Select(entry => entry.LineNumber))})")
             .ToList();
 
-    /// <summary>Returns whether a reverse source cell starts with the Infrastructure: prefix.</summary>
+    /// <summary>Returns the key and source cell of each §9.2 data row.</summary>
+    /// <returns>The reverse rows in document order.</returns>
+    private static List<ReverseRow> ReverseRows() =>
+        Section9.Value.Reverse
+            .Select(row => new ReverseRow(row.LineNumber, row.Cell(row.Column(KeyHeader, 0)), row.Cell(row.Column(SourceHeader, 1))))
+            .ToList();
+
+    /// <summary>Lists the reverse rows whose source cell cites an unknown id, gives an Infrastructure: prefix without a reason, or names no source construct.</summary>
+    /// <param name="rows">Reverse rows.</param>
+    /// <param name="knownIds">Every T, PU, DR, PR, OI, OI schema and decision id that exists.</param>
+    /// <param name="forwardSegment">Pattern matching a forward-key name or event segment.</param>
+    /// <returns>The problems by group, each item naming the row's line and key.</returns>
+    private static SourceCellReport CheckSourceCells(IEnumerable<ReverseRow> rows, IReadOnlySet<string> knownIds, Regex forwardSegment)
+    {
+        var unknownIds = new List<string>();
+        var missingReasons = new List<string>();
+        var unsourced = new List<string>();
+        foreach (var row in rows)
+        {
+            var unknown = SourceIdToken.Matches(row.Source)
+                .Select(match => match.Value)
+                .Where(id => !knownIds.Contains(id))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            if (unknown.Count > 0)
+            {
+                unknownIds.Add($"line {row.LineNumber}: '{row.Key}' unknown id(s) {string.Join(", ", unknown)}");
+            }
+
+            if (IsInfrastructureCell(row.Source))
+            {
+                if (!IsInfrastructureReason(row.Source))
+                {
+                    missingReasons.Add($"line {row.LineNumber}: '{row.Key}' source '{row.Source}'");
+                }
+            }
+            else if (!NamesSourceConstruct(row.Source, knownIds, forwardSegment))
+            {
+                unsourced.Add($"line {row.LineNumber}: '{row.Key}' source '{row.Source}'");
+            }
+        }
+
+        return new SourceCellReport(unknownIds, missingReasons, unsourced);
+    }
+
+    /// <summary>Returns whether a reverse source cell starts with the Infrastructure: prefix, a leading backtick tolerated.</summary>
     /// <param name="source">Source construct cell.</param>
-    private static bool IsInfrastructureReason(string source) =>
+    private static bool IsInfrastructureCell(string source) =>
         source.TrimStart('`').TrimStart().StartsWith(InfrastructurePrefix, StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>Returns whether a reverse source cell names a T / PU / DR / PR / OI id or a construct name or event of a forward key.</summary>
+    /// <summary>Returns whether a reverse source cell starts with the Infrastructure: prefix followed by text holding at least one letter.</summary>
     /// <param name="source">Source construct cell.</param>
-    private static bool NamesSourceConstruct(string source) =>
-        source.Length > 0 && (ConstructIdToken.IsMatch(source) || ForwardSegment.Value.IsMatch(source));
+    private static bool IsInfrastructureReason(string source) =>
+        IsInfrastructureCell(source)
+        && source.TrimStart('`').TrimStart()[InfrastructurePrefix.Length..].Any(char.IsLetter);
+
+    /// <summary>Returns whether a reverse source cell names an existing T / PU / DR / PR / OI id or a construct name or event of a forward key.</summary>
+    /// <param name="source">Source construct cell.</param>
+    /// <param name="knownIds">Every id that exists.</param>
+    /// <param name="forwardSegment">Pattern matching a forward-key name or event segment.</param>
+    private static bool NamesSourceConstruct(string source, IReadOnlySet<string> knownIds, Regex forwardSegment) =>
+        SourceIdToken.Matches(source)
+            .Select(match => match.Value)
+            .Any(id => knownIds.Contains(id) && !id.StartsWith(DecisionIdPrefix, StringComparison.Ordinal))
+        || forwardSegment.IsMatch(source);
+
+    /// <summary>Lists each reverse row that a forward row's target code span resolves to and whose source cell does not cite that forward row's legacy id.</summary>
+    /// <param name="links">Trigger and program-unit forward rows with their legacy ids and target text.</param>
+    /// <param name="rows">Reverse rows.</param>
+    /// <returns>One "forward line N id → key: reverse line M does not cite id" item per uncited link, in forward-row order.</returns>
+    private static List<string> UncitedReverseLinks(IEnumerable<ForwardLink> links, IReadOnlyList<ReverseRow> rows)
+    {
+        var rowsByKey = rows
+            .DistinctBy(row => row.Key, StringComparer.Ordinal)
+            .ToDictionary(row => row.Key, StringComparer.Ordinal);
+        var memberKeys = rowsByKey.Keys
+            .Where(key => key.LastIndexOf('.') is var dot && dot > 0 && rowsByKey.ContainsKey(key[..dot]))
+            .ToHashSet(StringComparer.Ordinal);
+        var typeKeys = rowsByKey.Keys
+            .Where(key => key.StartsWith(AssemblyKeyPrefix, StringComparison.Ordinal) && !memberKeys.Contains(key))
+            .ToList();
+        var fileKeys = rowsByKey.Keys
+            .Where(key => !key.StartsWith(AssemblyKeyPrefix, StringComparison.Ordinal))
+            .ToList();
+
+        var problems = new List<string>();
+        foreach (var link in links)
+        {
+            var resolved = new SortedSet<string>(StringComparer.Ordinal);
+            foreach (var span in CodeSpans(link.Target))
+            {
+                if (MemberSpan.IsMatch(span))
+                {
+                    resolved.UnionWith(memberKeys.Where(key => key.EndsWith("." + span, StringComparison.Ordinal)));
+                }
+                else if (TypeSpan.IsMatch(span))
+                {
+                    resolved.UnionWith(typeKeys.Where(key => key.EndsWith("." + span, StringComparison.Ordinal)));
+                    resolved.UnionWith(fileKeys.Where(key => string.Equals(key[(key.LastIndexOf('/') + 1)..], span, StringComparison.Ordinal)));
+                }
+            }
+
+            foreach (var key in resolved)
+            {
+                var row = rowsByKey[key];
+                if (!CitesLegacyId(row.Source, link.LegacyId, link.ProgramUnitName))
+                {
+                    problems.Add($"forward line {link.LineNumber} {link.LegacyId} → {key}: reverse line {row.LineNumber} does not cite {link.LegacyId}");
+                }
+            }
+        }
+
+        return problems;
+    }
+
+    /// <summary>Returns the code spans of a target cell, or the whole cell when it holds no backtick.</summary>
+    /// <param name="target">Target or reason text.</param>
+    private static List<string> CodeSpans(string target)
+    {
+        if (!target.Contains('`'))
+        {
+            return target.Length == 0 ? [] : [target.Trim()];
+        }
+
+        return CodeSpan.Matches(target)
+            .Select(match => match.Groups[1].Value.Trim())
+            .Where(span => span.Length > 0)
+            .ToList();
+    }
+
+    /// <summary>Returns whether a source cell cites a legacy id directly, inside an "A … B" range of the same prefix and width, or, for a program unit, by its name.</summary>
+    /// <param name="source">Source construct cell.</param>
+    /// <param name="legacyId">T or PU id.</param>
+    /// <param name="programUnitName">Program-unit name, or null for a trigger.</param>
+    private static bool CitesLegacyId(string source, string legacyId, string? programUnitName)
+    {
+        if (SourceIdToken.Matches(source).Any(match => string.Equals(match.Value, legacyId, StringComparison.Ordinal)))
+        {
+            return true;
+        }
+
+        var (prefix, digits) = SplitId(legacyId);
+        var number = int.Parse(digits, CultureInfo.InvariantCulture);
+        foreach (Match range in SourceIdRange.Matches(source))
+        {
+            var (fromPrefix, fromDigits) = SplitId(range.Groups[1].Value);
+            var (toPrefix, toDigits) = SplitId(range.Groups[2].Value);
+            if (fromPrefix == prefix && toPrefix == prefix && fromDigits.Length == digits.Length && toDigits.Length == digits.Length
+                && int.Parse(fromDigits, CultureInfo.InvariantCulture) <= number && number <= int.Parse(toDigits, CultureInfo.InvariantCulture))
+            {
+                return true;
+            }
+        }
+
+        return programUnitName is { Length: > 0 }
+            && Regex.IsMatch(source, "(?<![A-Za-z0-9_])" + Regex.Escape(programUnitName) + "(?![A-Za-z0-9_])", RegexOptions.CultureInvariant);
+    }
+
+    /// <summary>Splits an id into its prefix and trailing digits.</summary>
+    /// <param name="id">Id such as T079, PU10 or DR-07.</param>
+    /// <returns>The prefix and the digits.</returns>
+    private static (string Prefix, string Digits) SplitId(string id)
+    {
+        var start = id.Length;
+        while (start > 0 && char.IsAsciiDigit(id[start - 1]))
+        {
+            start--;
+        }
+
+        return (id[..start], id[start..]);
+    }
+
+    /// <summary>Builds the set of ids a source cell may cite: legacy T and PU ids from the Form XML, DR and PR ids, OpenItemIds, OI schema items of docs/dependency-open-items.md and decisions of docs/decision-log.md.</summary>
+    /// <returns>The known ids.</returns>
+    private static IReadOnlySet<string> LoadKnownIds()
+    {
+        var openItems = typeof(OpenItemIds)
+            .GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(field => field.IsLiteral && field.FieldType == typeof(string))
+            .Select(field => field.GetRawConstantValue() as string)
+            .OfType<string>()
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (openItems.Count != ExpectedOpenItemCount)
+        {
+            throw new InvalidDataException(
+                $"{nameof(OpenItemIds)}: expected {ExpectedOpenItemCount} public const string open-item ids, found {openItems.Count}.");
+        }
+
+        var ids = new HashSet<string>(Inventory.Value.LegacyIds.Values, StringComparer.Ordinal);
+        ids.UnionWith(RuleIds(DomainRulePrefix));
+        ids.UnionWith(RuleIds(PackageRulePrefix));
+        ids.UnionWith(openItems);
+        ids.UnionWith(ReadRowIds("dependency-open-items.md", SchemaItemRow));
+        ids.UnionWith(ReadRowIds("decision-log.md", DecisionRow));
+        return ids;
+    }
+
+    /// <summary>Reads the first-cell ids of the table rows of a document under docs/.</summary>
+    /// <param name="fileName">Document file name.</param>
+    /// <param name="rowPattern">Pattern whose first group is the row id.</param>
+    /// <returns>The row ids.</returns>
+    private static List<string> ReadRowIds(string fileName, Regex rowPattern)
+    {
+        var path = Path.Combine(RepositoryRoot.Value, "docs", fileName);
+        if (!File.Exists(path))
+        {
+            throw new FileNotFoundException($"docs/{fileName} not found.", path);
+        }
+
+        var ids = File.ReadLines(path)
+            .Select(line => rowPattern.Match(line))
+            .Where(match => match.Success)
+            .Select(match => match.Groups[1].Value)
+            .ToList();
+        if (ids.Count == 0)
+        {
+            throw new InvalidDataException($"{path}: no row matches '{rowPattern}'.");
+        }
+
+        return ids;
+    }
 
     /// <summary>Builds one case-sensitive pattern matching any forward-key name or event segment other than FORM and '-' as a whole identifier.</summary>
     /// <returns>The segment pattern.</returns>
@@ -705,11 +1115,38 @@ public sealed class TraceabilityMatrixCoverageTests
         public string Text => string.Join('|', Kind, Owner, Name, Event, Line.ToString(CultureInfo.InvariantCulture));
     }
 
-    /// <summary>Forward keys with the document-wide trigger and item totals.</summary>
+    /// <summary>Forward keys with their legacy ids and the document-wide trigger and item totals.</summary>
     /// <param name="Keys">Forward keys in document order.</param>
+    /// <param name="LegacyIds">T and PU legacy id by forward key text of each trigger and program unit.</param>
     /// <param name="TriggerDescendants">Trigger elements anywhere in the document.</param>
     /// <param name="ItemDescendants">Item elements anywhere in the document.</param>
-    private sealed record FormInventory(IReadOnlyList<ForwardKey> Keys, int TriggerDescendants, int ItemDescendants);
+    private sealed record FormInventory(
+        IReadOnlyList<ForwardKey> Keys,
+        IReadOnlyDictionary<string, string> LegacyIds,
+        int TriggerDescendants,
+        int ItemDescendants);
+
+    /// <summary>One §9.2 row.</summary>
+    /// <param name="LineNumber">1-based document line.</param>
+    /// <param name="Key">Reverse key.</param>
+    /// <param name="Source">Source construct cell.</param>
+    private sealed record ReverseRow(int LineNumber, string Key, string Source);
+
+    /// <summary>One §9.1 trigger or program-unit row with its legacy id and target text.</summary>
+    /// <param name="LineNumber">1-based document line.</param>
+    /// <param name="LegacyId">T or PU id derived from the Form XML.</param>
+    /// <param name="ProgramUnitName">Program-unit name, or null for a trigger.</param>
+    /// <param name="Target">Target or reason text.</param>
+    private sealed record ForwardLink(int LineNumber, string LegacyId, string? ProgramUnitName, string Target);
+
+    /// <summary>Problems found in §9.2 source cells.</summary>
+    /// <param name="UnknownIds">Rows citing an id that does not exist.</param>
+    /// <param name="MissingReasons">Rows whose Infrastructure: prefix carries no reason.</param>
+    /// <param name="Unsourced">Non-infrastructure rows naming no source construct.</param>
+    private sealed record SourceCellReport(
+        IReadOnlyList<string> UnknownIds,
+        IReadOnlyList<string> MissingReasons,
+        IReadOnlyList<string> Unsourced);
 
     /// <summary>Data rows of the two §9 halves.</summary>
     /// <param name="Forward">Rows of the forward region.</param>
@@ -788,4 +1225,3 @@ public sealed class TraceabilityMatrixCoverageTests
             Traits.Where(trait => string.Equals(trait.Name, name, StringComparison.Ordinal)).Select(trait => trait.Value);
     }
 }
-

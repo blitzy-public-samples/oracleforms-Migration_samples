@@ -91,9 +91,7 @@
           { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": {} },
           { "table": "SERVICES", "key": { "SERVICEID": "1002" }, "columns": {} }
         ],
-        "context": [
-          { "name": "bil_service_context.curr_code[1001]", "value": null }
-        ]
+        "context": []
       },
       "expected": {
         "error": { "package": "BIL_INVOICE_ENGINE", "number": -20917, "messagePrefix": "Invoice create failed: currency is missing from price list/service for line " }
@@ -118,11 +116,7 @@
           { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": {} },
           { "table": "SERVICES", "key": { "SERVICEID": "1002" }, "columns": {} }
         ],
-        "context": [
-          { "name": "bil_service_context.curr_code[1001]", "value": "SAR" },
-          { "name": "bil_price_rule.billing_price[1001]", "value": 100.00 },
-          { "name": "bil_service_context.curr_code[1002]", "value": "USD" }
-        ]
+        "context": []
       },
       "expected": {
         "error": { "package": "BIL_INVOICE_ENGINE", "number": -20918, "messagePrefix": "Invoice create failed: mixed currencies are not allowed. Expected SAR but line " }

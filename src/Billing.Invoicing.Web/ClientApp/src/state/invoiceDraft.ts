@@ -74,7 +74,7 @@ export type InvoiceDraftAction =
   | { type: 'discountChoiceMade'; choice: DiscountLimitChoice }
   | { type: 'coverageApplied'; response: CoverageResponse | null; origin: RequestOrigin }
   | { type: 'patientContextCleared'; origin: RequestOrigin }
-  | { type: 'previewApplied'; response: PreviewResponse; sent?: readonly InvoiceLineDraft[] }
+  | { type: 'previewApplied'; response: PreviewResponse; sent?: readonly InvoiceLineDraft[]; origin: RequestOrigin }
   | { type: 'previewCleared' }
   | { type: 'saved'; response: CreateInvoiceResponse; origin: RequestOrigin }
   | { type: 'invoiceLoaded'; invNo: number; response: InvoiceViewResponse; origin?: RequestOrigin }
@@ -1111,4 +1111,3 @@ export function currentCoverage(state: InvoiceDraftState): CoverageResponse | nu
   }
   return state.coveragePatientNo === trimmedPatientNo(state.draft.header.patientNo) ? state.coverage : null;
 }
-

@@ -11,8 +11,8 @@
     { "construct": "BIL_INVOICE_ENGINE.get_effective_line_price", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1053" },
     { "construct": "BIL_INVOICE_ENGINE.calculate_lines discount_source", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2003" },
     { "construct": "BIL_INVOICE_ENGINE.preview_invoice p_validate_offer_versions", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:3047" },
-    { "construct": "PU19 OKA", "locator": "05_Complex/Inv_Small_Cash.xml:978" },
-    { "construct": "T066 SERVICEID WHEN-VALIDATE-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:389" }
+    { "construct": "T066 SERVICEID WHEN-VALIDATE-ITEM standard-offer branch", "locator": "05_Complex/Inv_Small_Cash.xml:389" },
+    { "construct": "T085 DO_IMP2 WHEN-BUTTON-PRESSED standard-offer branch on imported request lines", "locator": "05_Complex/Inv_Small_Cash.xml:755" }
   ],
   "cases": [
     {
@@ -32,17 +32,7 @@
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
           { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
         ],
-        "context": [
-          { "key": "bil_patient_context.coverage_type", "value": "bil_types.c_coverage_cash" },
-          { "key": "bil_patient_context.list_id", "value": 1 },
-          { "key": "bil_offer_rule.matched", "value": "Y" },
-          { "key": "bil_offer_rule.offer_price", "value": 40 },
-          { "key": "bil_offer_rule.offer_dis", "value": 0 },
-          { "key": "bil_price_rule.allow_manual_price", "value": "Y" },
-          { "key": "bil_price_rule.allow_discount", "value": "Y" },
-          { "key": "bil_price_rule.billing_price", "value": 60 },
-          { "key": "bil_price_rule.curr_code", "value": "SAR" }
-        ]
+        "context": []
       },
       "expected": {
         "error": { "package": "BIL_INVOICE_ENGINE", "number": -20971, "messagePrefix": "A manual price cannot be combined with a Standard Offer." }
@@ -65,17 +55,7 @@
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
           { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
         ],
-        "context": [
-          { "key": "bil_patient_context.coverage_type", "value": "bil_types.c_coverage_cash" },
-          { "key": "bil_patient_context.list_id", "value": 1 },
-          { "key": "bil_offer_rule.matched", "value": "Y" },
-          { "key": "bil_offer_rule.offer_price", "value": 40 },
-          { "key": "bil_offer_rule.offer_dis", "value": 0 },
-          { "key": "bil_price_rule.allow_manual_price", "value": "Y" },
-          { "key": "bil_price_rule.allow_discount", "value": "Y" },
-          { "key": "bil_price_rule.billing_price", "value": 60 },
-          { "key": "bil_price_rule.curr_code", "value": "SAR" }
-        ]
+        "context": []
       },
       "expected": {
         "error": { "package": "BIL_INVOICE_ENGINE", "number": -20972, "messagePrefix": "A manual line discount cannot be combined with a Standard Offer." }
@@ -99,15 +79,9 @@
           { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
         ],
         "context": [
-          { "key": "bil_patient_context.coverage_type", "value": "bil_types.c_coverage_cash" },
-          { "key": "bil_patient_context.list_id", "value": 1 },
-          { "key": "bil_offer_rule.matched", "value": "Y" },
-          { "key": "bil_offer_rule.offer_price", "value": 40 },
-          { "key": "bil_offer_rule.offer_dis", "value": 0 },
           { "key": "bil_price_rule.allow_manual_price", "value": "Y" },
           { "key": "bil_price_rule.allow_discount", "value": "Y" },
-          { "key": "bil_price_rule.billing_price", "value": 60 },
-          { "key": "bil_price_rule.curr_code", "value": "SAR" },
+          { "key": "bil_service_context.curr_code", "value": "SAR" },
           { "key": "bil_service_context.plan_price_disc", "value": 0 }
         ]
       },
@@ -147,7 +121,7 @@
           { "key": "bil_price_rule.allow_manual_price", "value": "Y" },
           { "key": "bil_price_rule.allow_discount", "value": "Y" },
           { "key": "bil_price_rule.billing_price", "value": 60 },
-          { "key": "bil_price_rule.curr_code", "value": "SAR" }
+          { "key": "bil_service_context.curr_code", "value": "SAR" }
         ]
       },
       "expected": {}
@@ -179,11 +153,11 @@
           { "key": "bil_price_rule.allow_manual_price", "value": "Y" },
           { "key": "bil_price_rule.allow_discount", "value": "Y" },
           { "key": "bil_price_rule.billing_price", "value": 60 },
-          { "key": "bil_price_rule.curr_code", "value": "SAR" }
+          { "key": "bil_service_context.curr_code", "value": "SAR" }
         ]
       },
       "expected": {}
     }
   ],
-  "compare": { "moneyDecimals": 2, "exact": ["outcome", "discount_source"] }
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "discount_source"], "decimals": { "price": 3 } }
 }

@@ -152,6 +152,22 @@ public sealed class OracleSessionDeadlineTests
     }
 
     [Fact]
+    [Trait("Decision", "D-89")]
+    public async Task RunWithinDeadline_CallerCancelsACallFailingWhenItsTokenFires_PropagatesThatFailureWithoutAbandoning()
+    {
+        var abandoned = new List<Task>();
+        var driverCancel = new InvalidOperationException("driver cancelled the call");
+        using var caller = new CancellationTokenSource();
+
+        Task run = OracleSession.RunWithinDeadline(Operation, LongDeadline, token => FailWhenCancelled(token, driverCancel), abandoned.Add, caller.Token);
+        await caller.CancelAsync();
+        Exception thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => run.WaitAsync(Prompt));
+
+        Assert.Same(driverCancel, thrown);
+        Assert.Empty(abandoned);
+    }
+
+    [Fact]
     public async Task RunWithinDeadline_CallerAlreadyCancelled_ThrowsOperationCanceled()
     {
         var abandoned = new List<Task>();

@@ -116,7 +116,6 @@
           { "table": "DOCTORS", "key": { "DOCID": 11 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 0 } }
         ],
         "context": [
-          { "name": "bil_patient_context.list_id", "value": 1 },
           { "name": "bil_service_context.curr_code", "value": "SAR" },
           { "name": "bil_price_rule.billing_price", "value": 100 }
         ]

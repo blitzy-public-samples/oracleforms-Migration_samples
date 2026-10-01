@@ -1,3 +1,4 @@
+using System.Collections;
 using Billing.Invoicing.Domain.Model;
 using Billing.Invoicing.Domain.Workflow;
 
@@ -133,6 +134,98 @@ public sealed class OpenItemGateTests
         Assert.Empty(Eval(Header(subCompCode: "10"), [package]));
     }
 
+    /// <summary>A two-profile cycle and a self-loop without any condition return no open items, each component list read once.</summary>
+    [Fact]
+    [Trait("OpenItem", "OI-32")]
+    public void Cyclic_component_graph_without_condition_is_traversed_once_and_returns_no_open_items()
+    {
+        var aComponents = new CountingComponents();
+        var bComponents = new CountingComponents();
+        var cComponents = new CountingComponents();
+        var a = Service("900", isPackage: 1, servLocId: 14) with { Components = aComponents };
+        var b = Service("901", isPackage: 1, servLocId: 14) with { Components = bComponents };
+        var c = Service("902", isPackage: 1, servLocId: 14) with { Components = cComponents };
+        aComponents.Add(b);
+        bComponents.Add(a);
+        cComponents.Add(c);
+
+        Assert.Empty(Eval(Header(subCompCode: "10"), [a, c]));
+        Assert.All(new[] { aComponents, bComponents, cComponents }, components => Assert.Equal(components.Count, components.Reads));
+    }
+
+    /// <summary>A revisit-limit component reached only after a component cycle returns OI-32.</summary>
+    [Fact]
+    [Trait("OpenItem", "OI-32")]
+    public void Revisit_limit_component_after_component_cycle_returns_OI32()
+    {
+        var aComponents = new CountingComponents();
+        var bComponents = new CountingComponents();
+        var a = Service("900", isPackage: 1, servLocId: 14) with { Components = aComponents };
+        var b = Service("901", isPackage: 1, servLocId: 14) with { Components = bComponents };
+        var d = Service("903", consRev: 2);
+        aComponents.Add(b);
+        aComponents.Add(d);
+        bComponents.Add(a);
+
+        Assert.Equal(new[] { OpenItemIds.OI32 }, Eval(Header(), [a]));
+    }
+
+    /// <summary>A profile referenced by two packages, twice by one and again as a draft line, is traversed once.</summary>
+    [Fact]
+    [Trait("OpenItem", "OI-32")]
+    public void Duplicate_component_references_are_traversed_once_and_return_no_open_items()
+    {
+        var sharedComponents = new CountingComponents();
+        var shared = Service("910", isPackage: 1, servLocId: 14) with { Components = sharedComponents };
+        sharedComponents.Add(Service("911"));
+        var first = Service("900", isPackage: 1, servLocId: 14, components: [shared, shared]);
+        var second = Service("920", isPackage: 1, servLocId: 14, components: [shared]);
+
+        Assert.Empty(Eval(Header(subCompCode: "10"), [first, shared, second]));
+        Assert.Equal(sharedComponents.Count, sharedComponents.Reads);
+    }
+
+    /// <summary>A claim-limit component referenced twice and again as a draft line returns OI-32 once.</summary>
+    [Fact]
+    [Trait("OpenItem", "OI-32")]
+    public void Duplicate_claim_limit_component_references_return_OI32_once()
+    {
+        var limited = Service("930", consRev: 1);
+        var package = Service("900", isPackage: 1, servLocId: 14, components: [limited, limited]);
+
+        Assert.Equal(new[] { OpenItemIds.OI32 }, Eval(Header(), [package, limited]));
+    }
+
+    /// <summary>A null service profile and a null package component are skipped and return no open items.</summary>
+    [Fact]
+    [Trait("OpenItem", "OI-32")]
+    public void Null_service_and_null_component_return_no_open_items()
+    {
+        var package = Service("900", isPackage: 1, servLocId: 14, components: [null!, Service("901")]);
+
+        Assert.Empty(Eval(Header(subCompCode: "10"), [null!, package]));
+    }
+
+    /// <summary>A queued component after a null sibling component, under a sub-company, returns OI-32.</summary>
+    [Fact]
+    [Trait("OpenItem", "OI-32")]
+    public void Queued_component_after_null_component_with_sub_company_returns_OI32()
+    {
+        var package = Service("900", isPackage: 1, servLocId: 14, components: [null!, Service("901", addToQue: 1)]);
+
+        Assert.Equal(new[] { OpenItemIds.OI32 }, Eval(Header(subCompCode: "10"), [null!, package]));
+    }
+
+    /// <summary>A profile whose component list is null returns no open items.</summary>
+    [Fact]
+    [Trait("OpenItem", "OI-32")]
+    public void Profile_with_null_components_returns_no_open_items()
+    {
+        var package = Service("900", isPackage: 1, servLocId: 14) with { Components = null! };
+
+        Assert.Empty(Eval(Header(subCompCode: "10"), [package]));
+    }
+
     [Fact]
     [Trait("OpenItem", "OI-32")]
     public void Patient_card_returns_OI32()
@@ -211,5 +304,50 @@ public sealed class OpenItemGateTests
     {
         Assert.Throws<ArgumentNullException>(() => OpenItemGate.Evaluate(null!, [], null, null, null, Params()));
         Assert.Throws<ArgumentNullException>(() => OpenItemGate.Evaluate(Header(), [], null, null, null, null!));
+    }
+
+    /// <summary>Component list that counts element reads and throws once they exceed a fixed limit.</summary>
+    private sealed class CountingComponents : IReadOnlyList<ServiceProfile>
+    {
+        private const int ReadLimit = 64;
+        private readonly List<ServiceProfile> _components = [];
+
+        /// <summary>Elements read so far, through the indexer or enumeration.</summary>
+        public int Reads { get; private set; }
+
+        /// <inheritdoc />
+        public int Count => _components.Count;
+
+        /// <inheritdoc />
+        /// <exception cref="InvalidOperationException">More than the read limit of elements has been read.</exception>
+        public ServiceProfile this[int index]
+        {
+            get
+            {
+                Reads++;
+                if (Reads > ReadLimit)
+                {
+                    throw new InvalidOperationException(
+                        $"The component graph was traversed without end: more than {ReadLimit} component reads.");
+                }
+
+                return _components[index];
+            }
+        }
+
+        /// <summary>Appends a component.</summary>
+        /// <param name="component">Component profile.</param>
+        public void Add(ServiceProfile component) => _components.Add(component);
+
+        /// <inheritdoc />
+        public IEnumerator<ServiceProfile> GetEnumerator()
+        {
+            for (var index = 0; index < _components.Count; index++)
+            {
+                yield return this[index];
+            }
+        }
+
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
     }
 }

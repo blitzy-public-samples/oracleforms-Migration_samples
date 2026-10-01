@@ -34,7 +34,6 @@ public sealed class ClaimPreloadCardFieldTests
     /// <summary>Checks that a CASH_OR_CREDIT other than 1 copies the first claim invoice's INS_NUMBER, CARD_END and PAT_POLICY_NO into the new draft.</summary>
     /// <param name="cashOrCredit">PARAMETER.CASH_OR_CREDIT.</param>
     [Theory]
-    [Trait("Rule", "DR-20")]
     [InlineData(0)]
     [InlineData(2)]
     public async Task NewDraft_CreditClaimPreload_CarriesTheCardFields(int cashOrCredit)
@@ -53,7 +52,6 @@ public sealed class ClaimPreloadCardFieldTests
 
     /// <summary>Checks that CASH_OR_CREDIT 1 leaves INS_NUMBER, CARD_END and PAT_POLICY_NO null although the claim preload carries them.</summary>
     [Fact]
-    [Trait("Rule", "DR-20")]
     public async Task NewDraft_CashClaimPreload_NullsTheCardFields()
     {
         var fakes = ArrangePreload();

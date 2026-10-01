@@ -611,4 +611,3 @@ export default function PaymentPanel({ state, dispatch, onValidate }: PaymentPan
     </div>
   );
 }
-

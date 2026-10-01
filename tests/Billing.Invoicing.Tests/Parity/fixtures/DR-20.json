@@ -78,6 +78,28 @@
       "expected": { "outcome": "Pass", "messages": [], "values": { "INVTYPEID": 0, "INV_DATE": "2026-09-28T10:00:00", "PATIENTNO": null } }
     },
     {
+      "name": "new-consult-ignores-claim-preload",
+      "status": "derivable",
+      "input": {
+        "parameters": { "claimNo": "1", "newDoc": 10, "cashOrCredit": 2 },
+        "databaseTime": "2026-09-28T10:00:00",
+        "claimPreload": { "claimNo": "C-7788", "patientNo": "1001", "clinicId": 14, "docId": 33, "compCode": "205", "subCompCode": "305", "classCode": 4, "payType": 2, "insNumber": "INS-55", "cardEnd": "2027-01-31T00:00:00", "patPolicyNo": "POL-9" },
+        "visitDoctorId": null
+      },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "INVTYPEID": 0, "SUB_PAYTYPE": 1, "DRAFT_DATE": "2026-09-28T10:00:00", "INV_DATE": "2026-09-28T10:00:00", "DOCIDX": 10, "CLAIM_NO": null, "PATIENTNO": null, "CLINICID": null, "COMP_CODE": null, "SUB_COMP_CODE": null, "CLASS_CODE": null, "PAYTYPE": null, "INS_NUMBER": null, "CARD_END": null, "PAT_POLICY_NO": null } }
+    },
+    {
+      "name": "independent-service-claim-two-ignores-claim-preload",
+      "status": "derivable",
+      "input": {
+        "parameters": { "claimNo": "2", "cashOrCredit": 2 },
+        "databaseTime": "2026-09-28T10:00:00",
+        "claimPreload": { "claimNo": "C-7788", "patientNo": "1001", "clinicId": 14, "docId": 33, "compCode": "205", "subCompCode": "305", "classCode": 4, "payType": 2, "insNumber": "INS-55", "cardEnd": "2027-01-31T00:00:00", "patPolicyNo": "POL-9" },
+        "visitDoctorId": null
+      },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "INVTYPEID": 0, "SUB_PAYTYPE": 1, "DRAFT_DATE": "2026-09-28T10:00:00", "INV_DATE": "2026-09-28T10:00:00", "DOCIDX": null, "CLAIM_NO": null, "PATIENTNO": null, "CLINICID": null, "COMP_CODE": null, "SUB_COMP_CODE": null, "CLASS_CODE": null, "PAYTYPE": null, "INS_NUMBER": null, "CARD_END": null, "PAT_POLICY_NO": null } }
+    },
+    {
       "name": "claim-preload-credit-copies-coverage",
       "status": "derivable",
       "input": {

@@ -400,11 +400,12 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
       dispatch({ type: 'previewCleared' });
       return;
     }
+    const origin = requestOrigin(draft);
     try {
       const response = await previewInvoice(draft);
-      dispatch({ type: 'previewApplied', response, sent: draft.lines });
+      dispatch({ type: 'previewApplied', response, sent: draft.lines, origin });
     } catch (error) {
-      handleError(error, 'PREVIEW');
+      handleError(error, 'PREVIEW', origin);
     }
   }
 
@@ -600,6 +601,8 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
     if (invNo === null) {
       return;
     }
+    const draft = latest.current.draft;
+    const origin = draft === null ? undefined : requestOrigin(draft);
     try {
       if (action === 'sms') {
         await sendSms(invNo);
@@ -609,7 +612,7 @@ export default function InvoiceScreen({ state, dispatch, onShowMore }: InvoiceSc
       dispatch({ type: 'connectivityRestored' });
     } catch (error) {
       // Each saved action reports under its own source.
-      handleError(error, `SAVED:${action}`);
+      handleError(error, `SAVED:${action}`, origin);
     }
   }
 

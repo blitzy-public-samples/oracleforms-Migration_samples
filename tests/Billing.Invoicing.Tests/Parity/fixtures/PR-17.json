@@ -104,11 +104,7 @@
           { "table": "OFFERS_DTL", "key": { "OFERID": 7001, "SERVICEID": "2001" }, "columns": { "LIST_ID": 1, "QTY": 3, "OFFER_PRICE": 40, "IS_DELETED": "N" } },
           { "table": "OFFERS_DTL", "key": { "OFERID": 7001, "SERVICEID": "2002" }, "columns": { "LIST_ID": 1, "QTY": 1, "OFFER_PRICE": 20, "IS_DELETED": "N" } }
         ],
-        "context": [
-          { "bil_patient_context.list_id": 1 },
-          { "serviceid": "2001", "bil_offer_rule.bundle_detail_qty": 3, "bil_offer_rule.offer_price": 40 },
-          { "serviceid": "2002", "bil_offer_rule.bundle_detail_qty": 1, "bil_offer_rule.offer_price": 20 }
-        ]
+        "context": []
       },
       "expected": {
         "values": {

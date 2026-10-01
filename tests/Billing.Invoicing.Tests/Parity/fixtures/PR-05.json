@@ -22,15 +22,13 @@
       "requires": {
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "V_PAT_DATA", "key": { "PATIENTNO": "990000001" }, "columns": { "PAY_VAT": "Y" } },
           { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001" } }
         ],
         "context": [
           { "name": "bil_price_rule.billing_price", "field": "price", "value": 100 },
-          { "name": "bil_price_rule.curr_code", "field": "curr_code", "value": "SAR" },
+          { "name": "bil_service_context.curr_code", "field": "curr_code", "value": "SAR" },
           { "name": "bil_service_context.vat_rate", "field": "vat_rate", "value": 15 },
-          { "name": "bil_service_context.non_medical", "value": 0 },
-          { "name": "bil_patient_context.pay_vat", "value": 1 },
-          { "name": "bil_patient_context.pay_vat_co", "value": 1 },
           { "name": "bil_class_rule.patient_share", "field": "the_pay", "value": 100 },
           { "name": "bil_class_rule.company_share", "field": "the_comp", "value": 0 }
         ]
@@ -56,15 +54,14 @@
       "requires": {
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "V_PAT_DATA", "key": { "PATIENTNO": "990000001" }, "columns": { "COMP_CODE": "100", "PAY_VAT": "Y" } },
+          { "table": "COMPANYS", "key": { "COMP_CODE": "100" }, "columns": { "PAY_VAT": 1 } },
           { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001" } }
         ],
         "context": [
           { "name": "bil_price_rule.billing_price", "field": "price", "value": 400 },
-          { "name": "bil_price_rule.curr_code", "field": "curr_code", "value": "SAR" },
+          { "name": "bil_service_context.curr_code", "field": "curr_code", "value": "SAR" },
           { "name": "bil_service_context.vat_rate", "field": "vat_rate", "value": 15 },
-          { "name": "bil_service_context.non_medical", "value": 0 },
-          { "name": "bil_patient_context.pay_vat", "value": 1 },
-          { "name": "bil_patient_context.pay_vat_co", "value": 1 },
           { "name": "bil_class_rule.patient_share", "field": "the_pay", "value": 100 },
           { "name": "bil_class_rule.company_share", "field": "the_comp", "value": 300 }
         ]
@@ -90,15 +87,13 @@
       "requires": {
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
-          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001" } }
+          { "table": "V_PAT_DATA", "key": { "PATIENTNO": "990000001" }, "columns": { "PAY_VAT": "N" } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001", "NON_MEDICAL": 0 } }
         ],
         "context": [
           { "name": "bil_price_rule.billing_price", "field": "price", "value": 100 },
-          { "name": "bil_price_rule.curr_code", "field": "curr_code", "value": "SAR" },
+          { "name": "bil_service_context.curr_code", "field": "curr_code", "value": "SAR" },
           { "name": "bil_service_context.vat_rate", "field": "vat_rate", "value": 15 },
-          { "name": "bil_service_context.non_medical", "value": 0 },
-          { "name": "bil_patient_context.pay_vat", "value": 0 },
-          { "name": "bil_patient_context.pay_vat_co", "value": 1 },
           { "name": "bil_class_rule.patient_share", "field": "the_pay", "value": 100 },
           { "name": "bil_class_rule.company_share", "field": "the_comp", "value": 0 }
         ]
@@ -124,15 +119,13 @@
       "requires": {
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
-          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001" } }
+          { "table": "V_PAT_DATA", "key": { "PATIENTNO": "990000001" }, "columns": { "PAY_VAT": "N" } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001", "NON_MEDICAL": 1 } }
         ],
         "context": [
           { "name": "bil_price_rule.billing_price", "field": "price", "value": 100 },
-          { "name": "bil_price_rule.curr_code", "field": "curr_code", "value": "SAR" },
+          { "name": "bil_service_context.curr_code", "field": "curr_code", "value": "SAR" },
           { "name": "bil_service_context.vat_rate", "field": "vat_rate", "value": 15 },
-          { "name": "bil_service_context.non_medical", "value": 1 },
-          { "name": "bil_patient_context.pay_vat", "value": 0 },
-          { "name": "bil_patient_context.pay_vat_co", "value": 1 },
           { "name": "bil_class_rule.patient_share", "field": "the_pay", "value": 100 },
           { "name": "bil_class_rule.company_share", "field": "the_comp", "value": 0 }
         ]
@@ -158,15 +151,14 @@
       "requires": {
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
-          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001" } }
+          { "table": "V_PAT_DATA", "key": { "PATIENTNO": "990000001" }, "columns": { "COMP_CODE": "100", "PAY_VAT": "Y" } },
+          { "table": "COMPANYS", "key": { "COMP_CODE": "100" }, "columns": { "PAY_VAT": 0 } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001", "NON_MEDICAL": 0 } }
         ],
         "context": [
           { "name": "bil_price_rule.billing_price", "field": "price", "value": 400 },
-          { "name": "bil_price_rule.curr_code", "field": "curr_code", "value": "SAR" },
+          { "name": "bil_service_context.curr_code", "field": "curr_code", "value": "SAR" },
           { "name": "bil_service_context.vat_rate", "field": "vat_rate", "value": 15 },
-          { "name": "bil_service_context.non_medical", "value": 0 },
-          { "name": "bil_patient_context.pay_vat", "value": 1 },
-          { "name": "bil_patient_context.pay_vat_co", "value": 0 },
           { "name": "bil_class_rule.patient_share", "field": "the_pay", "value": 100 },
           { "name": "bil_class_rule.company_share", "field": "the_comp", "value": 300 }
         ]
@@ -192,15 +184,14 @@
       "requires": {
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
-          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001" } }
+          { "table": "V_PAT_DATA", "key": { "PATIENTNO": "990000001" }, "columns": { "COMP_CODE": "100", "PAY_VAT": "Y" } },
+          { "table": "COMPANYS", "key": { "COMP_CODE": "100" }, "columns": { "PAY_VAT": 0 } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001", "NON_MEDICAL": 1 } }
         ],
         "context": [
           { "name": "bil_price_rule.billing_price", "field": "price", "value": 400 },
-          { "name": "bil_price_rule.curr_code", "field": "curr_code", "value": "SAR" },
+          { "name": "bil_service_context.curr_code", "field": "curr_code", "value": "SAR" },
           { "name": "bil_service_context.vat_rate", "field": "vat_rate", "value": 15 },
-          { "name": "bil_service_context.non_medical", "value": 1 },
-          { "name": "bil_patient_context.pay_vat", "value": 1 },
-          { "name": "bil_patient_context.pay_vat_co", "value": 0 },
           { "name": "bil_class_rule.patient_share", "field": "the_pay", "value": 100 },
           { "name": "bil_class_rule.company_share", "field": "the_comp", "value": 300 }
         ]
@@ -230,11 +221,8 @@
         ],
         "context": [
           { "name": "bil_price_rule.billing_price", "field": "price", "value": 400 },
-          { "name": "bil_price_rule.curr_code", "field": "curr_code", "value": "SAR" },
+          { "name": "bil_service_context.curr_code", "field": "curr_code", "value": "SAR" },
           { "name": "bil_service_context.vat_rate", "field": "vat_rate", "value": 0 },
-          { "name": "bil_service_context.non_medical", "value": 0 },
-          { "name": "bil_patient_context.pay_vat", "value": 1 },
-          { "name": "bil_patient_context.pay_vat_co", "value": 1 },
           { "name": "bil_class_rule.patient_share", "field": "the_pay", "value": 100 },
           { "name": "bil_class_rule.company_share", "field": "the_comp", "value": 300 }
         ]
@@ -260,15 +248,13 @@
       "requires": {
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "V_PAT_DATA", "key": { "PATIENTNO": "990000001" }, "columns": { "PAY_VAT": "Y" } },
           { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001" } }
         ],
         "context": [
           { "name": "bil_price_rule.billing_price", "field": "price", "value": 33.3 },
-          { "name": "bil_price_rule.curr_code", "field": "curr_code", "value": "SAR" },
+          { "name": "bil_service_context.curr_code", "field": "curr_code", "value": "SAR" },
           { "name": "bil_service_context.vat_rate", "field": "vat_rate", "value": 15 },
-          { "name": "bil_service_context.non_medical", "value": 0 },
-          { "name": "bil_patient_context.pay_vat", "value": 1 },
-          { "name": "bil_patient_context.pay_vat_co", "value": 1 },
           { "name": "bil_class_rule.patient_share", "field": "the_pay", "value": 33.3 },
           { "name": "bil_class_rule.company_share", "field": "the_comp", "value": 0 }
         ]
@@ -294,18 +280,9 @@
       "requires": {
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
-          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001" } }
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001", "VAT_RATE": 120 } }
         ],
-        "context": [
-          { "name": "bil_price_rule.billing_price", "value": 100 },
-          { "name": "bil_price_rule.curr_code", "value": "SAR" },
-          { "name": "bil_service_context.vat_rate", "value": 120 },
-          { "name": "bil_service_context.non_medical", "value": 0 },
-          { "name": "bil_patient_context.pay_vat", "value": 1 },
-          { "name": "bil_patient_context.pay_vat_co", "value": 1 },
-          { "name": "bil_class_rule.patient_share", "value": 100 },
-          { "name": "bil_class_rule.company_share", "value": 0 }
-        ]
+        "context": []
       },
       "expected": {
         "error": {
@@ -328,18 +305,9 @@
       "requires": {
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
-          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001" } }
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001", "VAT_RATE": -5 } }
         ],
-        "context": [
-          { "name": "bil_price_rule.billing_price", "value": 100 },
-          { "name": "bil_price_rule.curr_code", "value": "SAR" },
-          { "name": "bil_service_context.vat_rate", "value": -5 },
-          { "name": "bil_service_context.non_medical", "value": 0 },
-          { "name": "bil_patient_context.pay_vat", "value": 1 },
-          { "name": "bil_patient_context.pay_vat_co", "value": 1 },
-          { "name": "bil_class_rule.patient_share", "value": 100 },
-          { "name": "bil_class_rule.company_share", "value": 0 }
-        ]
+        "context": []
       },
       "expected": {
         "error": {

@@ -31,7 +31,7 @@ const APPROV_REF_NO = 'APPROV_REF_NO';
 
 const NUMBER_LITERAL = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
 
-const NUMBER_ENTRY_ERROR = 'FRM-50016: Legal characters are 0-9 - + E.';
+const NUMBER_ENTRY_ERROR = 'FRM-50016: Legal characters are 0-9 - + E .';
 
 const EDITABLE_FIELDS: readonly EditableLineField[] = [
   { key: 'teethNo', item: 'TEETH_NO', label: 'Teeth No', kind: 'text', maxLength: 2 },
@@ -535,4 +535,3 @@ export default function MoreDetailsScreen({
     </main>
   );
 }
-

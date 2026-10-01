@@ -33,7 +33,6 @@
           { "name": "bil_service_context.vat_rate", "value": 0 },
           { "name": "bil_service_context.plan_price_disc", "value": 0 },
           { "name": "bil_service_context.is_package", "value": 0 },
-          { "name": "bil_offer_rule.matched", "value": "N" },
           { "name": "bil_price_rule.billing_price", "value": 300 },
           { "name": "bil_class_rule.the_pay", "value": 300 },
           { "name": "bil_class_rule.the_comp", "value": 0 }
@@ -64,7 +63,6 @@
           { "name": "bil_service_context.vat_rate", "value": 0 },
           { "name": "bil_service_context.plan_price_disc", "value": 0 },
           { "name": "bil_service_context.is_package", "value": 0 },
-          { "name": "bil_offer_rule.matched", "value": "N" },
           { "name": "bil_price_rule.billing_price", "value": 300 },
           { "name": "bil_class_rule.the_pay", "value": 300 },
           { "name": "bil_class_rule.the_comp", "value": 0 }
@@ -95,7 +93,6 @@
           { "name": "bil_service_context.vat_rate", "value": 0 },
           { "name": "bil_service_context.plan_price_disc", "value": 0 },
           { "name": "bil_service_context.is_package", "value": 0 },
-          { "name": "bil_offer_rule.matched", "value": "N" },
           { "name": "bil_price_rule.billing_price", "value": 500 },
           { "name": "bil_class_rule.the_pay", "value": 300 },
           { "name": "bil_class_rule.the_comp", "value": 200 }
@@ -127,7 +124,6 @@
           { "name": "bil_service_context.vat_rate", "value": 0 },
           { "name": "bil_service_context.plan_price_disc", "value": 0 },
           { "name": "bil_service_context.is_package", "value": 0 },
-          { "name": "bil_offer_rule.matched", "value": "N" },
           { "name": "bil_price_rule.billing_price", "value": 100.05 },
           { "name": "bil_class_rule.the_pay", "value": 100.05 },
           { "name": "bil_class_rule.the_comp", "value": 0 }
@@ -197,16 +193,7 @@
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
           { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": {} }
         ],
-        "context": [
-          { "name": "bil_service_context.curr_code", "value": "SAR" },
-          { "name": "bil_service_context.vat_rate", "value": 0 },
-          { "name": "bil_service_context.plan_price_disc", "value": 0 },
-          { "name": "bil_service_context.is_package", "value": 0 },
-          { "name": "bil_offer_rule.matched", "value": "N" },
-          { "name": "bil_price_rule.billing_price", "value": 300 },
-          { "name": "bil_class_rule.the_pay", "value": 300 },
-          { "name": "bil_class_rule.the_comp", "value": 0 }
-        ]
+        "context": []
       },
       "expected": {
         "outcome": "Error",

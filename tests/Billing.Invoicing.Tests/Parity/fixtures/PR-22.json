@@ -26,10 +26,7 @@
           { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
           { "table": "BIL_INVOICE_CREATE_REQUEST", "key": { "REQUEST_ID": "A22E0000000000000000000000000003" }, "columns": { "INV_NO": null, "PATIENTNO": 990000001, "COMPLETED_AT": null } }
         ],
-        "context": [
-          { "name": "BIL_INVOICE_CREATE_REQUEST unique key", "value": ["REQUEST_ID"] },
-          { "name": "price, currency and posting stages", "value": "not reached" }
-        ]
+        "context": []
       },
       "expected": {
         "error": { "package": "BIL_INVOICE_API", "number": -20848, "messagePrefix": "Invoice request A22E0000000000000000000000000003 exists but has no completed invoice." }
@@ -50,10 +47,7 @@
           { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
           { "table": "BIL_INVOICE_CREATE_REQUEST", "key": { "REQUEST_ID": "A22E0000000000000000000000000004" }, "columns": { "INV_NO": 880000010, "PATIENTNO": 990000002, "COMPLETED_AT": "2026-09-28T10:05:00" } }
         ],
-        "context": [
-          { "name": "BIL_INVOICE_CREATE_REQUEST unique key", "value": ["REQUEST_ID"] },
-          { "name": "price, currency and posting stages", "value": "not reached" }
-        ]
+        "context": []
       },
       "expected": {
         "error": { "package": "BIL_INVOICE_API", "number": -20849, "messagePrefix": "Invoice request A22E0000000000000000000000000004 already belongs to invoice 880000010 for another patient." }
@@ -75,10 +69,7 @@
           { "table": "BIL_INVOICE_CREATE_REQUEST", "key": { "REQUEST_ID": "A22E0000000000000000000000000005" }, "columns": { "INV_NO": 880000011, "PATIENTNO": 990000001, "COMPLETED_AT": "2026-09-28T10:05:00" } },
           { "table": "T_INV", "key": { "INV_NO": 880000011 }, "absent": true }
         ],
-        "context": [
-          { "name": "BIL_INVOICE_CREATE_REQUEST unique key", "value": ["REQUEST_ID"] },
-          { "name": "price, currency and posting stages", "value": "not reached" }
-        ]
+        "context": []
       },
       "expected": {
         "error": { "package": "BIL_INVOICE_API", "number": -20848, "messagePrefix": "Invoice request A22E0000000000000000000000000005 refers to unavailable invoice 880000011." }
@@ -100,10 +91,7 @@
           { "table": "BIL_INVOICE_CREATE_REQUEST", "key": { "REQUEST_ID": "A22E0000000000000000000000000006" }, "columns": { "INV_NO": 880000012, "PATIENTNO": 990000001, "COMPLETED_AT": "2026-09-28T10:05:00" } },
           { "table": "T_INV", "key": { "INV_NO": 880000012 }, "columns": { "PATIENTNO": 990000001 } }
         ],
-        "context": [
-          { "name": "BIL_INVOICE_CREATE_REQUEST unique key", "value": ["REQUEST_ID"] },
-          { "name": "price, currency and posting stages", "value": "not reached" }
-        ]
+        "context": []
       },
       "expected": {
         "values": { "invNo": 880000012, "message": "Invoice {inv_no} was already created for this request." }

@@ -75,7 +75,7 @@ public sealed class NoDdlInGeneratedSourceTests
         "global.json",
     ];
 
-    /// <summary>Fails when any scanned entry is a link or any scanned file holds schema-changing SQL, listing each by path.</summary>
+    /// <summary>Fails when a root build file, scanned root directory or scanned file is a link, or a scanned file holds schema-changing SQL, listing each by path; linked subdirectories are skipped unread.</summary>
     [Fact]
     public void GeneratedSource_ContainsNoDdl()
     {

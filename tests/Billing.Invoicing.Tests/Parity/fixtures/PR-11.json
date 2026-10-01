@@ -22,7 +22,8 @@
       "requires": {
         "rows": [
           { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
-          { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
+          { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } },
+          { "table": "T_INV", "key": { "PATIENTNO": "990000001" }, "absent": true }
         ],
         "context": [
           { "package": "BIL_PATIENT_CONTEXT", "field": "patientno", "value": "990000001" },

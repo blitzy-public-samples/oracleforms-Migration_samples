@@ -28,9 +28,10 @@ public sealed record FixtureMessage(string? Field, string Text, string Severity)
 public sealed record FixtureError(string Package, int Number, string MessagePrefix);
 
 /// <summary>Comparison settings of a fixture document.</summary>
-/// <param name="MoneyDecimals">Scale at which numeric values are compared.</param>
+/// <param name="MoneyDecimals">Scale at which numeric values not keyed in <paramref name="Decimals"/> are compared.</param>
 /// <param name="Exact">Value keys compared as exact text.</param>
-public sealed record FixtureCompare(int MoneyDecimals, IReadOnlyList<string> Exact);
+/// <param name="Decimals">Value keys whose numbers are compared as exact decimals, each mapped to the largest scale its expected value may carry.</param>
+public sealed record FixtureCompare(int MoneyDecimals, IReadOnlyList<string> Exact, IReadOnlyDictionary<string, int>? Decimals = null);
 
 /// <summary>Database rows and shared-package outputs a package case assumes.</summary>
 /// <param name="Rows">Assumed rows: table, key and column values.</param>
@@ -210,7 +211,8 @@ public static partial class ParityFixture
     /// <param name="compare">
     /// Strings need a string, char or <see cref="DateTime"/> actual, numbers a numeric actual and booleans a bool.
     /// Strings and <see cref="FixtureCompare.Exact"/> keys compare as exact text (booleans as <c>true</c>/<c>false</c>,
-    /// <see cref="DateTime"/> as <c>yyyy-MM-ddTHH:mm:ss</c>); other numbers compare at <see cref="FixtureCompare.MoneyDecimals"/>.
+    /// <see cref="DateTime"/> as <c>yyyy-MM-ddTHH:mm:ss</c>); <see cref="FixtureCompare.Decimals"/> numbers compare as exact decimals,
+    /// other numbers at <see cref="FixtureCompare.MoneyDecimals"/>.
     /// </param>
     public static void AssertValues(JsonElement expected, IReadOnlyDictionary<string, object?> actual, FixtureCompare compare)
     {
@@ -245,6 +247,10 @@ public static partial class ParityFixture
         }
 
         var exact = compare.Exact is not null && compare.Exact.Contains(key, StringComparer.Ordinal);
+        var scale = compare.Decimals?
+            .Where(pair => string.Equals(pair.Key, key, StringComparison.Ordinal))
+            .Select(pair => (int?)pair.Value)
+            .FirstOrDefault();
         switch (expected.ValueKind)
         {
             case JsonValueKind.String:
@@ -252,6 +258,9 @@ public static partial class ParityFixture
                 break;
             case JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False when exact:
                 AtPath(path, () => AssertExact(expected.GetRawText(), ToText(RequireType(expected, actual))));
+                break;
+            case JsonValueKind.Number when scale is { } places:
+                AtPath(path, () => AssertScaled(ReadDecimal(expected), ToDecimal(RequireType(expected, actual)), places));
                 break;
             case JsonValueKind.Number:
                 AtPath(path, () => AssertMoney(ReadDecimal(expected), ToDecimal(RequireType(expected, actual)), compare.MoneyDecimals));
@@ -341,6 +350,21 @@ public static partial class ParityFixture
         {
             Assert.Fail($"Value '{path}': {ex.Message}");
         }
+    }
+
+    private static void AssertScaled(decimal expected, decimal? actual, int scale)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(scale);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(scale, 28);
+
+        if (decimal.Round(expected, scale) != expected)
+        {
+            throw FailException.ForFailure(
+                $"expected number {expected.ToString(CultureInfo.InvariantCulture)} has digits beyond the fixture's scale {scale}.");
+        }
+
+        Assert.NotNull(actual);
+        Assert.Equal(expected, actual.GetValueOrDefault());
     }
 
     private static decimal ReadDecimal(JsonElement expected) =>
@@ -492,6 +516,24 @@ public static partial class ParityFixture
             throw Invalid(id, null, "compare.exact is missing.");
         }
 
+        foreach (var (key, scale) in document.Compare.Decimals ?? new Dictionary<string, int>())
+        {
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                throw Invalid(id, null, "compare.decimals has a blank key.");
+            }
+
+            if (scale is < 0 or > 28)
+            {
+                throw Invalid(id, null, $"compare.decimals '{key}' scale {scale} is outside 0 to 28.");
+            }
+
+            if (document.Compare.Exact.Contains(key, StringComparer.Ordinal))
+            {
+                throw Invalid(id, null, $"compare.decimals '{key}' is also listed in compare.exact.");
+            }
+        }
+
         if (document.Cases is null || document.Cases.Count == 0)
         {
             throw Invalid(id, null, "cases is missing or empty.");
@@ -508,7 +550,13 @@ public static partial class ParityFixture
         {
             Source = Freeze(document.Source),
             Cases = cases.AsReadOnly(),
-            Compare = document.Compare with { Exact = Freeze(document.Compare.Exact) },
+            Compare = document.Compare with
+            {
+                Exact = Freeze(document.Compare.Exact),
+                Decimals = document.Compare.Decimals is null
+                    ? null
+                    : new ReadOnlyDictionary<string, int>(document.Compare.Decimals.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal)),
+            },
         };
     }
 

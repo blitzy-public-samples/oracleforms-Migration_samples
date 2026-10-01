@@ -51,7 +51,7 @@ public sealed class InvoiceDefaultsRuleTests
         ParityFixture.AssertValues(expectedValues, Project(draft), fixture.Compare);
     }
 
-    /// <summary>Checks that the DR-20 fixture is a domain fixture traced to T015, the INVTYPEID item, T022 and T003 whose cases reach each default and preload branch, including a credit preload copying the card fields and a cash preload nulling them.</summary>
+    /// <summary>Checks that the DR-20 fixture is a domain fixture traced to T015, the INVTYPEID item, T022 and T003 whose cases reach each default and preload branch, including a credit preload copying the card fields, a cash preload nulling them, and claim '1' and '2' preloads being ignored.</summary>
     [Fact]
     [Trait("Rule", "DR-20")]
     public void Fixture_DR_20_is_a_domain_fixture_covering_each_default_branch()
@@ -94,6 +94,12 @@ public sealed class InvoiceDefaultsRuleTests
             && entry.Values.GetProperty("PAT_POLICY_NO").GetString() == entry.Input.ClaimPreload.PatPolicyNo);
         Assert.Contains(cardCases, entry => entry.Input.Parameters.CashOrCredit == 1
             && CardFieldKeys.All(key => entry.Values.GetProperty(key).ValueKind == JsonValueKind.Null));
+        Assert.Contains(cardCases, entry => entry.Input.Parameters.ClaimNo == "1"
+            && entry.Input.Parameters.CashOrCredit != 1
+            && CardFieldKeys.All(key => entry.Values.GetProperty(key).ValueKind == JsonValueKind.Null));
+        Assert.Contains(cardCases, entry => entry.Input.Parameters.ClaimNo == "2"
+            && entry.Input.Parameters.CashOrCredit != 1
+            && CardFieldKeys.All(key => entry.Values.GetProperty(key).ValueKind == JsonValueKind.Null));
     }
 
     /// <summary>Checks that a claim preload supplied with claim parameter '1' or '2' is not applied (T015).</summary>
@@ -116,6 +122,9 @@ public sealed class InvoiceDefaultsRuleTests
             SubCompCode = "305",
             ClassCode = 4,
             PayType = 2,
+            InsNumber = "INS-55",
+            CardEnd = new DateTime(2027, 1, 31),
+            PatPolicyNo = "POL-9",
         };
         var databaseTime = new DateTime(2026, 9, 28, 10, 0, 0, DateTimeKind.Unspecified);
 
@@ -129,6 +138,9 @@ public sealed class InvoiceDefaultsRuleTests
         Assert.Null(draft.SubCompCode);
         Assert.Null(draft.ClassCode);
         Assert.Null(draft.PayType);
+        Assert.Null(draft.InsNumber);
+        Assert.Null(draft.CardEnd);
+        Assert.Null(draft.PatPolicyNo);
         Assert.Equal(1, draft.SubPayType);
         Assert.Equal(databaseTime, draft.DraftDate);
     }

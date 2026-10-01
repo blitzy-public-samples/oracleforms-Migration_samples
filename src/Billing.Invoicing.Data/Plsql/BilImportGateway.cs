@@ -25,14 +25,13 @@ public sealed class BilImportGateway : IBilImportGateway
     private const string EngineLineCountName = "el_count";
 
     private const string MaxOutputLinesKey = "Invoicing:MaxOutputLines";
-    private const string CommandTimeoutSecondsKey = "Invoicing:CommandTimeoutSeconds";
 
     private readonly InvoicingDataOptions _options;
 
     /// <summary>Stores the data-layer settings; opens nothing.</summary>
     /// <param name="options">Application id, output capacity and command timeout used by every call.</param>
     /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
-    /// <exception cref="ArgumentOutOfRangeException"><see cref="InvoicingDataOptions.MaxOutputLines"/> or <see cref="InvoicingDataOptions.CommandTimeoutSeconds"/> is below 1.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><see cref="InvoicingDataOptions.MaxOutputLines"/> is below 1, or <see cref="InvoicingDataOptions.CommandTimeoutSeconds"/> is below 1 or above <see cref="InvoicingDataOptions.MaxCommandTimeoutSeconds"/>.</exception>
     public BilImportGateway(InvoicingDataOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -45,13 +44,7 @@ public sealed class BilImportGateway : IBilImportGateway
                 $"{MaxOutputLinesKey} ({nameof(InvoicingDataOptions)}.{nameof(InvoicingDataOptions.MaxOutputLines)}) must be at least 1.");
         }
 
-        if (options.CommandTimeoutSeconds < 1)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(options),
-                options.CommandTimeoutSeconds,
-                $"{CommandTimeoutSecondsKey} ({nameof(InvoicingDataOptions)}.{nameof(InvoicingDataOptions.CommandTimeoutSeconds)}) must be at least 1.");
-        }
+        options.EnsureCommandTimeout(nameof(options));
 
         _options = options;
     }

@@ -62,6 +62,31 @@ public sealed class BilInvoiceApiGatewayTests
     }
 
     [Fact]
+    [Trait("Decision", "D-90")]
+    public void Constructor_CommandTimeoutAtTheMaximum_IsAccepted()
+    {
+        var options = new InvoicingDataOptions { CommandTimeoutSeconds = InvoicingDataOptions.MaxCommandTimeoutSeconds };
+
+        Assert.IsType<BilInvoiceApiGateway>(new BilInvoiceApiGateway(options));
+    }
+
+    [Theory]
+    [Trait("Decision", "D-90")]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(InvoicingDataOptions.MaxCommandTimeoutSeconds + 1)]
+    [InlineData(int.MaxValue)]
+    public void Constructor_CommandTimeoutOutOfRange_ThrowsNamingTheKey(int commandTimeoutSeconds)
+    {
+        var options = new InvoicingDataOptions { CommandTimeoutSeconds = commandTimeoutSeconds };
+
+        var exception = Assert.Throws<ArgumentOutOfRangeException>("options", () => new BilInvoiceApiGateway(options));
+
+        Assert.Equal(commandTimeoutSeconds, exception.ActualValue);
+        Assert.Contains("Invoicing:CommandTimeoutSeconds", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void MaxDraftLines_IsTheConfiguredOutputCapacity()
     {
         IBilInvoiceApiGateway gateway = new BilInvoiceApiGateway(new InvoicingDataOptions { MaxOutputLines = MaxOutputLines });

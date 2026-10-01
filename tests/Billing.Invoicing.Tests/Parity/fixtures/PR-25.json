@@ -8,7 +8,6 @@
     { "construct": "BIL_INVOICE_ENGINE.calculate_lines not-eligible offer check", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1899" },
     { "construct": "BIL_INVOICE_ENGINE.create_invoice p_validate_offer_versions", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:3217" },
     { "construct": "BIL_INVOICE_API.expand_bundled_offer_ig_lines visible-row identity check", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:759" },
-    { "construct": "PU19 OKA", "locator": "05_Complex/Inv_Small_Cash.xml:978" },
     { "construct": "T066 SERVICEID WHEN-VALIDATE-ITEM standard-offer branch", "locator": "05_Complex/Inv_Small_Cash.xml:389" }
   ],
   "cases": [
@@ -42,16 +41,7 @@
           { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
           { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
         ],
-        "context": [
-          { "name": "bil_patient_context.patientno", "value": "990000001" },
-          { "name": "bil_patient_context.coverage_type", "value": "CREDIT" },
-          { "name": "bil_patient_context.list_id", "value": 1 },
-          { "name": "bil_cashier_shift.shift_open", "value": true },
-          { "name": "bil_service_context.curr_code[1001]", "value": "SAR" },
-          { "name": "bil_price_rule.billing_price[1001]", "value": 100.00 },
-          { "name": "bil_offer_rule.matched", "value": "N" },
-          { "name": "bil_audit.log_error.raises", "value": false }
-        ]
+        "context": []
       },
       "expected": {
         "error": { "package": "BIL_INVOICE_ENGINE", "number": -20970, "messagePrefix": "The offer changed after the invoice was calculated. " }
@@ -75,16 +65,7 @@
           { "table": "PATIENT", "key": { "PATIENTNO": 990000001 }, "columns": { "PHONE_H": null } },
           { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
         ],
-        "context": [
-          { "name": "bil_patient_context.patientno", "value": "990000001" },
-          { "name": "bil_patient_context.coverage_type", "value": "CREDIT" },
-          { "name": "bil_patient_context.list_id", "value": 1 },
-          { "name": "bil_cashier_shift.shift_open", "value": true },
-          { "name": "bil_service_context.curr_code[1001]", "value": "SAR" },
-          { "name": "bil_price_rule.billing_price[1001]", "value": 100.00 },
-          { "name": "bil_offer_rule.matched", "value": "N" },
-          { "name": "bil_audit.log_error.raises", "value": false }
-        ]
+        "context": []
       },
       "expected": {
         "error": { "package": "BIL_INVOICE_ENGINE", "number": -20970, "messagePrefix": "The offer changed after the invoice was calculated. " }
@@ -109,13 +90,9 @@
           { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
         ],
         "context": [
-          { "name": "bil_patient_context.patientno", "value": "990000001" },
-          { "name": "bil_patient_context.coverage_type", "value": "CREDIT" },
-          { "name": "bil_patient_context.list_id", "value": 1 },
           { "name": "bil_cashier_shift.shift_open", "value": true },
           { "name": "bil_service_context.curr_code[1001]", "value": "SAR" },
           { "name": "bil_price_rule.billing_price[1001]", "value": 100.00 },
-          { "name": "bil_offer_rule.matched", "value": "N" },
           { "name": "bil_class_rule.resolve_share.raises", "value": false },
           { "name": "get_next_invoice_no.raises", "value": false },
           { "name": "bil_audit.log_event.raises", "value": false },
