@@ -1,0 +1,226 @@
+{
+  "id": "PR-20",
+  "class": "package",
+  "source": [
+    { "construct": "BIL_INVOICE_ENGINE.c_request_unavailable_error", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:176" },
+    { "construct": "BIL_INVOICE_ENGINE.raise_request_unavailable -20931", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:619" },
+    { "construct": "BIL_INVOICE_ENGINE.refresh_request_line_from_source request line availability checks", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:745" },
+    { "construct": "BIL_INVOICE_ENGINE.insert_lines request link -20930", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2958" },
+    { "construct": "T061 D_INV POST-INSERT", "locator": "05_Complex/Inv_Small_Cash.xml:568" },
+    { "construct": "T055 D_INV PRE-INSERT", "locator": "05_Complex/Inv_Small_Cash.xml:562" }
+  ],
+  "cases": [
+    {
+      "name": "available-request-line-links",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CreateFullInvoice",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "subPayType": 1, "discT": 0 },
+        "lines": [
+          { "serviceId": "1001", "qty": 1, "patServReqRowId": 7201, "approvRefNo": null }
+        ],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "0F2A7C5E9B3D4E61A8C2D7F14B6E9A30" },
+        "requestId": "20A00000000000000000000000000001",
+        "p_send_sms": "N",
+        "p_build_print_url": "N"
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "PAT_SERV_REQ", "key": { "PAT_SERV_REQ_ROW_ID": 7201 }, "columns": { "D_INV_ROW_ID": null } },
+          {
+            "table": "V_SERVICES_REQ",
+            "key": { "PAT_SERV_REQ_ROW_ID": 7201 },
+            "columns": {
+              "PATIENTNO": "990000001",
+              "PAY_TYPE": "Cash",
+              "SERVICEID": "1001",
+              "QTY": 1,
+              "PRICE": 100.00,
+              "REQ_A_STATUS": 0,
+              "REQ_NEED_A": 0,
+              "APPROV_REF_NO": null,
+              "APPROV_DATE": null,
+              "APPROV_VALIDITY": null,
+              "D_INV_ROW_ID": null
+            }
+          }
+        ],
+        "context": [
+          { "serviceid": "1001", "qty": 1, "price": 100.00, "curr_code": "SAR", "vat_rate": 0 },
+          { "payment_posted": "Y", "queue_posted": "Y", "stock_posted": "Y" }
+        ]
+      },
+      "expected": { "outcome": "Pass" }
+    },
+    {
+      "name": "already-invoiced-request-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CreateFullInvoice",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "subPayType": 1, "discT": 0 },
+        "lines": [
+          { "serviceId": "1001", "qty": 1, "patServReqRowId": 7202, "approvRefNo": null }
+        ],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "0F2A7C5E9B3D4E61A8C2D7F14B6E9A30" },
+        "requestId": "20A00000000000000000000000000002",
+        "p_send_sms": "N",
+        "p_build_print_url": "N"
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "PAT_SERV_REQ", "key": { "PAT_SERV_REQ_ROW_ID": 7202 }, "columns": { "D_INV_ROW_ID": 880002 } },
+          {
+            "table": "V_SERVICES_REQ",
+            "key": { "PAT_SERV_REQ_ROW_ID": 7202 },
+            "columns": {
+              "PATIENTNO": "990000001",
+              "PAY_TYPE": "Cash",
+              "SERVICEID": "1001",
+              "QTY": 1,
+              "PRICE": 100.00,
+              "REQ_A_STATUS": 0,
+              "REQ_NEED_A": 0,
+              "APPROV_REF_NO": null,
+              "APPROV_DATE": null,
+              "APPROV_VALIDITY": null,
+              "D_INV_ROW_ID": 880002
+            }
+          }
+        ],
+        "context": []
+      },
+      "expected": {
+        "error": { "package": "BIL_INVOICE_ENGINE", "number": -20931, "messagePrefix": "One or more requested services were already invoiced or are no longer available." }
+      }
+    },
+    {
+      "name": "rejected-request-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CreateFullInvoice",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "subPayType": 1, "discT": 0 },
+        "lines": [
+          { "serviceId": "1001", "qty": 1, "patServReqRowId": 7203, "approvRefNo": null }
+        ],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "0F2A7C5E9B3D4E61A8C2D7F14B6E9A30" },
+        "requestId": "20A00000000000000000000000000003",
+        "p_send_sms": "N",
+        "p_build_print_url": "N"
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "PAT_SERV_REQ", "key": { "PAT_SERV_REQ_ROW_ID": 7203 }, "columns": { "D_INV_ROW_ID": null } },
+          {
+            "table": "V_SERVICES_REQ",
+            "key": { "PAT_SERV_REQ_ROW_ID": 7203 },
+            "columns": {
+              "PATIENTNO": "990000001",
+              "PAY_TYPE": "Cash",
+              "SERVICEID": "1001",
+              "QTY": 1,
+              "PRICE": 100.00,
+              "REQ_A_STATUS": 3,
+              "REQ_NEED_A": 0,
+              "APPROV_REF_NO": null,
+              "APPROV_DATE": null,
+              "APPROV_VALIDITY": null,
+              "D_INV_ROW_ID": null
+            }
+          }
+        ],
+        "context": []
+      },
+      "expected": {
+        "error": { "package": "BIL_INVOICE_ENGINE", "number": -20931, "messagePrefix": "One or more requested services were already invoiced or are no longer available." }
+      }
+    },
+    {
+      "name": "credit-request-without-approval-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CreateFullInvoice",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 2, "subPayType": 1, "discT": 0 },
+        "lines": [
+          { "serviceId": "1001", "qty": 1, "patServReqRowId": 7204, "approvRefNo": null }
+        ],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "0F2A7C5E9B3D4E61A8C2D7F14B6E9A30" },
+        "requestId": "20A00000000000000000000000000004",
+        "p_send_sms": "N",
+        "p_build_print_url": "N"
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "PAT_SERV_REQ", "key": { "PAT_SERV_REQ_ROW_ID": 7204 }, "columns": { "D_INV_ROW_ID": null } },
+          {
+            "table": "V_SERVICES_REQ",
+            "key": { "PAT_SERV_REQ_ROW_ID": 7204 },
+            "columns": {
+              "PATIENTNO": "990000001",
+              "PAY_TYPE": "Credit",
+              "SERVICEID": "1001",
+              "QTY": 1,
+              "PRICE": 100.00,
+              "REQ_A_STATUS": 0,
+              "REQ_NEED_A": 1,
+              "APPROV_REF_NO": null,
+              "APPROV_DATE": null,
+              "APPROV_VALIDITY": null,
+              "D_INV_ROW_ID": null
+            }
+          }
+        ],
+        "context": []
+      },
+      "expected": {
+        "error": { "package": "BIL_INVOICE_ENGINE", "number": -20931, "messagePrefix": "One or more requested services were already invoiced or are no longer available." }
+      }
+    },
+    {
+      "name": "expired-approval-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CreateFullInvoice",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 2, "subPayType": 1, "discT": 0 },
+        "lines": [
+          { "serviceId": "1001", "qty": 1, "patServReqRowId": 7205, "approvRefNo": "AP-55" }
+        ],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "0F2A7C5E9B3D4E61A8C2D7F14B6E9A30" },
+        "requestId": "20A00000000000000000000000000005",
+        "p_send_sms": "N",
+        "p_build_print_url": "N"
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "PAT_SERV_REQ", "key": { "PAT_SERV_REQ_ROW_ID": 7205 }, "columns": { "D_INV_ROW_ID": null } },
+          {
+            "table": "V_SERVICES_REQ",
+            "key": { "PAT_SERV_REQ_ROW_ID": 7205 },
+            "columns": {
+              "PATIENTNO": "990000001",
+              "PAY_TYPE": "Credit",
+              "SERVICEID": "1001",
+              "QTY": 1,
+              "PRICE": 100.00,
+              "REQ_A_STATUS": 0,
+              "REQ_NEED_A": 1,
+              "APPROV_REF_NO": "AP-55",
+              "APPROV_DATE": "2026-09-01T00:00:00",
+              "APPROV_VALIDITY": 10,
+              "D_INV_ROW_ID": null
+            }
+          }
+        ],
+        "context": []
+      },
+      "expected": {
+        "error": { "package": "BIL_INVOICE_ENGINE", "number": -20931, "messagePrefix": "One or more requested services were already invoiced or are no longer available." }
+      }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome"] }
+}

@@ -1,0 +1,62 @@
+{
+  "id": "PR-09",
+  "class": "package",
+  "source": [
+    { "construct": "BIL_INVOICE_ENGINE.get_next_invoice_no_safe", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1082" },
+    { "construct": "GET_NEXT_INVOICE_NO call", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1089" },
+    { "construct": "-20909", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1098" },
+    { "construct": "T011 T_INV PRE-INSERT", "locator": "05_Complex/Inv_Small_Cash.xml:363" }
+  ],
+  "cases": [
+    {
+      "name": "pending-oi-19-next-invoice-number-assigned",
+      "status": "pending-evidence",
+      "pendingOn": "OI-19",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CreateFullInvoice",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [
+          { "serviceId": "1001", "qty": 1 }
+        ],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "9C1D4E7A2B3F4A5C8D6E0F1A2B3C4D5E" },
+        "requestId": "0D2B6F41A9C34E57B8E1F09A3C5D7E21"
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001" } }
+        ],
+        "context": [
+          { "get_next_invoice_no.result": 500001 }
+        ]
+      },
+      "expected": {}
+    },
+    {
+      "name": "pending-oi-19-numbering-exhausted",
+      "status": "pending-evidence",
+      "pendingOn": "OI-19",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CreateFullInvoice",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [
+          { "serviceId": "1001", "qty": 1 }
+        ],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "9C1D4E7A2B3F4A5C8D6E0F1A2B3C4D5E" },
+        "requestId": "0D2B6F41A9C34E57B8E1F09A3C5D7E22"
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001" } },
+          { "table": "T_INV", "key": { "INV_NO": 500001 }, "columns": { "INV_NO": 500001 } }
+        ],
+        "context": [
+          { "get_next_invoice_no.result": 500001 }
+        ]
+      },
+      "expected": {}
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome"] }
+}

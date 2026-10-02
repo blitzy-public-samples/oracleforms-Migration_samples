@@ -1,0 +1,172 @@
+{
+  "id": "PR-18",
+  "class": "package",
+  "source": [
+    { "construct": "BIL_INVOICE_API.GET_PACKAGE_LINES", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:108" },
+    { "construct": "BIL_IMPORT.GET_PACKAGE_LINES package parent and PACKAGE_DTL components", "locator": "05_Complex/APEX_Reference/backend/BIL_IMPORT.sql:945" },
+    { "construct": "BIL_IMPORT.TO_ENGINE_LINES", "locator": "05_Complex/APEX_Reference/backend/BIL_IMPORT.sql:1340" },
+    { "construct": "BIL_INVOICE_ENGINE.get_package_definition_token", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:291" },
+    { "construct": "BIL_INVOICE_ENGINE.get_package_definition_token -20944", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:337" },
+    { "construct": "BIL_INVOICE_ENGINE.get_package_definition_token -20946", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:351" },
+    { "construct": "BIL_INVOICE_ENGINE.normalize_package_occurrences -20946", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1604" },
+    { "construct": "BIL_INVOICE_ENGINE.raise_package_stale -20969", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1308" },
+    { "construct": "BIL_INVOICE_ENGINE.normalize_package_occurrences stale token check", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1658" },
+    { "construct": "BIL_INVOICE_ENGINE.preview_invoice calculate_lines", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:3041" },
+    { "construct": "T089 IMP_PKG WHEN-BUTTON-PRESSED", "locator": "05_Complex/Inv_Small_Cash.xml:771" }
+  ],
+  "cases": [
+    {
+      "name": "package-expanded-into-components",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.GetPackageLines",
+        "packageServiceId": "P100",
+        "listId": 1,
+        "parentSourceId": null
+      },
+      "requires": {
+        "rows": [
+          { "table": "SERVICES", "key": { "SERVICEID": "P100", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 1, "PACKAGE_PRICING_METHOD": "FIXED_PRICE" } },
+          { "table": "SERVICES", "key": { "SERVICEID": "2001", "LIST_ID": 1 }, "columns": {} },
+          { "table": "SERVICES", "key": { "SERVICEID": "2002", "LIST_ID": 1 }, "columns": {} },
+          { "table": "PACKAGE_DTL", "key": { "SERVICEID": "P100", "LIST_ID": 1 }, "rowCount": 2 },
+          { "table": "PACKAGE_DTL", "key": { "SERVICEID": "P100", "LIST_ID": 1, "SUB_SERVICEID": "2001" }, "columns": { "QTY": 2, "OBJECT_VERSION_NUMBER": 1 } },
+          { "table": "PACKAGE_DTL", "key": { "SERVICEID": "P100", "LIST_ID": 1, "SUB_SERVICEID": "2002" }, "columns": { "QTY": 1, "OBJECT_VERSION_NUMBER": 1 } }
+        ],
+        "context": []
+      },
+      "expected": {
+        "values": {
+          "lines": [
+            {
+              "serviceid": "P100",
+              "qty": 1,
+              "price_override": null,
+              "use_price_override": "N",
+              "discount_type": "N",
+              "disc": 0,
+              "package_service_id": "P100",
+              "package_line_role": "PARENT",
+              "package_component_order": 0,
+              "package_parent_line_id": null,
+              "package_pricing_method": "FIXED_PRICE",
+              "package_definition_token": "2d2397f15608d5667548afd9aade4d1bf542fc0f38598b1399a2781c1a3d9cbc"
+            },
+            {
+              "serviceid": "2001",
+              "qty": 2,
+              "price_override": null,
+              "use_price_override": "N",
+              "discount_type": "N",
+              "disc": 0,
+              "package_service_id": "P100",
+              "package_line_role": "COMPONENT",
+              "package_component_order": 1,
+              "package_parent_line_id": null,
+              "package_pricing_method": "FIXED_PRICE",
+              "package_definition_token": "2d2397f15608d5667548afd9aade4d1bf542fc0f38598b1399a2781c1a3d9cbc"
+            },
+            {
+              "serviceid": "2002",
+              "qty": 1,
+              "price_override": null,
+              "use_price_override": "N",
+              "discount_type": "N",
+              "disc": 0,
+              "package_service_id": "P100",
+              "package_line_role": "COMPONENT",
+              "package_component_order": 2,
+              "package_parent_line_id": null,
+              "package_pricing_method": "FIXED_PRICE",
+              "package_definition_token": "2d2397f15608d5667548afd9aade4d1bf542fc0f38598b1399a2781c1a3d9cbc"
+            }
+          ],
+          "result": {
+            "source_type": "PACKAGE",
+            "source_count": 3,
+            "imported_count": 3,
+            "skipped_rejected_count": 0,
+            "skipped_need_approval_count": 0,
+            "skipped_invalid_count": 0,
+            "has_price_overrides": "N",
+            "message": "Package import completed. Imported 3 of 3 package lines."
+          }
+        }
+      }
+    },
+    {
+      "name": "package-without-components-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.GetPackageLines",
+        "packageServiceId": "P101",
+        "listId": 1,
+        "parentSourceId": null
+      },
+      "requires": {
+        "rows": [
+          { "table": "SERVICES", "key": { "SERVICEID": "P101", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 1, "PACKAGE_PRICING_METHOD": "FIXED_PRICE" } },
+          { "table": "PACKAGE_DTL", "key": { "SERVICEID": "P101", "LIST_ID": 1 }, "rowCount": 0 }
+        ],
+        "context": []
+      },
+      "expected": {
+        "error": { "package": "BIL_INVOICE_ENGINE", "number": -20944, "messagePrefix": "Invoice create failed: package " }
+      }
+    },
+    {
+      "name": "package-inactive-in-list-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [
+          { "clientId": "L1", "serviceId": "P102", "qty": 1, "discountType": "N", "disc": 0, "packageServiceId": "P102", "packageInstanceId": "P102:9E3A1C5B7D2F4A6B8C0D1E2F3A4B5C6D", "packageLineRole": "PARENT", "packageComponentOrder": 0, "packagePricingMethod": "FIXED_PRICE", "packageDefinitionToken": "2d2397f15608d5667548afd9aade4d1bf542fc0f38598b1399a2781c1a3d9cbc" },
+          { "clientId": "L2", "serviceId": "2001", "qty": 2, "discountType": "N", "disc": 0, "packageServiceId": "P102", "packageInstanceId": "P102:9E3A1C5B7D2F4A6B8C0D1E2F3A4B5C6D", "packageLineRole": "COMPONENT", "packageComponentOrder": 1, "packagePricingMethod": "FIXED_PRICE", "packageDefinitionToken": "2d2397f15608d5667548afd9aade4d1bf542fc0f38598b1399a2781c1a3d9cbc" },
+          { "clientId": "L3", "serviceId": "2002", "qty": 1, "discountType": "N", "disc": 0, "packageServiceId": "P102", "packageInstanceId": "P102:9E3A1C5B7D2F4A6B8C0D1E2F3A4B5C6D", "packageLineRole": "COMPONENT", "packageComponentOrder": 2, "packagePricingMethod": "FIXED_PRICE", "packageDefinitionToken": "2d2397f15608d5667548afd9aade4d1bf542fc0f38598b1399a2781c1a3d9cbc" }
+        ],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "5F0C3B8A2D6E4F1A9B7C0D3E5F8A1B2C" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "P102", "LIST_ID": 1, "IS_PACKAGE": 1 }, "rowCount": 0 }
+        ],
+        "context": []
+      },
+      "expected": {
+        "error": { "package": "BIL_INVOICE_ENGINE", "number": -20946, "messagePrefix": "Invoice create failed: package " }
+      }
+    },
+    {
+      "name": "stale-package-definition-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [
+          { "clientId": "L1", "serviceId": "P100", "qty": 1, "discountType": "N", "disc": 0, "packageServiceId": "P100", "packageInstanceId": "P100:9E3A1C5B7D2F4A6B8C0D1E2F3A4B5C6D", "packageLineRole": "PARENT", "packageComponentOrder": 0, "packagePricingMethod": "FIXED_PRICE", "packageDefinitionToken": "STALE" },
+          { "clientId": "L2", "serviceId": "2001", "qty": 2, "discountType": "N", "disc": 0, "packageServiceId": "P100", "packageInstanceId": "P100:9E3A1C5B7D2F4A6B8C0D1E2F3A4B5C6D", "packageLineRole": "COMPONENT", "packageComponentOrder": 1, "packagePricingMethod": "FIXED_PRICE", "packageDefinitionToken": "STALE" },
+          { "clientId": "L3", "serviceId": "2002", "qty": 1, "discountType": "N", "disc": 0, "packageServiceId": "P100", "packageInstanceId": "P100:9E3A1C5B7D2F4A6B8C0D1E2F3A4B5C6D", "packageLineRole": "COMPONENT", "packageComponentOrder": 2, "packagePricingMethod": "FIXED_PRICE", "packageDefinitionToken": "STALE" }
+        ],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "5F0C3B8A2D6E4F1A9B7C0D3E5F8A1B2C" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "P100", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 1, "PACKAGE_PRICING_METHOD": "FIXED_PRICE" } },
+          { "table": "PACKAGE_DTL", "key": { "SERVICEID": "P100", "LIST_ID": 1 }, "rowCount": 2 },
+          { "table": "PACKAGE_DTL", "key": { "SERVICEID": "P100", "LIST_ID": 1, "SUB_SERVICEID": "2001" }, "columns": { "QTY": 2, "OBJECT_VERSION_NUMBER": 1 } },
+          { "table": "PACKAGE_DTL", "key": { "SERVICEID": "P100", "LIST_ID": 1, "SUB_SERVICEID": "2002" }, "columns": { "QTY": 1, "OBJECT_VERSION_NUMBER": 1 } }
+        ],
+        "context": []
+      },
+      "expected": {
+        "error": { "package": "BIL_INVOICE_ENGINE", "number": -20969, "messagePrefix": "The package definition changed after the invoice was calculated. " }
+      }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "package_line_role"] }
+}

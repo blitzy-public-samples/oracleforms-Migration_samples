@@ -1,0 +1,117 @@
+{
+  "id": "DR-01",
+  "class": "domain",
+  "source": [
+    { "construct": "T014 T_INV WHEN-VALIDATE-RECORD", "locator": "05_Complex/Inv_Small_Cash.xml:366" }
+  ],
+  "cases": [
+    {
+      "name": "credit-company-zero-blocks",
+      "status": "derivable",
+      "input": {
+        "header": { "payType": 2, "compCode": "0", "patientNo": "1001", "docId": 10 }
+      },
+      "expected": {
+        "outcome": "Blocking",
+        "messages": [
+          { "field": "COMP_CODE", "text": "this patient not belong to any company !!", "severity": "Blocking" }
+        ]
+      }
+    },
+    {
+      "name": "credit-company-zero-stops-before-patient-check",
+      "status": "derivable",
+      "input": {
+        "header": { "payType": 2, "compCode": "0", "patientNo": null, "docId": null }
+      },
+      "expected": {
+        "outcome": "Blocking",
+        "messages": [
+          { "field": "COMP_CODE", "text": "this patient not belong to any company !!", "severity": "Blocking" }
+        ]
+      }
+    },
+    {
+      "name": "patient-missing-blocks",
+      "status": "derivable",
+      "input": {
+        "header": { "payType": 1, "compCode": "0", "patientNo": null, "docId": 10 }
+      },
+      "expected": {
+        "outcome": "Blocking",
+        "messages": [
+          { "field": "PATIENTNO", "text": "Select Patient No is required ", "severity": "Blocking" }
+        ]
+      }
+    },
+    {
+      "name": "patient-blank-blocks",
+      "status": "derivable",
+      "input": {
+        "header": { "payType": 1, "compCode": "0", "patientNo": "   ", "docId": 10 }
+      },
+      "expected": {
+        "outcome": "Blocking",
+        "messages": [
+          { "field": "PATIENTNO", "text": "Select Patient No is required ", "severity": "Blocking" }
+        ]
+      }
+    },
+    {
+      "name": "patient-tab-blocks",
+      "status": "derivable",
+      "input": {
+        "header": { "payType": 1, "compCode": "0", "patientNo": "\t", "docId": 10 }
+      },
+      "expected": {
+        "outcome": "Blocking",
+        "messages": [
+          { "field": "PATIENTNO", "text": "Select Patient No is required ", "severity": "Blocking" }
+        ]
+      }
+    },
+    {
+      "name": "patient-missing-stops-before-doctor-check",
+      "status": "derivable",
+      "input": {
+        "header": { "payType": 1, "compCode": "0", "patientNo": null, "docId": null }
+      },
+      "expected": {
+        "outcome": "Blocking",
+        "messages": [
+          { "field": "PATIENTNO", "text": "Select Patient No is required ", "severity": "Blocking" }
+        ]
+      }
+    },
+    {
+      "name": "doctor-missing-blocks",
+      "status": "derivable",
+      "input": {
+        "header": { "payType": 1, "compCode": "0", "patientNo": "1001", "docId": null }
+      },
+      "expected": {
+        "outcome": "Blocking",
+        "messages": [
+          { "field": "DOCIDX", "text": "Doctor No is required ", "severity": "Blocking" }
+        ]
+      }
+    },
+    {
+      "name": "cash-complete-passes",
+      "status": "derivable",
+      "input": {
+        "header": { "payType": 1, "compCode": "0", "patientNo": "1001", "docId": 10 }
+      },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "credit-insured-complete-passes",
+      "status": "derivable",
+      "input": {
+        "header": { "payType": 2, "compCode": "205", "patientNo": "1001", "docId": 10 }
+      },
+      "expected": { "outcome": "Pass", "messages": [] }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "messages"] }
+}

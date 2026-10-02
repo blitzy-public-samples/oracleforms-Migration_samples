@@ -1,0 +1,33 @@
+{
+  "id": "DR-02",
+  "class": "domain",
+  "source": [
+    { "construct": "T009 FORM PRE-COMMIT", "locator": "05_Complex/Inv_Small_Cash.xml:1102" }
+  ],
+  "cases": [
+    {
+      "name": "no-lines-blocks",
+      "status": "derivable",
+      "input": { "lineCount": 0 },
+      "expected": {
+        "outcome": "Blocking",
+        "messages": [
+          { "field": null, "text": "Invoice without Details", "severity": "Blocking" }
+        ]
+      }
+    },
+    {
+      "name": "one-line-passes",
+      "status": "derivable",
+      "input": { "lineCount": 1 },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "several-lines-pass",
+      "status": "derivable",
+      "input": { "lineCount": 5 },
+      "expected": { "outcome": "Pass", "messages": [] }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "messages"] }
+}

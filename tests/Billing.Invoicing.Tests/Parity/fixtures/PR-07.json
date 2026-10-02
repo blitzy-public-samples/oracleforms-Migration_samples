@@ -1,0 +1,129 @@
+{
+  "id": "PR-07",
+  "class": "package",
+  "source": [
+    { "construct": "BIL_INVOICE_ENGINE.preview_invoice cash_collected", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:3058" },
+    { "construct": "BIL_INVOICE_ENGINE.preview_invoice -20916 preview", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:3062" },
+    { "construct": "BIL_INVOICE_ENGINE.create_invoice -20916 create", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:3229" },
+    { "construct": "BIL_INVOICE_API.calculate_editable_invoice_preview o_totals.cash_collected", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:923" },
+    { "construct": "PU20 ROUND_FOR_CASH", "locator": "05_Complex/Inv_Small_Cash.xml:979" },
+    { "construct": "D_INV.NET formula", "locator": "05_Complex/Inv_Small_Cash.xml:416" }
+  ],
+  "cases": [
+    {
+      "name": "cash-no-vat",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0, "finalDisc": 0.00 },
+        "lines": [ { "serviceId": "10701", "qty": 1, "discountType": "N" } ],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "0123456789ABCDEF0123456789ABCDEF" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "10701" }, "columns": {} }
+        ],
+        "context": [
+          { "name": "bil_price_rule.billing_price", "value": 250.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2428" },
+          { "name": "bil_service_context.curr_code", "value": "SAR", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2427" },
+          { "name": "bil_service_context.vat_rate", "value": 0, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1189" },
+          { "name": "bil_class_rule.the_pay", "value": 250.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2016" },
+          { "name": "bil_class_rule.the_comp", "value": 0.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2016" }
+        ]
+      },
+      "expected": {
+        "outcome": "Pass",
+        "values": { "pat_pay": 250.00, "vat_total_pat": 0.00, "cash_collected": 250.00 }
+      }
+    },
+    {
+      "name": "cash-with-final-discount-and-vat",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0, "finalDisc": 30.00 },
+        "lines": [ { "serviceId": "10702", "qty": 1, "discountType": "N" } ],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "0123456789ABCDEF0123456789ABCDEF" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "V_PAT_DATA", "key": { "PATIENTNO": "990000001" }, "columns": { "PAY_VAT": "Y" } },
+          { "table": "SERVICES", "key": { "SERVICEID": "10702" }, "columns": {} }
+        ],
+        "context": [
+          { "name": "bil_price_rule.billing_price", "value": 300.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2428" },
+          { "name": "bil_service_context.curr_code", "value": "SAR", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2427" },
+          { "name": "bil_service_context.vat_rate", "value": 15, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1189" },
+          { "name": "bil_class_rule.the_pay", "value": 300.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2016" },
+          { "name": "bil_class_rule.the_comp", "value": 0.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2016" }
+        ]
+      },
+      "expected": {
+        "outcome": "Pass",
+        "values": { "pat_pay": 300.00, "vat_total_pat": 45.00, "cash_collected": 315.00 }
+      }
+    },
+    {
+      "name": "credit-patient-share-with-vat",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 2, "discT": 0, "finalDisc": 0.00 },
+        "lines": [ { "serviceId": "10703", "qty": 1, "discountType": "N" } ],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "0123456789ABCDEF0123456789ABCDEF" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "V_PAT_DATA", "key": { "PATIENTNO": "990000001" }, "columns": { "PAY_VAT": "Y" } },
+          { "table": "SERVICES", "key": { "SERVICEID": "10703" }, "columns": {} }
+        ],
+        "context": [
+          { "name": "bil_price_rule.billing_price", "value": 500.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2428" },
+          { "name": "bil_service_context.curr_code", "value": "SAR", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2427" },
+          { "name": "bil_service_context.vat_rate", "value": 15, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1189" },
+          { "name": "bil_class_rule.the_pay", "value": 100.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2016" },
+          { "name": "bil_class_rule.the_comp", "value": 400.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2016" }
+        ]
+      },
+      "expected": {
+        "outcome": "Pass",
+        "values": { "pat_pay": 100.00, "vat_total_pat": 15.00, "cash_collected": 115.00 }
+      }
+    },
+    {
+      "name": "full-company-share-no-amount-due",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 2, "discT": 0, "finalDisc": 0.00 },
+        "lines": [ { "serviceId": "10704", "qty": 1, "discountType": "N" } ],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "0123456789ABCDEF0123456789ABCDEF" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "10704" }, "columns": {} }
+        ],
+        "context": [
+          { "name": "bil_price_rule.billing_price", "value": 500.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2428" },
+          { "name": "bil_service_context.curr_code", "value": "SAR", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2427" },
+          { "name": "bil_service_context.vat_rate", "value": 15, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1189" },
+          { "name": "bil_class_rule.the_pay", "value": 0.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2016" },
+          { "name": "bil_class_rule.the_comp", "value": 500.00, "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2016" }
+        ]
+      },
+      "expected": {
+        "outcome": "Pass",
+        "values": { "pat_pay": 0.00, "vat_total_pat": 0.00, "cash_collected": 0.00 }
+      }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome"] }
+}

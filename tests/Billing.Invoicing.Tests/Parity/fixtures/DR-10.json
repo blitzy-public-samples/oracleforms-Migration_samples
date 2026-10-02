@@ -1,0 +1,84 @@
+{
+  "id": "DR-10",
+  "class": "domain",
+  "source": [
+    { "construct": "T029 DOCIDX WHEN-VALIDATE-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:43" }
+  ],
+  "cases": [
+    {
+      "name": "claim-flag-r-uses-parameter",
+      "status": "derivable",
+      "input": {
+        "header": { "patientNo": "1001", "clinicId": 14, "draftDate": "2026-09-28T10:15:00" },
+        "parameters": { "claimFlag": "R", "claimNo": "C-7788" }
+      },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "CLAIM_NO": "C-7788" } }
+    },
+    {
+      "name": "claim-flag-r-takes-precedence-over-new-consult",
+      "status": "derivable",
+      "input": {
+        "header": { "patientNo": "1001", "clinicId": 14, "draftDate": "2026-09-28T10:15:00" },
+        "parameters": { "claimFlag": "R", "claimNo": "1" }
+      },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "CLAIM_NO": "1" } }
+    },
+    {
+      "name": "claim-parameter-existing-claim-used",
+      "status": "derivable",
+      "input": {
+        "header": { "patientNo": "1001", "clinicId": 14, "draftDate": "2026-09-28T10:15:00" },
+        "parameters": { "claimFlag": null, "claimNo": "O-1001-14-010926" }
+      },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "CLAIM_NO": "O-1001-14-010926" } }
+    },
+    {
+      "name": "claim-parameter-zero-used",
+      "status": "derivable",
+      "input": {
+        "header": { "patientNo": "1001", "clinicId": 14, "draftDate": "2026-09-28T10:15:00" },
+        "parameters": { "claimFlag": null, "claimNo": "0" }
+      },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "CLAIM_NO": "0" } }
+    },
+    {
+      "name": "new-consult-builds-number",
+      "status": "derivable",
+      "input": {
+        "header": { "patientNo": "1001", "clinicId": 14, "draftDate": "2026-09-28T10:15:00" },
+        "parameters": { "claimFlag": null, "claimNo": "1" }
+      },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "CLAIM_NO": "O-1001-14-280926" } }
+    },
+    {
+      "name": "independent-service-builds-number",
+      "status": "derivable",
+      "input": {
+        "header": { "patientNo": "1001", "clinicId": 14, "draftDate": "2026-01-05T09:00:00" },
+        "parameters": { "claimFlag": null, "claimNo": "2" }
+      },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "CLAIM_NO": "O-1001-14-050126" } }
+    },
+    {
+      "name": "claim-parameter-null-builds-number",
+      "status": "derivable",
+      "input": {
+        "header": { "patientNo": "1001", "clinicId": 14, "draftDate": "2026-09-28T10:15:00" },
+        "parameters": { "claimFlag": null, "claimNo": null }
+      },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "CLAIM_NO": "O-1001-14-280926" } }
+    },
+    {
+      "name": "draft-created-before-midnight-keeps-draft-date",
+      "status": "derivable",
+      "input": {
+        "header": { "patientNo": "1001", "clinicId": 14, "draftDate": "2026-09-28T23:59:59" },
+        "parameters": { "claimFlag": null, "claimNo": "1" },
+        "savedAt": "2026-09-29T00:00:30"
+      },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "CLAIM_NO": "O-1001-14-280926" } },
+      "decision": "D-39"
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "messages", "CLAIM_NO"] }
+}

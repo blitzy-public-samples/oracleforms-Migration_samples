@@ -1,0 +1,218 @@
+{
+  "id": "PR-08",
+  "class": "package",
+  "source": [
+    { "construct": "BIL_INVOICE_API.calculate_editable_invoice_preview amount_2", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:924" },
+    { "construct": "BIL_INVOICE_API.calculate_editable_invoice_preview amount_1", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:926" },
+    { "construct": "BIL_INVOICE_API.calculate_editable_invoice_preview remaining_amount", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:932" },
+    { "construct": "BIL_INVOICE_API.calculate_editable_invoice_preview payment_status", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:935" },
+    { "construct": "BIL_INVOICE_API.money", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:202" },
+    { "construct": "BIL_INVOICE_ENGINE.preview_invoice cash_collected", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:3058" },
+    { "construct": "PU10 SMALL_CALC", "locator": "05_Complex/Inv_Small_Cash.xml:969" }
+  ],
+  "cases": [
+    {
+      "name": "auto-first-amount-paid",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0, "amount1": 0, "amount2": 0 },
+        "lines": [ { "clientId": "PR08-L1", "serviceId": "10801", "qty": 1, "discountType": "N" } ],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "5E2B8C4D7A1F4E3B9C6D0A2F8E4B1C08" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "10801" }, "columns": { "SERVICEID": "10801" } }
+        ],
+        "context": [
+          { "output": "bil_price_rule.resolve_price.billing_price", "field": "price", "value": 310.5 },
+          { "output": "bil_service_context.get_context.curr_code", "field": "curr_code", "value": "SAR" },
+          { "output": "bil_service_context.get_context.plan_price_disc", "field": "plan_discount_pct", "value": 0 },
+          { "output": "bil_service_context.get_context.vat_rate", "field": "vat_rate", "value": 0 },
+          { "output": "bil_offer_rule.resolve_standard_offer.matched", "field": "discount_source", "value": "NONE" },
+          { "output": "bil_class_rule.resolve_share.the_pay", "field": "the_pay", "value": 310.5 },
+          { "output": "bil_class_rule.resolve_share.the_comp", "field": "the_comp", "value": 0 }
+        ]
+      },
+      "expected": {
+        "values": { "cash_collected": 310.5, "amount_1": 310.5, "amount_2": 0, "remaining_amount": 0, "payment_status": "Paid" }
+      }
+    },
+    {
+      "name": "auto-first-amount-with-second-paid",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0, "amount1": 0, "amount2": 100 },
+        "lines": [ { "clientId": "PR08-L1", "serviceId": "10801", "qty": 1, "discountType": "N" } ],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "5E2B8C4D7A1F4E3B9C6D0A2F8E4B1C08" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "10801" }, "columns": { "SERVICEID": "10801" } }
+        ],
+        "context": [
+          { "output": "bil_price_rule.resolve_price.billing_price", "field": "price", "value": 310.5 },
+          { "output": "bil_service_context.get_context.curr_code", "field": "curr_code", "value": "SAR" },
+          { "output": "bil_service_context.get_context.plan_price_disc", "field": "plan_discount_pct", "value": 0 },
+          { "output": "bil_service_context.get_context.vat_rate", "field": "vat_rate", "value": 0 },
+          { "output": "bil_offer_rule.resolve_standard_offer.matched", "field": "discount_source", "value": "NONE" },
+          { "output": "bil_class_rule.resolve_share.the_pay", "field": "the_pay", "value": 310.5 },
+          { "output": "bil_class_rule.resolve_share.the_comp", "field": "the_comp", "value": 0 }
+        ]
+      },
+      "expected": {
+        "values": { "cash_collected": 310.5, "amount_1": 210.5, "amount_2": 100, "remaining_amount": 0, "payment_status": "Paid" }
+      }
+    },
+    {
+      "name": "auto-second-amount-exceeds-due-overpaid",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0, "amount1": 0, "amount2": 400 },
+        "lines": [ { "clientId": "PR08-L1", "serviceId": "10801", "qty": 1, "discountType": "N" } ],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "5E2B8C4D7A1F4E3B9C6D0A2F8E4B1C08" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "10801" }, "columns": { "SERVICEID": "10801" } }
+        ],
+        "context": [
+          { "output": "bil_price_rule.resolve_price.billing_price", "field": "price", "value": 310.5 },
+          { "output": "bil_service_context.get_context.curr_code", "field": "curr_code", "value": "SAR" },
+          { "output": "bil_service_context.get_context.plan_price_disc", "field": "plan_discount_pct", "value": 0 },
+          { "output": "bil_service_context.get_context.vat_rate", "field": "vat_rate", "value": 0 },
+          { "output": "bil_offer_rule.resolve_standard_offer.matched", "field": "discount_source", "value": "NONE" },
+          { "output": "bil_class_rule.resolve_share.the_pay", "field": "the_pay", "value": 310.5 },
+          { "output": "bil_class_rule.resolve_share.the_comp", "field": "the_comp", "value": 0 }
+        ]
+      },
+      "expected": {
+        "values": { "cash_collected": 310.5, "amount_1": 0, "amount_2": 400, "remaining_amount": -89.5, "payment_status": "Overpaid" }
+      }
+    },
+    {
+      "name": "manual-partial",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0, "amount1": 100, "amount2": 0 },
+        "lines": [ { "clientId": "PR08-L1", "serviceId": "10801", "qty": 1, "discountType": "N" } ],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "5E2B8C4D7A1F4E3B9C6D0A2F8E4B1C08" },
+        "amount1Auto": false
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "10801" }, "columns": { "SERVICEID": "10801" } }
+        ],
+        "context": [
+          { "output": "bil_price_rule.resolve_price.billing_price", "field": "price", "value": 310.5 },
+          { "output": "bil_service_context.get_context.curr_code", "field": "curr_code", "value": "SAR" },
+          { "output": "bil_service_context.get_context.plan_price_disc", "field": "plan_discount_pct", "value": 0 },
+          { "output": "bil_service_context.get_context.vat_rate", "field": "vat_rate", "value": 0 },
+          { "output": "bil_offer_rule.resolve_standard_offer.matched", "field": "discount_source", "value": "NONE" },
+          { "output": "bil_class_rule.resolve_share.the_pay", "field": "the_pay", "value": 310.5 },
+          { "output": "bil_class_rule.resolve_share.the_comp", "field": "the_comp", "value": 0 }
+        ]
+      },
+      "expected": {
+        "values": { "cash_collected": 310.5, "amount_1": 100, "amount_2": 0, "remaining_amount": 210.5, "payment_status": "Partial" }
+      }
+    },
+    {
+      "name": "manual-unpaid",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0, "amount1": 0, "amount2": 0 },
+        "lines": [ { "clientId": "PR08-L1", "serviceId": "10801", "qty": 1, "discountType": "N" } ],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "5E2B8C4D7A1F4E3B9C6D0A2F8E4B1C08" },
+        "amount1Auto": false
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "10801" }, "columns": { "SERVICEID": "10801" } }
+        ],
+        "context": [
+          { "output": "bil_price_rule.resolve_price.billing_price", "field": "price", "value": 310.5 },
+          { "output": "bil_service_context.get_context.curr_code", "field": "curr_code", "value": "SAR" },
+          { "output": "bil_service_context.get_context.plan_price_disc", "field": "plan_discount_pct", "value": 0 },
+          { "output": "bil_service_context.get_context.vat_rate", "field": "vat_rate", "value": 0 },
+          { "output": "bil_offer_rule.resolve_standard_offer.matched", "field": "discount_source", "value": "NONE" },
+          { "output": "bil_class_rule.resolve_share.the_pay", "field": "the_pay", "value": 310.5 },
+          { "output": "bil_class_rule.resolve_share.the_comp", "field": "the_comp", "value": 0 }
+        ]
+      },
+      "expected": {
+        "values": { "cash_collected": 310.5, "amount_1": 0, "amount_2": 0, "remaining_amount": 310.5, "payment_status": "Unpaid" }
+      }
+    },
+    {
+      "name": "manual-overpaid",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0, "amount1": 400, "amount2": 0 },
+        "lines": [ { "clientId": "PR08-L1", "serviceId": "10801", "qty": 1, "discountType": "N" } ],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "5E2B8C4D7A1F4E3B9C6D0A2F8E4B1C08" },
+        "amount1Auto": false
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "10801" }, "columns": { "SERVICEID": "10801" } }
+        ],
+        "context": [
+          { "output": "bil_price_rule.resolve_price.billing_price", "field": "price", "value": 310.5 },
+          { "output": "bil_service_context.get_context.curr_code", "field": "curr_code", "value": "SAR" },
+          { "output": "bil_service_context.get_context.plan_price_disc", "field": "plan_discount_pct", "value": 0 },
+          { "output": "bil_service_context.get_context.vat_rate", "field": "vat_rate", "value": 0 },
+          { "output": "bil_offer_rule.resolve_standard_offer.matched", "field": "discount_source", "value": "NONE" },
+          { "output": "bil_class_rule.resolve_share.the_pay", "field": "the_pay", "value": 310.5 },
+          { "output": "bil_class_rule.resolve_share.the_comp", "field": "the_comp", "value": 0 }
+        ]
+      },
+      "expected": {
+        "values": { "cash_collected": 310.5, "amount_1": 400, "amount_2": 0, "remaining_amount": -89.5, "payment_status": "Overpaid" }
+      }
+    },
+    {
+      "name": "no-amount-due",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 2, "discT": 0, "amount1": 0, "amount2": 0 },
+        "lines": [ { "clientId": "PR08-L1", "serviceId": "10801", "qty": 1, "discountType": "N" } ],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "5E2B8C4D7A1F4E3B9C6D0A2F8E4B1C08" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "10801" }, "columns": { "SERVICEID": "10801" } }
+        ],
+        "context": [
+          { "output": "bil_price_rule.resolve_price.billing_price", "field": "price", "value": 310.5 },
+          { "output": "bil_service_context.get_context.curr_code", "field": "curr_code", "value": "SAR" },
+          { "output": "bil_service_context.get_context.plan_price_disc", "field": "plan_discount_pct", "value": 0 },
+          { "output": "bil_service_context.get_context.vat_rate", "field": "vat_rate", "value": 0 },
+          { "output": "bil_class_rule.resolve_share.the_pay", "field": "the_pay", "value": 0 },
+          { "output": "bil_class_rule.resolve_share.the_comp", "field": "the_comp", "value": 310.5 }
+        ]
+      },
+      "expected": {
+        "values": { "cash_collected": 0, "amount_1": 0, "amount_2": 0, "remaining_amount": 0, "payment_status": "No Amount Due" }
+      }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "payment_status"] }
+}

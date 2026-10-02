@@ -1,0 +1,129 @@
+{
+  "id": "PR-13",
+  "class": "package",
+  "source": [
+    { "construct": "BIL_INVOICE_ENGINE.assert_header_valid", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:493" },
+    { "construct": "BIL_INVOICE_ENGINE.assert_header_valid -20900", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:500" },
+    { "construct": "BIL_INVOICE_ENGINE.assert_header_valid -20923", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:520" },
+    { "construct": "BIL_INVOICE_ENGINE.assert_header_valid -20924", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:534" },
+    { "construct": "BIL_INVOICE_ENGINE.create_invoice -20964", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:3156" },
+    { "construct": "BIL_INVOICE_ENGINE.create_invoice -20915", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:3170" },
+    { "construct": "T014 T_INV WHEN-VALIDATE-RECORD", "locator": "05_Complex/Inv_Small_Cash.xml:366" }
+  ],
+  "cases": [
+    {
+      "name": "patient-missing-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": null, "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0, "docId": 10, "clinicId": 14 },
+        "lines": [{ "serviceId": "1001", "qty": 1 }],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "5A1C0E7B3D9F4A2E8B6C1D0F7E3A9213" }
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } },
+          { "table": "DOCTORS", "key": { "DOCID": 10 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 1 } },
+          { "table": "DOCTORS", "key": { "DOCID": 11 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 0 } }
+        ],
+        "context": []
+      },
+      "expected": {
+        "error": { "package": "BIL_INVOICE_ENGINE", "number": -20900, "messagePrefix": "Invoice create failed: patient number is required." }
+      }
+    },
+    {
+      "name": "doctor-without-clinic-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0, "docId": 10, "clinicId": null },
+        "lines": [{ "serviceId": "1001", "qty": 1 }],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "5A1C0E7B3D9F4A2E8B6C1D0F7E3A9213" }
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } },
+          { "table": "DOCTORS", "key": { "DOCID": 10 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 1 } },
+          { "table": "DOCTORS", "key": { "DOCID": 11 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 0 } }
+        ],
+        "context": []
+      },
+      "expected": {
+        "error": { "package": "BIL_INVOICE_ENGINE", "number": -20923, "messagePrefix": "Invoice create failed: clinic is required when doctor is supplied." }
+      }
+    },
+    {
+      "name": "doctor-outside-clinic-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0, "docId": 10, "clinicId": 3 },
+        "lines": [{ "serviceId": "1001", "qty": 1 }],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "5A1C0E7B3D9F4A2E8B6C1D0F7E3A9213" }
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } },
+          { "table": "DOCTORS", "key": { "DOCID": 10 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 1 } },
+          { "table": "DOCTORS", "key": { "DOCID": 11 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 0 } }
+        ],
+        "context": []
+      },
+      "expected": {
+        "error": { "package": "BIL_INVOICE_ENGINE", "number": -20924, "messagePrefix": "Invoice create failed: selected doctor does not belong to the selected clinic." }
+      }
+    },
+    {
+      "name": "inactive-doctor-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0, "docId": 11, "clinicId": 14 },
+        "lines": [{ "serviceId": "1001", "qty": 1 }],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "5A1C0E7B3D9F4A2E8B6C1D0F7E3A9213" }
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } },
+          { "table": "DOCTORS", "key": { "DOCID": 10 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 1 } },
+          { "table": "DOCTORS", "key": { "DOCID": 11 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 0 } }
+        ],
+        "context": []
+      },
+      "expected": {
+        "error": { "package": "BIL_INVOICE_ENGINE", "number": -20924, "messagePrefix": "Invoice create failed: selected doctor does not belong to the selected clinic." }
+      }
+    },
+    {
+      "name": "valid-doctor-and-clinic-passes",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0, "docId": 10, "clinicId": 14 },
+        "lines": [{ "serviceId": "1001", "qty": 1 }],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "5A1C0E7B3D9F4A2E8B6C1D0F7E3A9213" }
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } },
+          { "table": "DOCTORS", "key": { "DOCID": 10 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 1 } },
+          { "table": "DOCTORS", "key": { "DOCID": 11 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 0 } }
+        ],
+        "context": [
+          { "name": "bil_service_context.curr_code", "value": "SAR" },
+          { "name": "bil_price_rule.billing_price", "value": 100 }
+        ]
+      },
+      "expected": {
+        "outcome": "Pass"
+      }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome"] }
+}

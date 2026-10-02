@@ -1,0 +1,13 @@
+# .NET
+bin/
+obj/
+
+# Node
+node_modules/
+
+# Tests
+TestResults/
+coverage.cobertura.xml
+
+# Web
+src/Billing.Invoicing.Web/wwwroot/

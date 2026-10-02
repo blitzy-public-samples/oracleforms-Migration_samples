@@ -1,0 +1,140 @@
+{
+  "id": "PR-03",
+  "class": "package",
+  "source": [
+    { "construct": "BIL_INVOICE_ENGINE.calculate_lines plan discount", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1946" },
+    { "construct": "BIL_INVOICE_ENGINE.calculate_lines -20945", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1956" },
+    { "construct": "BIL_INVOICE_ENGINE.calculate_lines -20922", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1966" },
+    { "construct": "BIL_INVOICE_ENGINE.calculate_lines -20961", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1992" },
+    { "construct": "BIL_INVOICE_ENGINE.calculate_lines discount source", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2003" },
+    { "construct": "PU19 OKA", "locator": "05_Complex/Inv_Small_Cash.xml:978" },
+    { "construct": "PU10 SMALL_CALC", "locator": "05_Complex/Inv_Small_Cash.xml:969" }
+  ],
+  "cases": [
+    {
+      "name": "plan-discount-applied",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [{ "serviceId": "10301", "qty": 2, "discountType": "N", "disc": 0, "myDisc": 0 }],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000003" }
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "10301", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
+        ],
+        "context": [
+          { "name": "bil_price_rule.billing_price", "value": 100 },
+          { "name": "bil_price_rule.allow_discount", "value": "Y" },
+          { "name": "bil_service_context.plan_price_disc", "value": 10 },
+          { "name": "bil_service_context.curr_code", "value": "SAR" },
+          { "name": "bil_service_context.vat_rate", "value": 0 },
+          { "name": "bil_service_context.list_id", "value": 1 }
+        ]
+      },
+      "expected": {
+        "outcome": "Pass",
+        "values": {
+          "lines": [
+            { "plan_discount_pct": 10, "plan_discount_amount": 20, "manual_discount_type": "N", "manual_discount_pct": 0, "manual_discount_amount": 0, "disc": 10, "my_disc": 20, "discount_source": "PLAN" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "plan-discount-out-of-range-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [{ "serviceId": "10302", "qty": 2, "discountType": "N", "disc": 0, "myDisc": 0 }],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000003" }
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "10302", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
+        ],
+        "context": []
+      },
+      "expected": {
+        "error": { "package": "BIL_INVOICE_ENGINE", "number": -20945, "messagePrefix": "Invoice create failed: plan discount must be between 0 and 100 for service " }
+      }
+    },
+    {
+      "name": "manual-discount-on-non-discountable-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [{ "serviceId": "10303", "qty": 2, "discountType": "R", "disc": 5, "myDisc": 0 }],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000003" }
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "10303", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
+        ],
+        "context": []
+      },
+      "expected": {
+        "error": { "package": "BIL_INVOICE_ENGINE", "number": -20922, "messagePrefix": "Invoice create failed: service " }
+      }
+    },
+    {
+      "name": "combined-discount-over-gross-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [{ "serviceId": "10301", "qty": 2, "discountType": "R", "disc": 50, "myDisc": 0 }],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000003" }
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "10301", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
+        ],
+        "context": []
+      },
+      "expected": {
+        "error": { "package": "BIL_INVOICE_ENGINE", "number": -20961, "messagePrefix": "Invoice create failed: combined plan and manual discount cannot exceed gross amount on line " }
+      }
+    },
+    {
+      "name": "combined-discount-within-gross",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [{ "serviceId": "10301", "qty": 2, "discountType": "R", "disc": 10, "myDisc": 0 }],
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000003" }
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "10301", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
+        ],
+        "context": [
+          { "name": "bil_price_rule.billing_price", "value": 100 },
+          { "name": "bil_price_rule.allow_discount", "value": "Y" },
+          { "name": "bil_service_context.plan_price_disc", "value": 10 },
+          { "name": "bil_service_context.curr_code", "value": "SAR" },
+          { "name": "bil_service_context.vat_rate", "value": 0 },
+          { "name": "bil_service_context.list_id", "value": 1 }
+        ]
+      },
+      "expected": {
+        "outcome": "Pass",
+        "values": {
+          "lines": [
+            { "plan_discount_pct": 10, "plan_discount_amount": 20, "manual_discount_type": "R", "manual_discount_pct": 10, "manual_discount_amount": 20, "disc": 20, "my_disc": 40, "discount_source": "PLAN_AND_MANUAL" }
+          ]
+        }
+      }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "discount_source"] }
+}

@@ -1,0 +1,112 @@
+{
+  "id": "DR-04",
+  "class": "domain",
+  "source": [
+    { "construct": "T031 CLINICID WHEN-VALIDATE-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:47" }
+  ],
+  "cases": [
+    {
+      "name": "check-sex-mismatch-warns",
+      "status": "derivable",
+      "input": { "method": "CheckSex", "clinic": { "clinicId": 3, "six": 1, "ageMin": null, "ageMax": null, "sysCatType": "OPD", "patientSex": 2 } },
+      "expected": { "outcome": "Warning", "messages": [{ "field": "CLINICID", "text": "Patient sex not suitable for this clinic", "severity": "Warning" }] }
+    },
+    {
+      "name": "check-sex-match-passes",
+      "status": "derivable",
+      "input": { "method": "CheckSex", "clinic": { "clinicId": 3, "six": 1, "ageMin": null, "ageMax": null, "sysCatType": "OPD", "patientSex": 1 } },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "check-sex-unrestricted-clinic-passes",
+      "status": "derivable",
+      "input": { "method": "CheckSex", "clinic": { "clinicId": 3, "six": null, "ageMin": null, "ageMax": null, "sysCatType": "OPD", "patientSex": 2 } },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "check-sex-unknown-patient-sex-passes",
+      "status": "derivable",
+      "input": { "method": "CheckSex", "clinic": { "clinicId": 3, "six": 1, "ageMin": null, "ageMax": null, "sysCatType": "OPD", "patientSex": null } },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "check-age-below-minimum-warns",
+      "status": "derivable",
+      "input": { "method": "CheckAge", "clinic": { "clinicId": 5, "six": null, "ageMin": 18, "ageMax": 60, "sysCatType": "OPD", "patientSex": 1 }, "ageYears": 10 },
+      "expected": { "outcome": "Warning", "messages": [{ "field": "CLINICID", "text": "Patient age  not suitable for this clinic", "severity": "Warning" }] }
+    },
+    {
+      "name": "check-age-above-maximum-warns",
+      "status": "derivable",
+      "input": { "method": "CheckAge", "clinic": { "clinicId": 5, "six": null, "ageMin": 18, "ageMax": 60, "sysCatType": "OPD", "patientSex": 1 }, "ageYears": 61 },
+      "expected": { "outcome": "Warning", "messages": [{ "field": "CLINICID", "text": "Patient age  not suitable for this clinic", "severity": "Warning" }] }
+    },
+    {
+      "name": "check-age-within-limits-passes",
+      "status": "derivable",
+      "input": { "method": "CheckAge", "clinic": { "clinicId": 5, "six": null, "ageMin": 18, "ageMax": 60, "sysCatType": "OPD", "patientSex": 1 }, "ageYears": 30 },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "check-age-limits-inclusive-minimum-passes",
+      "status": "derivable",
+      "input": { "method": "CheckAge", "clinic": { "clinicId": 5, "six": null, "ageMin": 18, "ageMax": 60, "sysCatType": "OPD", "patientSex": 1 }, "ageYears": 18 },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "check-age-limits-inclusive-maximum-passes",
+      "status": "derivable",
+      "input": { "method": "CheckAge", "clinic": { "clinicId": 5, "six": null, "ageMin": 18, "ageMax": 60, "sysCatType": "OPD", "patientSex": 1 }, "ageYears": 60 },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "check-age-zero-treated-as-one-passes",
+      "status": "derivable",
+      "input": { "method": "CheckAge", "clinic": { "clinicId": 7, "six": null, "ageMin": 1, "ageMax": 12, "sysCatType": "OPD", "patientSex": 1 }, "ageYears": 0 },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "check-age-no-limits-passes",
+      "status": "derivable",
+      "input": { "method": "CheckAge", "clinic": { "clinicId": 3, "six": null, "ageMin": null, "ageMax": null, "sysCatType": "OPD", "patientSex": 1 }, "ageYears": 30 },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "check-age-only-maximum-exceeded-warns",
+      "status": "derivable",
+      "input": { "method": "CheckAge", "clinic": { "clinicId": 7, "six": null, "ageMin": null, "ageMax": 12, "sysCatType": "OPD", "patientSex": 1 }, "ageYears": 30 },
+      "expected": { "outcome": "Warning", "messages": [{ "field": "CLINICID", "text": "Patient age  not suitable for this clinic", "severity": "Warning" }] }
+    },
+    {
+      "name": "check-age-only-maximum-within-passes",
+      "status": "derivable",
+      "input": { "method": "CheckAge", "clinic": { "clinicId": 7, "six": null, "ageMin": null, "ageMax": 12, "sysCatType": "OPD", "patientSex": 1 }, "ageYears": 5 },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "check-age-only-maximum-boundary-passes",
+      "status": "derivable",
+      "input": { "method": "CheckAge", "clinic": { "clinicId": 7, "six": null, "ageMin": null, "ageMax": 12, "sysCatType": "OPD", "patientSex": 1 }, "ageYears": 12 },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "check-age-only-minimum-violated-warns",
+      "status": "derivable",
+      "input": { "method": "CheckAge", "clinic": { "clinicId": 9, "six": null, "ageMin": 18, "ageMax": null, "sysCatType": "OPD", "patientSex": 1 }, "ageYears": 10 },
+      "expected": { "outcome": "Warning", "messages": [{ "field": "CLINICID", "text": "Patient age  not suitable for this clinic", "severity": "Warning" }] }
+    },
+    {
+      "name": "check-age-only-minimum-within-passes",
+      "status": "derivable",
+      "input": { "method": "CheckAge", "clinic": { "clinicId": 9, "six": null, "ageMin": 18, "ageMax": null, "sysCatType": "OPD", "patientSex": 1 }, "ageYears": 30 },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "check-age-only-minimum-boundary-passes",
+      "status": "derivable",
+      "input": { "method": "CheckAge", "clinic": { "clinicId": 9, "six": null, "ageMin": 18, "ageMax": null, "sysCatType": "OPD", "patientSex": 1 }, "ageYears": 18 },
+      "expected": { "outcome": "Pass", "messages": [] }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "messages"] }
+}

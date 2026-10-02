@@ -1,0 +1,64 @@
+{
+  "id": "DR-11",
+  "class": "domain",
+  "source": [
+    { "construct": "T029 DOCIDX WHEN-VALIDATE-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:43" }
+  ],
+  "cases": [
+    {
+      "name": "doctor-missing-warns",
+      "status": "derivable",
+      "input": {
+        "header": { "docId": null },
+        "parameters": { "theDoc": null }
+      },
+      "expected": { "outcome": "Warning", "messages": [{ "field": "DOCIDX", "text": "You Must Select Doctor", "severity": "Warning" }] }
+    },
+    {
+      "name": "doctor-missing-with-entry-doctor-warns-once",
+      "status": "derivable",
+      "input": {
+        "header": { "docId": null },
+        "parameters": { "theDoc": 10 }
+      },
+      "expected": { "outcome": "Warning", "messages": [{ "field": "DOCIDX", "text": "You Must Select Doctor", "severity": "Warning" }] }
+    },
+    {
+      "name": "doctor-changed-from-entry-doctor-resets",
+      "status": "derivable",
+      "input": {
+        "header": { "docId": 20 },
+        "parameters": { "theDoc": 10 }
+      },
+      "expected": { "outcome": "Warning", "messages": [{ "field": "DOCIDX", "text": "You Cant Change doctor", "severity": "Warning" }], "values": { "DOCIDX": 10 } }
+    },
+    {
+      "name": "same-doctor-passes",
+      "status": "derivable",
+      "input": {
+        "header": { "docId": 10 },
+        "parameters": { "theDoc": 10 }
+      },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "no-entry-doctor-passes",
+      "status": "derivable",
+      "input": {
+        "header": { "docId": 20 },
+        "parameters": { "theDoc": null }
+      },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "entry-doctor-zero-passes",
+      "status": "derivable",
+      "input": {
+        "header": { "docId": 20 },
+        "parameters": { "theDoc": 0 }
+      },
+      "expected": { "outcome": "Pass", "messages": [] }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "messages", "DOCIDX"] }
+}

@@ -1,0 +1,164 @@
+{
+  "id": "PR-21",
+  "class": "package",
+  "source": [
+    { "construct": "BIL_IMPORT.GET_VISIT_LINE", "locator": "05_Complex/APEX_Reference/backend/BIL_IMPORT.sql:120" },
+    { "construct": "-20752", "locator": "05_Complex/APEX_Reference/backend/BIL_IMPORT.sql:1216" },
+    { "construct": "-20753", "locator": "05_Complex/APEX_Reference/backend/BIL_IMPORT.sql:1232" },
+    { "construct": "-20754", "locator": "05_Complex/APEX_Reference/backend/BIL_IMPORT.sql:1237" },
+    { "construct": "-20755", "locator": "05_Complex/APEX_Reference/backend/BIL_IMPORT.sql:1243" },
+    { "construct": "visit line assembly", "locator": "05_Complex/APEX_Reference/backend/BIL_IMPORT.sql:1270" },
+    { "construct": "BIL_IMPORT.TO_ENGINE_LINES", "locator": "05_Complex/APEX_Reference/backend/BIL_IMPORT.sql:1340" },
+    { "construct": "T029 DOCIDX WHEN-VALIDATE-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:43" },
+    { "construct": "T030 DOCIDX KEY-NEXT-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:44" }
+  ],
+  "cases": [
+    {
+      "name": "consultation-line-from-setup",
+      "status": "derivable",
+      "input": {
+        "operation": "BilImportGateway.GetVisitLine",
+        "header": { "patientNo": "990000001", "docId": 10, "payType": 1, "clinicId": 14, "draftDate": "2026-09-28T10:00:00" },
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000021" },
+        "visitKind": "Consultation"
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "DOCTORS", "key": { "DOCID": 10 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 1 } },
+          { "table": "DOCTOR_CONSULTATION", "key": { "LIST_ID": 1, "DOCID": 10 }, "count": 1, "columns": { "CONS_SERVID": "3001", "REVIEW_SERVID": "3002" } },
+          { "table": "DOCTOR_CONSULTATION", "key": { "DOCID": 10 }, "count": 1 },
+          { "table": "SERVICES", "key": { "SERVICEID": "3001" }, "columns": { "IS_PACKAGE": 0 } }
+        ],
+        "context": []
+      },
+      "expected": {
+        "values": {
+          "source_type": "NEW_VISIT",
+          "source_count": 1,
+          "imported_count": 1,
+          "message": "Visit service resolved. Service: 3001.",
+          "lines": [
+            { "serviceid": "3001", "qty": 1, "discount_type": "N", "disc": 0, "my_disc": 0, "price_override": null, "use_price_override": "N" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "review-line-from-setup",
+      "status": "derivable",
+      "input": {
+        "operation": "BilImportGateway.GetVisitLine",
+        "header": { "patientNo": "990000001", "docId": 10, "payType": 1, "clinicId": 14, "draftDate": "2026-09-28T10:00:00" },
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000021" },
+        "visitKind": "Review"
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "DOCTORS", "key": { "DOCID": 10 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 1 } },
+          { "table": "DOCTOR_CONSULTATION", "key": { "LIST_ID": 1, "DOCID": 10 }, "count": 1, "columns": { "CONS_SERVID": "3001", "REVIEW_SERVID": "3002" } },
+          { "table": "DOCTOR_CONSULTATION", "key": { "DOCID": 10 }, "count": 1 },
+          { "table": "SERVICES", "key": { "SERVICEID": "3002" }, "columns": { "IS_PACKAGE": 0 } }
+        ],
+        "context": []
+      },
+      "expected": {
+        "values": {
+          "source_type": "NEW_VISIT",
+          "source_count": 1,
+          "imported_count": 1,
+          "message": "Visit service resolved. Service: 3002.",
+          "lines": [
+            { "serviceid": "3002", "qty": 1, "discount_type": "N", "disc": 0, "my_disc": 0, "price_override": null, "use_price_override": "N" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "no-setup-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilImportGateway.GetVisitLine",
+        "header": { "patientNo": "990000001", "docId": 21003, "payType": 1, "clinicId": 14, "draftDate": "2026-09-28T10:00:00" },
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000021" },
+        "visitKind": "Consultation"
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "DOCTORS", "key": { "DOCID": 21003 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 1 } },
+          { "table": "DOCTOR_CONSULTATION", "key": { "LIST_ID": 1, "DOCID": 21003 }, "count": 0 }
+        ],
+        "context": []
+      },
+      "expected": {
+        "error": { "package": "BIL_IMPORT", "number": -20753, "messagePrefix": "Visit import failed: no consultation/review setup was found for this doctor and patient price list." }
+      }
+    },
+    {
+      "name": "duplicated-setup-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilImportGateway.GetVisitLine",
+        "header": { "patientNo": "990000001", "docId": 21004, "payType": 1, "clinicId": 14, "draftDate": "2026-09-28T10:00:00" },
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000021" },
+        "visitKind": "Consultation"
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "DOCTORS", "key": { "DOCID": 21004 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 1 } },
+          { "table": "DOCTOR_CONSULTATION", "key": { "LIST_ID": 1, "DOCID": 21004 }, "count": 2, "columns": { "CONS_SERVID": "3001", "REVIEW_SERVID": "3002" } }
+        ],
+        "context": []
+      },
+      "expected": {
+        "error": { "package": "BIL_IMPORT", "number": -20754, "messagePrefix": "Visit import failed: consultation/review setup is duplicated for this doctor and patient price list." }
+      }
+    },
+    {
+      "name": "consultation-service-missing-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilImportGateway.GetVisitLine",
+        "header": { "patientNo": "990000001", "docId": 21005, "payType": 1, "clinicId": 14, "draftDate": "2026-09-28T10:00:00" },
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000021" },
+        "visitKind": "Consultation"
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "DOCTORS", "key": { "DOCID": 21005 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 1 } },
+          { "table": "DOCTOR_CONSULTATION", "key": { "LIST_ID": 1, "DOCID": 21005 }, "count": 1, "columns": { "CONS_SERVID": null, "REVIEW_SERVID": "3002" } }
+        ],
+        "context": []
+      },
+      "expected": {
+        "error": { "package": "BIL_IMPORT", "number": -20755, "messagePrefix": "Visit import failed: no consultation service is configured for this doctor and patient price list." }
+      }
+    },
+    {
+      "name": "review-service-missing-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilImportGateway.GetVisitLine",
+        "header": { "patientNo": "990000001", "docId": 21006, "payType": 1, "clinicId": 14, "draftDate": "2026-09-28T10:00:00" },
+        "operator": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000021" },
+        "visitKind": "Review"
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "DOCTORS", "key": { "DOCID": 21006 }, "columns": { "CLINICID": 14, "DOC_ACTIVE": 1 } },
+          { "table": "DOCTOR_CONSULTATION", "key": { "LIST_ID": 1, "DOCID": 21006 }, "count": 1, "columns": { "CONS_SERVID": "3001", "REVIEW_SERVID": null } }
+        ],
+        "context": []
+      },
+      "expected": {
+        "error": { "package": "BIL_IMPORT", "number": -20755, "messagePrefix": "Visit import failed: no review service is configured for this doctor and patient price list." }
+      }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome"] }
+}

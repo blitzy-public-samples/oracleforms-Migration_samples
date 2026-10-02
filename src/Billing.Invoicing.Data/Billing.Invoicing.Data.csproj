@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Billing.Invoicing.Domain\Billing.Invoicing.Domain.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Oracle.ManagedDataAccess.Core" />
+    <PackageReference Include="Dapper" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Billing.Invoicing.Tests" />
+  </ItemGroup>
+
+</Project>

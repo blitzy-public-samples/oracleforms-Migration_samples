@@ -1,0 +1,382 @@
+using System.ComponentModel.DataAnnotations;
+using System.Globalization;
+using System.Reflection;
+using System.Runtime.CompilerServices;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
+using Billing.Invoicing.Domain.Model;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
+
+namespace Billing.Invoicing.Api.Contracts;
+
+/// <summary>Unsaved invoice draft exchanged between client and server.</summary>
+public sealed record DraftDto : IValidatableObject
+{
+    private const int ValueMode = 0;
+    private const int PercentMode = 1;
+    private const string UnsupportedDiscountMode = "DISC_T must be 0 (Value Disc) or 1 (Rate Disc)";
+    private const string UndefinedDiscountLimitChoice =
+        $"{nameof(DiscountLimitChoice)} must be {nameof(Billing.Invoicing.Domain.Model.DiscountLimitChoice.MaximumDiscount)} or {nameof(Billing.Invoicing.Domain.Model.DiscountLimitChoice.Cancel)}";
+    private const string DiscTItem = "DISC_T";
+    private const string FinalDiscPercItem = "FINALDISC_PERC";
+    private const string FinalDiscItem = "FINALDISC";
+    private const string Amount1Item = "AMOUNT_1";
+    private const string Amount2Item = "AMOUNT_2";
+    private const string CashPayedItem = "CASH_PAYED";
+
+    private static readonly decimal MaxAmount = decimal.MaxValue / 4m;
+    private static readonly string MaxAmountText = MaxAmount.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>32-character upper-case hexadecimal request id, kept for the life of the draft.</summary>
+    public string RequestId { get; init; } = string.Empty;
+
+    /// <summary>Database time read when the draft was created; its JSON is ISO 8601 text without a time-zone designator.</summary>
+    [JsonConverter(typeof(DraftDateContract))]
+    public DateTime DraftDate { get; init; }
+
+    /// <summary>Seal of the request id and draft date issued with the draft.</summary>
+    public string? DraftSeal { get; init; }
+
+    /// <summary>The <c>T_INV</c> header; its JSON omits the pre-authorisation, <c>OFERID</c>, <c>DOCID1</c> and <c>SEQ_NO</c>.</summary>
+    [JsonConverter(typeof(RequestHeaderContract))]
+    public InvoiceHeaderDraft Header { get; init; } = new();
+
+    /// <summary>The <c>D_INV</c> lines in grid order; a line's zero-based position is its line index; their JSON omits <c>CATID</c> and the display-only <c>FIXPAY</c>, <c>PAYRATE</c>, lens and <c>INS_EMP</c> members; under options given to <see cref="LimitLines"/>, an array over the cap binds as no line with <see cref="LinesRefusal"/> set.</summary>
+    [JsonConverter(typeof(RequestLinesContract))]
+    public IReadOnlyList<InvoiceLineDraft> Lines { get; init; } = [];
+
+    /// <summary>The Form entry parameters set by the calling module.</summary>
+    public InvoiceEntryParameters Parameters { get; init; } = new();
+
+    /// <summary>The operator's answer to the maximum-discount prompt; null when none was given.</summary>
+    public Billing.Invoicing.Domain.Model.DiscountLimitChoice? DiscountLimitChoice { get; init; }
+
+    /// <summary>The refusal naming the line count and the cap when the JSON's lines exceeded the cap and were left unbound; otherwise null.</summary>
+    internal string? LinesRefusal => (Lines as RefusedLines)?.Text;
+
+    /// <summary>Rejects an unsupported DISC_T or DiscountLimitChoice and an out-of-bound AMOUNT_1, AMOUNT_2 or CASH_PAYED, naming the legacy item.</summary>
+    IEnumerable<ValidationResult> IValidatableObject.Validate(ValidationContext validationContext)
+    {
+        var header = Header;
+
+        if (header?.DiscT is { } mode && mode is not (ValueMode or PercentMode))
+        {
+            yield return new ValidationResult(UnsupportedDiscountMode, [DiscTItem]);
+        }
+
+        if (DiscountLimitChoice is { } choice && !Enum.IsDefined(choice))
+        {
+            var discountItem = header?.DiscT == PercentMode ? FinalDiscPercItem : FinalDiscItem;
+            yield return new ValidationResult(UndefinedDiscountLimitChoice, [discountItem]);
+        }
+
+        if (header is null)
+        {
+            yield break;
+        }
+
+        (decimal? Value, string Item)[] amounts =
+        [
+            (header.Amount1, Amount1Item),
+            (header.Amount2, Amount2Item),
+            (header.CashPayed, CashPayedItem),
+        ];
+
+        foreach (var (value, item) in amounts)
+        {
+            if (value is { } amount && Math.Abs(amount) > MaxAmount)
+            {
+                yield return new ValidationResult($"{item} must be between -{MaxAmountText} and {MaxAmountText}", [item]);
+            }
+        }
+    }
+
+    /// <summary>Makes <paramref name="options"/> bind a draft whose JSON holds more than <paramref name="maxLines"/> lines without reading its lines, as <see cref="RefusedLines"/>.</summary>
+    /// <param name="options">Options whose type-info resolver gains the line limit.</param>
+    /// <param name="maxLines">Largest line count accepted; at least 1.</param>
+    internal static void LimitLines(JsonSerializerOptions options, int maxLines)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxLines, 1);
+
+        options.TypeInfoResolver = (options.TypeInfoResolver ?? new DefaultJsonTypeInfoResolver()).WithAddedModifier(typeInfo =>
+        {
+            if (typeInfo.Type != typeof(DraftDto))
+            {
+                return;
+            }
+
+            foreach (var property in typeInfo.Properties)
+            {
+                if (property.AttributeProvider is MemberInfo { Name: nameof(Lines) })
+                {
+                    property.CustomConverter = new RequestLinesContract(maxLines);
+                }
+            }
+        });
+    }
+
+    /// <summary>Lines of a draft whose JSON holds more lines than an invoice can be created with; holds no line.</summary>
+    /// <param name="lineCount">Number of lines in the draft's JSON.</param>
+    /// <param name="maxLines">Largest line count an invoice can be created with.</param>
+    internal sealed class RefusedLines(int lineCount, int maxLines) : IReadOnlyList<InvoiceLineDraft>
+    {
+        /// <summary>Number of lines in the draft's JSON, a null or malformed element included.</summary>
+        public int LineCount { get; } = lineCount;
+
+        /// <summary>Largest line count an invoice can be created with.</summary>
+        public int MaxLines { get; } = maxLines;
+
+        /// <summary>The refusal naming the line count and the cap.</summary>
+        public string Text { get; } = string.Create(
+            CultureInfo.InvariantCulture, $"The draft has {lineCount} lines; an invoice can be created with at most {maxLines} lines.");
+
+        /// <summary>Always 0.</summary>
+        public int Count => 0;
+
+        /// <summary>Throws <see cref="ArgumentOutOfRangeException"/> for every index.</summary>
+        public InvoiceLineDraft this[int index] => throw new ArgumentOutOfRangeException(nameof(index));
+
+        /// <summary>Enumerates no line.</summary>
+        public IEnumerator<InvoiceLineDraft> GetEnumerator() => Enumerable.Empty<InvoiceLineDraft>().GetEnumerator();
+
+        /// <summary>Enumerates no line.</summary>
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    /// <summary>JSON contract of <typeparamref name="T"/> that drops the named members on read and leaves them out on write.</summary>
+    /// <typeparam name="T">The header record, or the list of line records.</typeparam>
+    /// <param name="omittedType">The record type whose JSON objects carry the named members.</param>
+    /// <param name="omittedMembers">CLR names of the members left out of every JSON object, or of every object in a JSON array.</param>
+    private abstract class OmittingContract<T>(Type omittedType, params string[] omittedMembers) : JsonConverter<T>
+    {
+        private readonly ConditionalWeakTable<JsonSerializerOptions, JsonSerializerOptions> _omittingOptions = new();
+
+        /// <summary>Reads <typeparamref name="T"/> from the JSON value, skipping the omitted members as unmapped.</summary>
+        public override T? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+            JsonSerializer.Deserialize(ref reader, OmittingTypeInfo(options));
+
+        /// <summary>Writes <paramref name="value"/> without the omitted members.</summary>
+        public override void Write(Utf8JsonWriter writer, T value, JsonSerializerOptions options) =>
+            WriteValue(JsonSerializer.SerializeToElement(value, options), writer, options);
+
+        /// <summary>Writes an object, or each element of an array, without the omitted members; any other value unchanged.</summary>
+        private void WriteValue(JsonElement value, Utf8JsonWriter writer, JsonSerializerOptions options)
+        {
+            if (value.ValueKind != JsonValueKind.Array)
+            {
+                WriteObject(value, writer, options);
+                return;
+            }
+
+            writer.WriteStartArray();
+            foreach (var element in value.EnumerateArray())
+            {
+                WriteObject(element, writer, options);
+            }
+
+            writer.WriteEndArray();
+        }
+
+        /// <summary>Writes an object without the omitted members; any other value unchanged.</summary>
+        private void WriteObject(JsonElement value, Utf8JsonWriter writer, JsonSerializerOptions options)
+        {
+            if (value.ValueKind != JsonValueKind.Object)
+            {
+                value.WriteTo(writer);
+                return;
+            }
+
+            writer.WriteStartObject();
+            foreach (var property in value.EnumerateObject())
+            {
+                if (!IsOmitted(property.Name, options))
+                {
+                    property.WriteTo(writer);
+                }
+            }
+
+            writer.WriteEndObject();
+        }
+
+        /// <summary>Whether <paramref name="name"/> is the JSON name of an omitted member, ignoring case.</summary>
+        private bool IsOmitted(string name, JsonSerializerOptions options) =>
+            omittedMembers.Any(member =>
+                string.Equals(name, options.PropertyNamingPolicy?.ConvertName(member) ?? member, StringComparison.OrdinalIgnoreCase));
+
+        /// <summary>Returns the contract of <typeparamref name="T"/> under the cached copy of <paramref name="options"/> that omits the members.</summary>
+        private JsonTypeInfo<T> OmittingTypeInfo(JsonSerializerOptions options) =>
+            (JsonTypeInfo<T>)_omittingOptions.GetValue(options, Omitting).GetTypeInfo(typeof(T));
+
+        /// <summary>Copies <paramref name="options"/> with a type-info resolver that removes the omitted members from the <paramref name="omittedType"/> contract.</summary>
+        private JsonSerializerOptions Omitting(JsonSerializerOptions options) => new(options)
+        {
+            TypeInfoResolver = (options.TypeInfoResolver ?? new DefaultJsonTypeInfoResolver()).WithAddedModifier(Omit),
+        };
+
+        /// <summary>Removes the omitted members from the <paramref name="omittedType"/> object contract; any other contract unchanged.</summary>
+        private void Omit(JsonTypeInfo typeInfo)
+        {
+            if (typeInfo.Type != omittedType || typeInfo.Kind != JsonTypeInfoKind.Object)
+            {
+                return;
+            }
+
+            for (var i = typeInfo.Properties.Count - 1; i >= 0; i--)
+            {
+                if (typeInfo.Properties[i].AttributeProvider is MemberInfo member && omittedMembers.Contains(member.Name, StringComparer.Ordinal))
+                {
+                    typeInfo.Properties.RemoveAt(i);
+                }
+            }
+        }
+    }
+
+    /// <summary>JSON contract of the header that omits the pre-authorisation and the display-only <c>OFERID</c>, <c>DOCID1</c> and <c>SEQ_NO</c>.</summary>
+    private sealed class RequestHeaderContract() : OmittingContract<InvoiceHeaderDraft>(
+        typeof(InvoiceHeaderDraft),
+        nameof(InvoiceHeaderDraft.PreAuthorization),
+        nameof(InvoiceHeaderDraft.OferId),
+        nameof(InvoiceHeaderDraft.DocId1),
+        nameof(InvoiceHeaderDraft.SeqNo));
+
+    /// <summary>JSON contract of the lines that omits <c>CATID</c> and the display-only <c>FIXPAY</c>, <c>PAYRATE</c>, lens and <c>INS_EMP</c> members and leaves more than a maximum line count unread.</summary>
+    private sealed class RequestLinesContract : OmittingContract<IReadOnlyList<InvoiceLineDraft>>
+    {
+        private readonly int _maxLines;
+
+        /// <summary>Creates the contract without a line limit.</summary>
+        public RequestLinesContract()
+            : this(int.MaxValue)
+        {
+        }
+
+        /// <summary>Creates the contract that reads at most <paramref name="maxLines"/> lines.</summary>
+        /// <param name="maxLines">Largest line count accepted; at least 1.</param>
+        public RequestLinesContract(int maxLines)
+            : base(
+                typeof(InvoiceLineDraft),
+                nameof(InvoiceLineDraft.CatId),
+                nameof(InvoiceLineDraft.FixPay),
+                nameof(InvoiceLineDraft.PayRate),
+                nameof(InvoiceLineDraft.RegularLensesType),
+                nameof(InvoiceLineDraft.LensSpecifications),
+                nameof(InvoiceLineDraft.ContactLensesType),
+                nameof(InvoiceLineDraft.FLIndicator),
+                nameof(InvoiceLineDraft.NumberOfPairs),
+                nameof(InvoiceLineDraft.InsEmp))
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(maxLines, 1);
+            _maxLines = maxLines;
+        }
+
+        /// <summary>Reads the lines; an array of more than the maximum line count is skipped without reading any line and returned as <see cref="RefusedLines"/>.</summary>
+        public override IReadOnlyList<InvoiceLineDraft>? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            if (_maxLines < int.MaxValue && reader.TokenType == JsonTokenType.StartArray)
+            {
+                var lines = CountElements(reader);
+                if (lines > _maxLines)
+                {
+                    if (!reader.TrySkip())
+                    {
+                        throw new JsonException();
+                    }
+
+                    return new RefusedLines(lines, _maxLines);
+                }
+            }
+
+            return base.Read(ref reader, typeToConvert, options);
+        }
+
+        /// <summary>Counts the elements of the array starting at <paramref name="reader"/>, skipping each one; the caller's reader is not advanced.</summary>
+        /// <param name="reader">Copy of the reader positioned on the array's start token.</param>
+        /// <returns>The number of elements, a null element included.</returns>
+        private static int CountElements(Utf8JsonReader reader)
+        {
+            var count = 0;
+            while (true)
+            {
+                if (!reader.Read())
+                {
+                    throw new JsonException();
+                }
+
+                if (reader.TokenType == JsonTokenType.EndArray)
+                {
+                    return count;
+                }
+
+                if (!reader.TrySkip())
+                {
+                    throw new JsonException();
+                }
+
+                count++;
+            }
+        }
+    }
+
+    /// <summary>JSON contract of the draft date that reads ISO 8601 text without a time-zone designator as its wall clock and writes the date unchanged.</summary>
+    private sealed class DraftDateContract : JsonConverter<DateTime>
+    {
+        /// <summary>Reads the draft date with <see cref="DateTimeKind.Unspecified"/>; a value with an offset or <c>Z</c>, a non-string or malformed value throws <see cref="JsonException"/>.</summary>
+        public override DateTime Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+            reader.TokenType == JsonTokenType.String
+            && reader.TryGetDateTime(out var value)
+            && value.Kind == DateTimeKind.Unspecified
+                ? value
+                : throw new JsonException();
+
+        /// <summary>Writes the draft date as ISO 8601 text.</summary>
+        public override void Write(Utf8JsonWriter writer, DateTime value, JsonSerializerOptions options) =>
+            writer.WriteStringValue(value);
+    }
+
+    /// <summary>Binds a <c>draftDate</c> query value as its wall clock, refusing a value with a time-zone designator.</summary>
+    internal sealed class DraftDateQueryBinder : IModelBinder
+    {
+        /// <summary>Binds the query-string value with <see cref="DateTimeKind.Unspecified"/>; null for a blank value; a model error for a malformed value or one with an offset or <c>Z</c>; no result when the query string has none.</summary>
+        /// <param name="bindingContext">Context of the bound parameter.</param>
+        /// <returns>A completed task.</returns>
+        public Task BindModelAsync(ModelBindingContext bindingContext)
+        {
+            ArgumentNullException.ThrowIfNull(bindingContext);
+
+            var modelName = bindingContext.ModelName;
+            // Reads only the query-string value providers; form and route values are ignored.
+            var queryValues = bindingContext.ValueProvider is IBindingSourceValueProvider sources
+                ? sources.Filter(BindingSource.Query)
+                : null;
+            var result = queryValues?.GetValue(modelName) ?? ValueProviderResult.None;
+            if (result == ValueProviderResult.None)
+            {
+                return Task.CompletedTask;
+            }
+
+            bindingContext.ModelState.SetModelValue(modelName, result);
+
+            var text = result.FirstValue;
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                bindingContext.Result = ModelBindingResult.Success(null);
+                return Task.CompletedTask;
+            }
+
+            if (DateTime.TryParse(text, result.Culture, DateTimeStyles.AllowWhiteSpaces, out var value)
+                && value.Kind == DateTimeKind.Unspecified)
+            {
+                bindingContext.Result = ModelBindingResult.Success(value);
+                return Task.CompletedTask;
+            }
+
+            var metadata = bindingContext.ModelMetadata;
+            bindingContext.ModelState.TryAddModelError(
+                modelName,
+                metadata.ModelBindingMessageProvider.AttemptedValueIsInvalidAccessor(text, metadata.GetDisplayName()));
+            return Task.CompletedTask;
+        }
+    }
+}

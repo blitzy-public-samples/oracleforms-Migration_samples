@@ -1,0 +1,163 @@
+{
+  "id": "PR-16",
+  "class": "package",
+  "source": [
+    { "construct": "BIL_INVOICE_ENGINE.calculate_lines standard offer eligibility", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1877" },
+    { "construct": "BIL_INVOICE_ENGINE.calculate_lines bil_offer_rule.resolve_standard_offer", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1885" },
+    { "construct": "BIL_INVOICE_ENGINE.calculate_lines -20971", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1905" },
+    { "construct": "BIL_INVOICE_ENGINE.calculate_lines -20972", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1908" },
+    { "construct": "BIL_INVOICE_ENGINE.line_uses_price_override", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1039" },
+    { "construct": "BIL_INVOICE_ENGINE.calculate_lines has_manual_discount", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1424" },
+    { "construct": "BIL_INVOICE_ENGINE.get_effective_line_price", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1053" },
+    { "construct": "BIL_INVOICE_ENGINE.calculate_lines discount_source", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2003" },
+    { "construct": "BIL_INVOICE_ENGINE.preview_invoice p_validate_offer_versions", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:3047" },
+    { "construct": "T066 SERVICEID WHEN-VALIDATE-ITEM standard-offer branch", "locator": "05_Complex/Inv_Small_Cash.xml:389" },
+    { "construct": "T085 DO_IMP2 WHEN-BUTTON-PRESSED standard-offer branch on imported request lines", "locator": "05_Complex/Inv_Small_Cash.xml:755" }
+  ],
+  "cases": [
+    {
+      "name": "manual-price-with-standard-offer-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [
+          { "serviceId": "11601", "qty": 1, "priceOverride": 50, "usePriceOverride": "Y" }
+        ],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000016" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "11601", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
+        ],
+        "context": []
+      },
+      "expected": {
+        "error": { "package": "BIL_INVOICE_ENGINE", "number": -20971, "messagePrefix": "A manual price cannot be combined with a Standard Offer." }
+      }
+    },
+    {
+      "name": "manual-discount-with-standard-offer-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [
+          { "serviceId": "11601", "qty": 1, "discountType": "R", "disc": 5 }
+        ],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000016" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "11601", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
+        ],
+        "context": []
+      },
+      "expected": {
+        "error": { "package": "BIL_INVOICE_ENGINE", "number": -20972, "messagePrefix": "A manual line discount cannot be combined with a Standard Offer." }
+      }
+    },
+    {
+      "name": "credit-invoice-not-offer-eligible-passes",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 2, "discT": 0 },
+        "lines": [
+          { "serviceId": "11601", "qty": 1, "priceOverride": 50, "usePriceOverride": "Y" }
+        ],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000016" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "11601", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
+        ],
+        "context": [
+          { "key": "bil_price_rule.allow_manual_price", "value": "Y" },
+          { "key": "bil_price_rule.allow_discount", "value": "Y" },
+          { "key": "bil_service_context.curr_code", "value": "SAR" },
+          { "key": "bil_service_context.plan_price_disc", "value": 0 }
+        ]
+      },
+      "expected": {
+        "outcome": "Pass",
+        "values": {
+          "lines": [
+            { "price": 50, "my_price": 50, "discount_source": "NONE", "allow_price_override": "Y", "offer_id": null, "offer_type": null }
+          ]
+        }
+      }
+    },
+    {
+      "name": "pending-oi-07-standard-offer-price-applied",
+      "status": "pending-evidence",
+      "pendingOn": "OI-07",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [
+          { "serviceId": "1001", "qty": 1 }
+        ],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000016" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
+        ],
+        "context": [
+          { "key": "bil_patient_context.coverage_type", "value": "bil_types.c_coverage_cash" },
+          { "key": "bil_patient_context.list_id", "value": 1 },
+          { "key": "bil_offer_rule.matched", "value": "Y" },
+          { "key": "bil_offer_rule.offer_price", "value": 40 },
+          { "key": "bil_offer_rule.offer_dis", "value": null },
+          { "key": "bil_price_rule.allow_manual_price", "value": "Y" },
+          { "key": "bil_price_rule.allow_discount", "value": "Y" },
+          { "key": "bil_price_rule.billing_price", "value": 60 },
+          { "key": "bil_service_context.curr_code", "value": "SAR" }
+        ]
+      },
+      "expected": {}
+    },
+    {
+      "name": "pending-oi-07-standard-offer-discount-applied",
+      "status": "pending-evidence",
+      "pendingOn": "OI-07",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [
+          { "serviceId": "1001", "qty": 1 }
+        ],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000016" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
+        ],
+        "context": [
+          { "key": "bil_patient_context.coverage_type", "value": "bil_types.c_coverage_cash" },
+          { "key": "bil_patient_context.list_id", "value": 1 },
+          { "key": "bil_offer_rule.matched", "value": "Y" },
+          { "key": "bil_offer_rule.offer_price", "value": null },
+          { "key": "bil_offer_rule.offer_dis", "value": 10 },
+          { "key": "bil_price_rule.allow_manual_price", "value": "Y" },
+          { "key": "bil_price_rule.allow_discount", "value": "Y" },
+          { "key": "bil_price_rule.billing_price", "value": 60 },
+          { "key": "bil_service_context.curr_code", "value": "SAR" }
+        ]
+      },
+      "expected": {}
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "discount_source"], "decimals": { "price": 3 } }
+}

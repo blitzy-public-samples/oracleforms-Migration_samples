@@ -1,0 +1,35 @@
+{
+  "id": "DR-13",
+  "class": "domain",
+  "source": [
+    { "construct": "T077 LDISCT WHEN-RADIO-CHANGED", "locator": "05_Complex/Inv_Small_Cash.xml:727" },
+    { "construct": "T078 LDISCT WHEN-VALIDATE-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:728" }
+  ],
+  "cases": [
+    {
+      "name": "credit-value-discount-blocks",
+      "status": "derivable",
+      "input": { "classCode": "1", "discountType": "V" },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "LDISCT", "text": "You cant use value disocunt for credit invoices", "severity": "Blocking" }], "values": { "LDISCT": "R" } }
+    },
+    {
+      "name": "credit-rate-discount-passes",
+      "status": "derivable",
+      "input": { "classCode": "1", "discountType": "R" },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "credit-no-discount-passes",
+      "status": "derivable",
+      "input": { "classCode": "1", "discountType": "N" },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "cash-value-discount-passes",
+      "status": "derivable",
+      "input": { "classCode": null, "discountType": "V" },
+      "expected": { "outcome": "Pass", "messages": [] }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "messages", "LDISCT"] }
+}

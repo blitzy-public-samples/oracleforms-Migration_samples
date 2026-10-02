@@ -1,0 +1,4272 @@
+using System.Globalization;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Billing.Invoicing.Api.Contracts;
+using Billing.Invoicing.Api.Errors;
+using Billing.Invoicing.Api.Services;
+using Billing.Invoicing.Data.Plsql;
+using Billing.Invoicing.Data.Ports;
+using Billing.Invoicing.Domain.Model;
+using Oracle.ManagedDataAccess.Client;
+
+namespace Billing.Invoicing.Tests.Api;
+
+/// <summary>Create pre-flight, replay-first path and open-item gates of the invoice workflow over hand-written port fakes.</summary>
+[Trait("Category", "Orchestration")]
+public sealed class InvoiceWorkflowOrchestrationTests
+{
+    private const string PatientNo = "P100";
+    private const int ClinicId = 5;
+    private const int DoctorId = 12;
+    private const string CashCompany = "0";
+    private const string CreditCompany = "1001";
+    private const string SubCompany = "SC1";
+    private const int ClassCode = 3;
+    private const string OrdinaryService = "S1";
+    private const string PackageService = "PKG1";
+    private const string FirstComponent = "C1";
+    private const string SecondComponent = "C2";
+    private const string PackageInstance = "PKGI-1";
+    private const string ParentRole = "PARENT";
+    private const string ComponentRole = "COMPONENT";
+    private const string ClaimNumber = "CLM-9";
+    private const string OpdCategory = "OPD";
+    private const string ErCategory = "ER";
+    private const string ForgedPreAuthorization = "PA-FORGED";
+    private const string ReplayMessage = "Invoice 9001 was already created for this request.";
+    private const string CommitEvent = "Commit";
+    private const string RollbackEvent = "Rollback";
+    private const string DisposeEvent = "Dispose";
+    private const string ReceptionTransferSavepointEvent = "Save:dr21";
+    private const string InvDateField = "INVDATE";
+    private const string LineField = "LINE";
+    private const int BundledOfferType = 0;
+    private const int BundledOfferId = 7;
+    private const string OfferInstance = "OFR-1";
+    private const string NoManualDiscount = "N";
+    private const string DraftSealText = "Draft date does not match the date issued with this draft; start a new draft.";
+    private const string CreateRequestEntry = $"{nameof(IInvoiceQueries)}.{nameof(IInvoiceQueries.GetCreateRequest)}";
+    private const string SessionCommitEntry = $"{nameof(IOracleSession)}.{CommitEvent}";
+    private const string SessionDisposeEntry = $"{nameof(IOracleSession)}.Dispose";
+    private const string ReceptionTransferRollbackEvent = "Rollback:dr21";
+    private const string ReceptionTransferRuleId = "DR-21";
+    private const string ReceptionTransferWarningText = "Reception transfer fields were not cleared.";
+    private const string CreateFullInvoiceEntry = $"{nameof(IBilInvoiceApiGateway)}.{nameof(IBilInvoiceApiGateway.CreateFullInvoice)}";
+    private const string ReceptionTransferSaveEntry = $"{nameof(IOracleSession)}.{ReceptionTransferSavepointEvent}";
+    private const string ReceptionTransferClearEntry = $"{nameof(IPatientTransferCommand)}.{nameof(IPatientTransferCommand.ClearReceptionTransfer)}";
+    private const string ReceptionTransferRollbackEntry = $"{nameof(IOracleSession)}.{ReceptionTransferRollbackEvent}";
+    private const string TotalCheckEntry = $"{nameof(ILegacyExternalCalls)}.{nameof(ILegacyExternalCalls.ValidateTotalInvoice)}";
+    private const int OnHold = 2;
+    private const int PackageServiceLocation = 14;
+    private const string VisitUnique = "V1";
+    private const string ConsultationClaim = "1";
+    private const long SelectedRequestRowId = 7001L;
+    private const string SelectedRequestRowUnreadableText = "Request import failed: a selected request line could not be read.";
+    private const string SelectedRequestView = "V_SERVICES_REQ";
+    private const string ReservationList = "RESERV_NO";
+    private const string CompCodeItem = "COMP_CODE";
+    private const string SubCompCodeItem = "SUB_COMP_CODE";
+    private const string DocIdItem = "DOCIDX";
+    private const string PatientNoItem = "PATIENTNO";
+    private const string PayTypeItem = "PAYTYPE";
+    private const string InvDateItem = "INVDATE";
+    private const string CashPayType = "1";
+    private const string FixedPriceService = "S2";
+    private const string RequestService = "S3";
+    private const string OfferService = "S4";
+    private const string OfferComponentService = "S5";
+    private const string PriceNotFixed = "N";
+    private const string PriceFixed = "Y";
+    private const string PriceItem = "PRICE";
+    private const string CoverageRowMissingText = "FRM-40735: WHEN-VALIDATE-ITEM trigger raised unhandled exception ORA-01403.";
+    private const int ApprovalPreference = 422;
+    private const string SecondService = "S2";
+    private const string ThirdService = "S3";
+    private const string UnrequestedService = "S9";
+    private const string UnlistedService = "S7";
+    private const string PaddedLowerCaseOrdinaryService = " s1 ";
+    private const string SecondPackageService = "PKG2";
+    private const string FirstPackageInstance = "PKGI-A";
+    private const string SecondPackageInstance = "PKGI-B";
+    private const decimal DefaultListId = 10m;
+    private const decimal SecondListId = 20m;
+    private const decimal OverriddenPrice = 25m;
+    private const int VisitDoctorId = 13;
+    private const int LockedDoctorId = 99;
+    private const decimal PreloadListId = 55m;
+    private const decimal DraftPreviewListId = 77m;
+    private const string ClinicItem = "CLINICID";
+    private const string SubPayTypeItem = "SUB_PAYTYPE";
+    private const string QtyItem = "QTY";
+    private const string SessionOpenEntry = $"{nameof(IOracleSessionFactory)}.{nameof(IOracleSessionFactory.Open)}";
+    private const long SavedInvoiceNo = 5L;
+    private const int FormLocalDocType = 505;
+    private const string SavedInsuranceNumber = "INS-5";
+    private const int LockedDoctor = 10;
+    private const int LockedDoctorClinic = 14;
+    private const string LockedDoctorClinicName = "General Clinic";
+    private const string LockedDoctorName = "Dr. Ahmed Ali";
+    private const int PickedDoctor = 11;
+    private const int PickedDoctorClinic = 15;
+    private const string PickedDoctorClinicName = "Women Clinic";
+    private const string PickedDoctorName = "Dr. Huda Nasser";
+    private const string ConsultationPatient = "2001";
+    private const string NewConsultationClaim = "1";
+    private const string FixedServiceCompany = "1059";
+    private const string ClinicNameItem = "CLINICNAME";
+    private const string DocNameItem = "DOC_NAME";
+    private const string ClaimNoItem = "CLAIM_NO";
+    private const string AddToListItem = "ADD_TO_LIST";
+    private const string FinalDiscPercItem = "FINALDISC_PERC";
+    private const string FinalDiscItem = "FINALDISC";
+    private const string Amount1Item = "AMOUNT_1";
+    private const string Amount2Item = "AMOUNT_2";
+
+    private static readonly OperatorContext Operator = new()
+    {
+        UserNo = 101,
+        UserName = "TESTER",
+        InfoCenterId = "1",
+        MachineName = "TEST-PC",
+        SessionId = "7D3F2C1B9A8E4F6D8C2B1A0F9E8D7C6B",
+    };
+
+    private static readonly DateTime DraftDate = new(2026, 9, 29, 10, 0, 0);
+
+    private static readonly DateTime RecordedInvDate = new(2026, 9, 28, 16, 45, 0);
+
+    private static readonly DateTimeOffset RecordedCompletedAt = new(2026, 9, 28, 16, 45, 30, TimeSpan.Zero);
+
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
+    {
+        Converters = { new JsonStringEnumConverter() },
+    };
+
+    private static readonly Action<JsonSerializerOptions, int> LimitLines = typeof(DraftDto)
+        .GetMethod(nameof(LimitLines), System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
+        .CreateDelegate<Action<JsonSerializerOptions, int>>();
+
+    private static string NewRequestId() => Guid.NewGuid().ToString("N").ToUpperInvariant();
+
+    private static InvoiceLineDraft Line(string serviceId, string clientId) => new()
+    {
+        ServiceId = serviceId,
+        Qty = 1m,
+        DiscountType = "R",
+        ClientId = clientId,
+    };
+
+    private static InvoiceLineDraft BundleLine(string serviceId, string clientId, string offerInstanceId) =>
+        Line(serviceId, clientId) with
+        {
+            OfferId = BundledOfferId,
+            OfferType = BundledOfferType,
+            OfferInstanceId = offerInstanceId,
+            OfferLineRole = ComponentRole,
+        };
+
+    private static InvoiceLineDraft PackageLine(string serviceId, string role, string clientId, int? componentOrder) =>
+        Line(serviceId, clientId) with
+        {
+            PackageServiceId = PackageService,
+            PackageInstanceId = PackageInstance,
+            PackageLineRole = role,
+            PackageComponentOrder = componentOrder,
+        };
+
+    private static Task<DraftDto> CashDraft() => Issued(new DraftDto
+    {
+        RequestId = NewRequestId(),
+        DraftDate = DraftDate,
+        Header = new InvoiceHeaderDraft
+        {
+            PatientNo = PatientNo,
+            InvDate = DraftDate,
+            DraftDate = DraftDate,
+            PayType = 1,
+            SubPayType = 1,
+            ClinicId = ClinicId,
+            DocId = DoctorId,
+            CompCode = CashCompany,
+            DeptWise = 0,
+            Call = 0,
+            DiscT = 0,
+            InvNo = null,
+        },
+        Lines = new[] { Line(OrdinaryService, "c1") },
+        Parameters = new InvoiceEntryParameters(),
+        DiscountLimitChoice = null,
+    });
+
+    private static async Task<DraftDto> CreditDraft()
+    {
+        var draft = await CashDraft();
+        return draft with
+        {
+            Header = draft.Header with { CompCode = CreditCompany, PayType = 2, ClassCode = ClassCode },
+        };
+    }
+
+    /// <summary>Returns the draft with the request id, draft date and seal that NewDraft issues when the database time is the draft's date.</summary>
+    private static async Task<DraftDto> Issued(DraftDto draft)
+    {
+        var fakes = new FakeDataPorts();
+        fakes.Lookups.DatabaseTime = draft.DraftDate;
+
+        var issued = (await fakes.CreateService().NewDraft(new InvoiceEntryParameters(), Operator)).Draft;
+
+        Assert.Equal(draft.DraftDate, issued.DraftDate);
+        Assert.NotNull(issued.DraftSeal);
+        return draft with { RequestId = issued.RequestId, DraftDate = issued.DraftDate, DraftSeal = issued.DraftSeal };
+    }
+
+    private static DraftDto WithHeader(DraftDto draft, Func<InvoiceHeaderDraft, InvoiceHeaderDraft> change) =>
+        draft with { Header = change(draft.Header) };
+
+    private static PatientCoverageSnapshot ValidCoverage(DraftDto draft) =>
+        string.Equals(draft.Header.CompCode, CashCompany, StringComparison.Ordinal)
+            ? new PatientCoverageSnapshot { PatientNo = PatientNo, CompCode = CashCompany }
+            : new PatientCoverageSnapshot
+            {
+                PatientNo = PatientNo,
+                CompCode = CreditCompany,
+                ClassCode = ClassCode,
+                MyClass = ClassCode,
+                ContractEnd = DraftDate.AddYears(1),
+                CardEnd = DraftDate.AddYears(1),
+                SubCompanyContractEnd = DraftDate.AddYears(1),
+                CompanyIsActive = 1,
+                CompanyType = 1,
+                ClassIsActive = 1,
+                ClassWithRef = 0,
+                SubCompanyIsActive = 1,
+                MaxDeductable = 0m,
+            };
+
+    /// <summary>Credit coverage carrying the sub-company that the workflow reads server-side for a credit draft.</summary>
+    private static PatientCoverageSnapshot InsuredCoverage(DraftDto draft) =>
+        ValidCoverage(draft) with { SubCompCode = SubCompany };
+
+    private static ServiceProfile Profile(string serviceId) => new()
+    {
+        ServiceId = serviceId,
+        ShowQty = 0,
+        BeginOfClaim = 1,
+        AddToQue = 0,
+        ServLocId = 1,
+        ConsRev = 0,
+        IsPackage = 0,
+        PkgType = null,
+        PriceIsFixed = "Y",
+        ReqNeedA = 0,
+    };
+
+    private static ServiceProfile PackageAwareProfile(string serviceId) =>
+        string.Equals(serviceId, PackageService, StringComparison.Ordinal)
+            ? Profile(serviceId) with { ServLocId = PackageServiceLocation, IsPackage = 1 }
+            : Profile(serviceId);
+
+    private static FakeDataPorts Arrange(DraftDto draft)
+    {
+        var fakes = new FakeDataPorts();
+        fakes.Lookups.PatientCoverage = ValidCoverage(draft);
+        fakes.Lookups.ClinicProfile = (clinicId, _) => new ClinicProfile { ClinicId = clinicId, SysCatType = OpdCategory };
+        fakes.Lookups.ServiceProfile = Profile;
+        fakes.Lookups.UserMaxDiscount = 100m;
+        fakes.Lookups.ClassAdvancedMode = null;
+        fakes.Lookups.PatientCardId = null;
+        fakes.Lookups.RequestedServices = Array.Empty<string>();
+        fakes.Invoices.CreateRequest = _ => null;
+        fakes.Invoices.ClaimPreload = _ => null;
+        return fakes;
+    }
+
+    private static CreateInvoiceRequest CreateRequest(DraftDto draft) => new() { Draft = draft };
+
+    private static CreateInvoiceRequest ForgedRequest(DraftDto draft)
+    {
+        var json = JsonSerializer.SerializeToNode(CreateRequest(draft), Json)!.AsObject();
+        var header = json["draft"]!["header"]!.AsObject();
+        header["preAuthorization"] = ForgedPreAuthorization;
+        header["subCompCode"] = SubCompany;
+
+        var text = json.ToJsonString(Json);
+        Assert.Contains(ForgedPreAuthorization, text, StringComparison.Ordinal);
+        var request = JsonSerializer.Deserialize<CreateInvoiceRequest>(text, Json)!;
+        Assert.Null(request.Draft.Header.PreAuthorization);
+        Assert.Equal(SubCompany, request.Draft.Header.SubCompCode);
+        return request;
+    }
+
+    /// <summary>Create request for a credit draft built in memory, without JSON, whose header carries the forged pre-authorisation.</summary>
+    private static async Task<CreateInvoiceRequest> InMemoryForgedRequest()
+    {
+        var request = CreateRequest(
+            WithHeader(await CreditDraft(), header => header with { PreAuthorization = ForgedPreAuthorization }));
+        Assert.Equal(ForgedPreAuthorization, request.Draft.Header.PreAuthorization);
+        return request;
+    }
+
+    private static bool IsBlocking(MessageDto message) =>
+        string.Equals(message.Severity, ValidationMessage.Blocking, StringComparison.Ordinal);
+
+    private static bool HasBlocking(IEnumerable<MessageDto> messages, string rule) =>
+        messages.Any(message => IsBlocking(message) && string.Equals(message.Rule, rule, StringComparison.Ordinal));
+
+    private static bool HasWarning(IEnumerable<MessageDto> messages, string rule) =>
+        messages.Any(message =>
+            string.Equals(message.Severity, ValidationMessage.Warning, StringComparison.Ordinal)
+            && string.Equals(message.Rule, rule, StringComparison.Ordinal));
+
+    private static async Task<NotImplementedException> GateAsync(Func<Task> act, string openItemId)
+    {
+        var failure = await Assert.ThrowsAsync<NotImplementedException>(act);
+        Assert.StartsWith(openItemId + ":", failure.Message, StringComparison.Ordinal);
+        return failure;
+    }
+
+    private static IReadOnlyList<string> GateIds(Exception failure) =>
+        Assert.IsAssignableFrom<IReadOnlyList<string>>(failure.Data[ProblemDetailsWriter.OpenItemsDataKey]);
+
+    private static int CreateCalls(FakeDataPorts fakes) =>
+        fakes.InvoiceApi.Calls.Count(call => call.Method == nameof(IBilInvoiceApiGateway.CreateFullInvoice));
+
+    private static FakeCall CreateCall(FakeDataPorts fakes) =>
+        Assert.Single(fakes.InvoiceApi.Calls, call => call.Method == nameof(IBilInvoiceApiGateway.CreateFullInvoice));
+
+    /// <summary>Asserts the single blocking INVDATE message of a refused draft date, and that only the replay-first read ran.</summary>
+    private static void AssertDraftDateRejected(CreateInvoiceOutcome response, FakeDataPorts fakes)
+    {
+        Assert.Null(response.InvNo);
+        var message = Assert.Single(response.Messages);
+        Assert.True(IsBlocking(message));
+        Assert.Equal(InvDateField, message.Field);
+        Assert.Equal(DraftSealText, message.Text);
+        Assert.Null(message.Rule);
+        Assert.Empty(response.OpenItems);
+        Assert.Equal(0, CreateCalls(fakes));
+        Assert.False(Called(fakes.Lookups.Calls, nameof(ILookupQueries.GetPatientCoverage)));
+        Assert.Empty(fakes.SessionFactory.Calls);
+        Assert.Equal(new[] { $"{nameof(IInvoiceQueries)}.{nameof(IInvoiceQueries.GetCreateRequest)}" }, fakes.Journal);
+    }
+
+    /// <summary>Asserts the single blocking LINE message of a draft over the line cap, and that only the replay-first read ran.</summary>
+    private static void AssertLinesRejected(CreateInvoiceOutcome response, FakeDataPorts fakes, string expectedText)
+    {
+        Assert.Null(response.InvNo);
+        var message = Assert.Single(response.Messages);
+        Assert.True(IsBlocking(message));
+        Assert.Equal(LineField, message.Field);
+        Assert.Equal(expectedText, message.Text);
+        Assert.Null(message.Rule);
+        Assert.Empty(response.OpenItems);
+        Assert.Empty(fakes.Lookups.Calls);
+        Assert.Empty(fakes.SessionFactory.Calls);
+        Assert.Equal(new[] { CreateRequestEntry }, fakes.Journal);
+    }
+
+    /// <summary>Binds the create request of <paramref name="draft"/> from its JSON under options that cap the draft's lines at <paramref name="maxLines"/>, asserting that its lines were left unbound.</summary>
+    private static CreateInvoiceRequest CappedRequest(DraftDto draft, int maxLines)
+    {
+        var options = new JsonSerializerOptions(Json);
+        LimitLines(options, maxLines);
+
+        var request = JsonSerializer.Deserialize<CreateInvoiceRequest>(JsonSerializer.Serialize(CreateRequest(draft), Json), options)!;
+
+        Assert.True(draft.Lines.Count > maxLines);
+        Assert.Empty(request.Draft.Lines);
+        Assert.Equal(draft.RequestId, request.Draft.RequestId);
+        Assert.Equal(draft.DraftSeal, request.Draft.DraftSeal);
+        Assert.Equal(draft.Header, request.Draft.Header);
+        return request;
+    }
+
+    /// <summary>Runs the draft operation named by <paramref name="operation"/> on <paramref name="draft"/>.</summary>
+    private static Task DraftOperation(InvoiceWorkflowService service, string operation, DraftDto draft) => operation switch
+    {
+        "validate" => service.Validate(new ValidateDraftRequest { Target = "PATIENTNO", Draft = draft }, Operator),
+        "preview" => service.Preview(draft, Operator),
+        "import-requests" => service.ImportRequests(new ImportRequestsRequest { Draft = draft }, Operator),
+        "import-visit-line" => service.ImportVisitLine(new VisitLineRequest { Draft = draft }, Operator),
+        "import-package" => service.ImportPackage(new PackageImportRequest { Draft = draft, PackageServiceId = PackageService }, Operator),
+        "import-bundled-offer" => service.ImportBundledOffer(new BundledOfferRequest { Draft = draft, OfferId = BundledOfferId }, Operator),
+        _ => throw new ArgumentOutOfRangeException(nameof(operation), operation, null),
+    };
+
+    /// <summary>Create-request row recorded for <paramref name="invNo"/>; with no invoice the patient number stays set, while the invoice number, completion time, invoice date and company codes are null and the age-limit flag is false.</summary>
+    private static (long? InvNo, string? PatientNo, DateTimeOffset? CompletedAt, DateTime? InvDate, string? CompCode, string? SubCompCode, bool ClinicHasAgeLimit) Recorded(
+        long? invNo, string? compCode, string? subCompCode, bool clinicHasAgeLimit) =>
+        invNo is null
+            ? (null, PatientNo, null, null, null, null, false)
+            : (invNo, PatientNo, RecordedCompletedAt, RecordedInvDate, compCode, subCompCode, clinicHasAgeLimit);
+
+    /// <summary>Create-request fake answering the draft's request id with <paramref name="recorded"/> and any other id with null.</summary>
+    private static Func<string, (long? InvNo, string? PatientNo, DateTimeOffset? CompletedAt, DateTime? InvDate, string? CompCode, string? SubCompCode, bool ClinicHasAgeLimit)?> RecordedFor(
+        DraftDto draft,
+        (long? InvNo, string? PatientNo, DateTimeOffset? CompletedAt, DateTime? InvDate, string? CompCode, string? SubCompCode, bool ClinicHasAgeLimit) recorded) =>
+        RecordedFor(draft, () => recorded);
+
+    /// <summary>Create-request fake answering each read of the draft's request id from <paramref name="recorded"/> and any other id with null.</summary>
+    private static Func<string, (long? InvNo, string? PatientNo, DateTimeOffset? CompletedAt, DateTime? InvDate, string? CompCode, string? SubCompCode, bool ClinicHasAgeLimit)?> RecordedFor(
+        DraftDto draft,
+        Func<(long? InvNo, string? PatientNo, DateTimeOffset? CompletedAt, DateTime? InvDate, string? CompCode, string? SubCompCode, bool ClinicHasAgeLimit)?> recorded) =>
+        requestId => string.Equals(requestId, draft.RequestId, StringComparison.Ordinal) ? recorded() : null;
+
+    private static bool AnySessionCommitted(FakeDataPorts fakes) =>
+        fakes.SessionFactory.Sessions.Any(session => session.Committed);
+
+    private static bool Called(IEnumerable<FakeCall> calls, string method) =>
+        calls.Any(call => call.Method == method);
+
+    private static ValidateDraftRequest PatientValidation(DraftDto draft) => new() { Draft = draft, Target = "PATIENTNO" };
+
+    private static int CoverageReads(FakeDataPorts fakes) =>
+        fakes.Lookups.Calls.Count(call => call.Method == nameof(ILookupQueries.GetPatientCoverage));
+
+    private static IEnumerable<IReadOnlyList<InvoiceLineDraft>> PreviewedLines(FakeDataPorts fakes) =>
+        fakes.InvoiceApi.Calls
+            .Where(call => call.Method == nameof(IBilInvoiceApiGateway.CalculatePreview))
+            .Select(call => call.Arg<IReadOnlyList<InvoiceLineDraft>>());
+
+    [Fact]
+    public async Task Create_BaselineCashDraft_Succeeds()
+    {
+        var draft = await CashDraft();
+        var fakes = Arrange(draft);
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        Assert.Equal(1, CreateCalls(fakes));
+        Assert.Contains(CommitEvent, CreateCall(fakes).Arg<FakeOracleSession>().Events);
+        Assert.Contains(OpenItemIds.OI20, response.OpenItems);
+        Assert.Contains(OpenItemIds.OI12, response.OpenItems);
+        Assert.Contains(OpenItemIds.OI45, response.OpenItems);
+    }
+
+    [Fact]
+    public async Task Create_BaselineCreditDraft_Succeeds()
+    {
+        var draft = await CreditDraft();
+        var fakes = Arrange(draft);
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        Assert.Equal(1, CreateCalls(fakes));
+        Assert.Contains(CommitEvent, CreateCall(fakes).Arg<FakeOracleSession>().Events);
+        Assert.Contains(OpenItemIds.OI20, response.OpenItems);
+        Assert.Equal(2, CreateCall(fakes).Arg<InvoiceHeaderDraft>().PayType);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-55")]
+    public async Task Create_WithoutPriorValidation_ReturnsBlockingAndWarningMessagesTogether()
+    {
+        var draft = WithHeader(await CreditDraft(), header => header with { DiscT = 1, FinalDiscPerc = 30m });
+        var fakes = Arrange(draft);
+        fakes.Lookups.PatientCoverage = InsuredCoverage(draft) with { CompanyIsActive = OnHold };
+        fakes.Lookups.UserMaxDiscount = 10m;
+        fakes.Lookups.ServiceProfile = serviceId => Profile(serviceId) with { BeginOfClaim = 0 };
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.True(HasBlocking(response.Messages, "DR-03"));
+        Assert.True(HasBlocking(response.Messages, "DR-06"));
+        Assert.True(HasWarning(response.Messages, "DR-16"));
+        Assert.Null(response.InvNo);
+        Assert.Equal(0, CreateCalls(fakes));
+        Assert.False(AnySessionCommitted(fakes));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-55")]
+    [Trait("Decision", "D-38")]
+    [Trait("OpenItem", "OI-21")]
+    public async Task Create_WithoutPriorValidation_RunsEveryConditionalPreflightRead()
+    {
+        var draft = (await CreditDraft()) with
+        {
+            Lines = new[] { Line(OrdinaryService, "c1"), Line(PackageService, "p1") },
+            Parameters = new InvoiceEntryParameters { ClaimNo = ClaimNumber, VisitUnique = VisitUnique },
+        };
+        var fakes = Arrange(draft);
+        fakes.Lookups.PatientCoverage = InsuredCoverage(draft) with { CompanyType = null };
+        fakes.Lookups.ServiceProfile = PackageAwareProfile;
+        fakes.Lookups.VisitDoctor = VisitDoctorId;
+        fakes.Invoices.ClaimPreload = PreloadOf(credit: true, maxDeductable: 0m, cardId: null);
+        fakes.InvoiceApi.PreviewListId = DraftPreviewListId;
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        Assert.Equal(new object?[] { ClaimNumber }, SingleCall(fakes.Invoices.Calls, nameof(IInvoiceQueries.GetClaimPreload)).Args);
+        Assert.Equal(new object?[] { PatientNo }, SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetPatientCoverage)).Args);
+        Assert.Equal(new object?[] { CreditCompany }, SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetCompanyType)).Args);
+        Assert.Equal(
+            new object?[] { SubCompany, ClassCode.ToString(CultureInfo.InvariantCulture) },
+            SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetClassAdvancedMode)).Args);
+        Assert.Equal(new object?[] { PatientNo }, SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetPatientCardId)).Args);
+        Assert.Equal(new object?[] { ClinicId, PatientNo }, SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetClinicProfile)).Args);
+        Assert.Equal(new object?[] { Operator.UserNo }, SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetUserMaxDiscount)).Args);
+        Assert.Empty(SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetPreferences)).Args);
+        Assert.Equal(new object?[] { VisitUnique }, SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetVisitDoctor)).Args);
+        var reads = ProfileReadKeys(fakes);
+        Assert.Equal(new[] { PackageService, OrdinaryService }, ServicesReadOn(reads, PreloadListId));
+        Assert.Equal(new[] { PackageService, OrdinaryService }, ServicesReadOn(reads, DraftPreviewListId));
+        var queueFlags = SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetServiceQueueFlags));
+        Assert.Equal(DraftPreviewListId, queueFlags.Arg<decimal>());
+        Assert.Equal(new[] { PackageService, OrdinaryService }, queueFlags.Arg<IReadOnlyCollection<string>>().Order(StringComparer.Ordinal));
+        Assert.Equal(
+            new object?[] { PackageService, DraftPreviewListId },
+            SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetPackageComponentFlags)).Args);
+        Assert.Equal(
+            new object?[] { ClaimNumber, DraftPreviewListId },
+            SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetRequestedServices)).Args);
+        var header = CreateCall(fakes).Arg<InvoiceHeaderDraft>();
+        Assert.Equal(VisitDoctorId, header.DocId);
+        Assert.Equal(ClaimNumber, header.ClaimNo);
+        Assert.Equal(SubCompany, header.SubCompCode);
+        Assert.Contains(OpenItemIds.OI21, response.OpenItems);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-55")]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Create_WithoutPriorValidation_SendsTheVisitDoctorOnlyForAVisit(bool withVisit)
+    {
+        var draft = (await CashDraft()) with
+        {
+            Parameters = new InvoiceEntryParameters { VisitUnique = withVisit ? VisitUnique : null },
+        };
+        var fakes = Arrange(draft);
+        fakes.Lookups.VisitDoctor = VisitDoctorId;
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        Assert.Equal(withVisit ? VisitDoctorId : DoctorId, CreateCall(fakes).Arg<InvoiceHeaderDraft>().DocId);
+        Assert.Equal(withVisit, Called(fakes.Lookups.Calls, nameof(ILookupQueries.GetVisitDoctor)));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-51")]
+    [Trait("OpenItem", "OI-23")]
+    public async Task Create_ClaimPreloadDeductibleOverZeroDeductibleCoverage_GatesOi23()
+    {
+        var draft = (await CreditDraft()) with { Parameters = new InvoiceEntryParameters { ClaimNo = ClaimNumber } };
+        var fakes = Arrange(draft);
+        fakes.Lookups.PatientCoverage = InsuredCoverage(draft) with { MaxDeductable = 0m };
+        fakes.Invoices.ClaimPreload = PreloadOf(credit: true, maxDeductable: 50m, cardId: null);
+
+        var failure = await GateAsync(() => fakes.CreateService().Create(CreateRequest(draft), Operator), OpenItemIds.OI23);
+
+        Assert.Contains(OpenItemIds.OI23, GateIds(failure));
+        Assert.Equal(new object?[] { ClaimNumber }, SingleCall(fakes.Invoices.Calls, nameof(IInvoiceQueries.GetClaimPreload)).Args);
+        Assert.Equal(0, CreateCalls(fakes));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-52")]
+    [Trait("OpenItem", "OI-32")]
+    public async Task Create_ClaimPreloadCardWithoutPatientCard_GatesOi32()
+    {
+        var draft = (await CashDraft()) with { Parameters = new InvoiceEntryParameters { ClaimNo = ClaimNumber } };
+        var fakes = Arrange(draft);
+        fakes.Lookups.PatientCardId = null;
+        fakes.Invoices.ClaimPreload = PreloadOf(credit: false, maxDeductable: null, cardId: 42);
+
+        var failure = await GateAsync(() => fakes.CreateService().Create(CreateRequest(draft), Operator), OpenItemIds.OI32);
+
+        Assert.Contains(OpenItemIds.OI32, GateIds(failure));
+        Assert.Equal(new object?[] { PatientNo }, SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetPatientCardId)).Args);
+        Assert.Equal(new object?[] { ClaimNumber }, SingleCall(fakes.Invoices.Calls, nameof(IInvoiceQueries.GetClaimPreload)).Args);
+        Assert.Equal(0, CreateCalls(fakes));
+    }
+
+    [Theory]
+    [Trait("Decision", "D-37")]
+    [Trait("Decision", "D-38")]
+    [InlineData(1, 1)]
+    [InlineData(0, 0)]
+    public async Task Create_UnexpandedPackageOnThePreloadList_DerivesAddToListFromItsComponentFlags(int firstComponentQueue, int addToList)
+    {
+        var draft = (await CashDraft()) with
+        {
+            Lines = new[] { Line(PackageService, "p1") },
+            Parameters = new InvoiceEntryParameters { ClaimNo = ClaimNumber },
+        };
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = PackageAwareProfile;
+        fakes.Lookups.PackageComponentFlags = _ => new[]
+        {
+            Profile(FirstComponent) with { AddToQue = firstComponentQueue },
+            Profile(SecondComponent),
+        };
+        fakes.Invoices.ClaimPreload = PreloadOf(credit: false, maxDeductable: null, cardId: null);
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        Assert.Equal(
+            new object?[] { PackageService, PreloadListId },
+            SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetPackageComponentFlags)).Args);
+        Assert.Equal((int?)addToList, CreateCall(fakes).Arg<InvoiceHeaderDraft>().AddToList);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-55")]
+    [InlineData(1, 1)]
+    [InlineData(2, 1)]
+    [InlineData(3, 2)]
+    public async Task Create_CashOrCreditOneWithoutCoverageCompanyType_DecidesThePayTypeFromTheReadCompanyType(int companyType, int payType)
+    {
+        var draft = (await CreditDraft()) with { Parameters = new InvoiceEntryParameters { CashOrCredit = 1 } };
+        var fakes = Arrange(draft);
+        fakes.Lookups.PatientCoverage = ValidCoverage(draft) with { CompanyType = null };
+        fakes.Lookups.CompanyType = companyType;
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        Assert.Equal(new object?[] { CreditCompany }, SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetCompanyType)).Args);
+        Assert.Equal((int?)payType, CreateCall(fakes).Arg<InvoiceHeaderDraft>().PayType);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-55")]
+    public async Task Create_WithoutPriorValidation_DoctorMissing_BlocksDr01WithTheDr11Warning()
+    {
+        var draft = WithHeader(await CashDraft(), header => header with { DocId = null });
+        var fakes = Arrange(draft);
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.Contains(BlockingMessage(DocIdItem, "Doctor No is required ", "DR-01"), response.Messages);
+        Assert.Contains(WarningMessage(DocIdItem, "You Must Select Doctor", "DR-11"), response.Messages);
+        Assert.Null(response.InvNo);
+        Assert.Equal(0, CreateCalls(fakes));
+    }
+
+    [Theory]
+    [Trait("Decision", "D-55")]
+    [InlineData("no-lines", null, "Invoice without Details", "DR-02")]
+    [InlineData("qty-over-limit", QtyItem, "Due to Quality system not allow more than 1 at qty for this service", "DR-12")]
+    [InlineData("qty-zero", QtyItem, "Qty should be >=1", "DR-12")]
+    [InlineData("value-discount-on-credit", "LDISCT", "You cant use value disocunt for credit invoices", "DR-13")]
+    [InlineData("service-missing", "SERVICEID", "You Must Select Value", "DR-15")]
+    public async Task Create_WithoutPriorValidation_EachMandatoryDetailOrLineRuleBlocksTheSave(
+        string preflightCase, string? field, string text, string rule)
+    {
+        var (draft, fakes) = await BlockedPreflight(preflightCase);
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.Contains(BlockingMessage(field, text, rule), response.Messages);
+        Assert.Null(response.InvNo);
+        Assert.Equal(0, CreateCalls(fakes));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-55")]
+    public async Task Create_WithoutPriorValidation_ClinicSexMismatch_WarnsDr04AndSaves()
+    {
+        var draft = await CashDraft();
+        var fakes = Arrange(draft);
+        fakes.Lookups.ClinicProfile = (clinicId, _) =>
+            new ClinicProfile { ClinicId = clinicId, SysCatType = OpdCategory, Six = 1, PatientSex = 2 };
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.Contains(WarningMessage(ClinicItem, "Patient sex not suitable for this clinic", "DR-04"), response.Messages);
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        Assert.Equal(1, CreateCalls(fakes));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-55")]
+    public async Task Create_WithoutPriorValidation_NewConsultationClaim_SendsTheBuiltClaimNumber()
+    {
+        var draft = (await CashDraft()) with { Parameters = new InvoiceEntryParameters { ClaimNo = "1" } };
+        var fakes = Arrange(draft);
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        Assert.Equal(
+            string.Create(CultureInfo.InvariantCulture, $"O-{PatientNo}-{ClinicId}-{DraftDate:ddMMyy}"),
+            CreateCall(fakes).Arg<InvoiceHeaderDraft>().ClaimNo);
+        Assert.False(Called(fakes.Invoices.Calls, nameof(IInvoiceQueries.GetClaimPreload)));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-55")]
+    public async Task Create_WithoutPriorValidation_LockedDoctor_WarnsDr11AndSendsTheLockedDoctor()
+    {
+        var draft = (await CashDraft()) with { Parameters = new InvoiceEntryParameters { TheDoc = LockedDoctorId } };
+        var fakes = Arrange(draft);
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.Contains(WarningMessage(DocIdItem, "You Cant Change doctor", "DR-11"), response.Messages);
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        Assert.Equal(LockedDoctorId, CreateCall(fakes).Arg<InvoiceHeaderDraft>().DocId);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-55")]
+    public async Task Create_WithoutPriorValidation_CollectedAmountWithoutPaymentType_WarnsDr22AndSendsSubPayTypeOne()
+    {
+        var draft = WithHeader(await CashDraft(), header => header with { Amount1 = 10m, SubPayType = null, SubPayType2 = null });
+        var fakes = Arrange(draft);
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.Contains(WarningMessage(SubPayTypeItem, "Payment type is empty", "DR-22"), response.Messages);
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        Assert.Equal((int?)1, CreateCall(fakes).Arg<InvoiceHeaderDraft>().SubPayType);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-187")]
+    [InlineData(PatientNo, 3)]
+    [InlineData(null, 3)]
+    [InlineData(PatientNo, null)]
+    public async Task ValidateSubPayType_DoctorMissing_RunsNeitherTheRecordCheckNorThePaymentTypeDefault(string? patientNo, int? subPayType)
+    {
+        var draft = WithHeader(
+            await CashDraft(),
+            header => header with { PatientNo = patientNo, DocId = null, Amount1 = 10m, SubPayType = subPayType, SubPayType2 = null });
+        var fakes = Arrange(draft);
+
+        var response = await fakes.CreateService().Validate(new ValidateDraftRequest { Draft = draft, Target = SubPayTypeItem }, Operator);
+
+        AssertNothingChecked(response, fakes);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-187")]
+    public async Task ValidateRecord_DoctorMissingWithoutPaymentType_BlocksDr01AndDefaultsThePaymentType()
+    {
+        var draft = WithHeader(await CashDraft(), header => header with { DocId = null, Amount1 = 10m, SubPayType = null, SubPayType2 = null });
+        var fakes = Arrange(draft);
+
+        var response = await fakes.CreateService().Validate(new ValidateDraftRequest { Draft = draft, Target = "RECORD" }, Operator);
+
+        Assert.Equal(
+            new[]
+            {
+                BlockingMessage(DocIdItem, "Doctor No is required ", "DR-01"),
+                WarningMessage(SubPayTypeItem, "Payment type is empty", "DR-22"),
+            },
+            response.Messages);
+        Assert.Equal(1, response.Adjusted[SubPayTypeItem]);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-55")]
+    [Trait("OpenItem", "OI-56")]
+    public async Task Create_DraftCarryingAnInvoiceNumber_GatesOi56BeforeAnyLookup()
+    {
+        var draft = WithHeader(await CashDraft(), header => header with { InvNo = 1234 });
+        var fakes = Arrange(draft);
+
+        var failure = await GateAsync(() => fakes.CreateService().Create(CreateRequest(draft), Operator), OpenItemIds.OI56);
+
+        Assert.StartsWith(OpenItemIds.OI56 + ": ", failure.Message, StringComparison.Ordinal);
+        Assert.Empty(fakes.Lookups.Calls);
+        Assert.Empty(fakes.SessionFactory.Calls);
+        Assert.Equal(0, CreateCalls(fakes));
+    }
+
+    /// <summary>A draft that saves except for the one detail or line failure named by <paramref name="preflightCase"/>, with its fakes.</summary>
+    private static async Task<(DraftDto Draft, FakeDataPorts Fakes)> BlockedPreflight(string preflightCase)
+    {
+        var cash = await CashDraft();
+        var draft = preflightCase switch
+        {
+            "no-lines" => cash with { Lines = Array.Empty<InvoiceLineDraft>() },
+            "qty-over-limit" => cash with { Lines = new[] { Line(OrdinaryService, "c1") with { Qty = 2m } } },
+            "qty-zero" => cash with { Lines = new[] { Line(OrdinaryService, "c1") with { Qty = 0m }, Line(SecondService, "c2") } },
+            "value-discount-on-credit" => (await CreditDraft()) with { Lines = new[] { Line(OrdinaryService, "c1") with { DiscountType = "V" } } },
+            "service-missing" => cash with { Lines = new[] { Line(OrdinaryService, "c1") with { ServiceId = null } } },
+            _ => throw new ArgumentOutOfRangeException(nameof(preflightCase), preflightCase, "Unknown pre-flight case."),
+        };
+        var fakes = Arrange(draft);
+        if (string.Equals(preflightCase, "qty-over-limit", StringComparison.Ordinal))
+        {
+            fakes.Lookups.ServiceProfile = serviceId => Profile(serviceId) with { ShowQty = 1 };
+        }
+
+        return (draft, fakes);
+    }
+
+    /// <summary>Claim-preload fake answering <see cref="ClaimNumber"/> with the patient's prior cash or insured-credit invoice on <see cref="PreloadListId"/>, and any other claim with null.</summary>
+    private static Func<string, (InvoiceHeaderDraft Header, decimal? ListId, decimal? MaxDeductable, int? CardId)?> PreloadOf(
+        bool credit, decimal? maxDeductable, int? cardId)
+    {
+        var header = credit
+            ? new InvoiceHeaderDraft { PatientNo = PatientNo, CompCode = CreditCompany, PayType = 2, SubCompCode = SubCompany, ClassCode = ClassCode }
+            : new InvoiceHeaderDraft { PatientNo = PatientNo, CompCode = CashCompany, PayType = 1 };
+        return claimNo => string.Equals(claimNo, ClaimNumber, StringComparison.Ordinal)
+            ? (header, PreloadListId, maxDeductable, cardId)
+            : null;
+    }
+
+    private static MessageDto BlockingMessage(string? field, string text, string rule) =>
+        new() { Field = field, Text = text, Severity = ValidationMessage.Blocking, Rule = rule };
+
+    private static MessageDto WarningMessage(string? field, string text, string rule) =>
+        new() { Field = field, Text = text, Severity = ValidationMessage.Warning, Rule = rule };
+
+    private static FakeCall SingleCall(IEnumerable<FakeCall> calls, string method) =>
+        Assert.Single(calls, call => call.Method == method);
+
+    [Fact]
+    [Trait("Decision", "D-55")]
+    public async Task Create_AfterPatientValidation_RereadsChangedCoverage()
+    {
+        var draft = await CreditDraft();
+        var fakes = Arrange(draft);
+        var service = fakes.CreateService();
+
+        var validated = await service.Validate(new ValidateDraftRequest { Draft = draft, Target = "PATIENTNO" }, Operator);
+        Assert.DoesNotContain(validated.Messages, IsBlocking);
+
+        fakes.Lookups.PatientCoverage = ValidCoverage(draft) with { CompanyIsActive = OnHold };
+        var response = await service.Create(CreateRequest(draft), Operator);
+
+        Assert.True(HasBlocking(response.Messages, "DR-03"));
+        Assert.Equal(0, CreateCalls(fakes));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-55")]
+    [Trait("OpenItem", "OI-32")]
+    public async Task Create_AfterLineValidation_RereadsChangedServiceProfile()
+    {
+        var draft = await CreditDraft();
+        var fakes = Arrange(draft);
+        var service = fakes.CreateService();
+
+        var validated = await service.Validate(
+            new ValidateDraftRequest { Draft = draft, Target = "SERVICEID", LineIndex = 0 }, Operator);
+        Assert.DoesNotContain(validated.Messages, IsBlocking);
+
+        fakes.Lookups.ServiceProfile = serviceId => Profile(serviceId) with { ConsRev = 1 };
+
+        await GateAsync(() => service.Create(CreateRequest(draft), Operator), OpenItemIds.OI32);
+        Assert.Equal(0, CreateCalls(fakes));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-55")]
+    public async Task Create_AfterDiscountValidation_RereadsLoweredMaximumDiscount()
+    {
+        var draft = WithHeader(await CreditDraft(), header => header with { DiscT = 1, FinalDiscPerc = 5m });
+        var fakes = Arrange(draft);
+        fakes.Lookups.UserMaxDiscount = 10m;
+        var service = fakes.CreateService();
+
+        var validated = await service.Validate(
+            new ValidateDraftRequest { Draft = draft, Target = "FINALDISC_PERC" }, Operator);
+        Assert.DoesNotContain(validated.Messages, IsBlocking);
+
+        fakes.Lookups.UserMaxDiscount = 2m;
+        var response = await service.Create(CreateRequest(draft), Operator);
+
+        Assert.True(HasBlocking(response.Messages, "DR-06"));
+        Assert.Equal(0, CreateCalls(fakes));
+    }
+
+    /// <summary>Preview echoing each line on the default list with the package's patient share and amount due.</summary>
+    private static Func<InvoiceHeaderDraft, IReadOnlyList<InvoiceLineDraft>, (IReadOnlyList<EditablePreviewLine> Lines, PreviewTotalsRow Totals)> PreviewWithShare(
+        decimal patPay, decimal amountDue) =>
+        (_, lines) => (
+            lines.Select((line, index) => new EditablePreviewLine
+            {
+                ClientId = line.ClientId,
+                LineNo = index + 1,
+                ServiceId = line.ServiceId,
+                ListId = DefaultListId,
+                Qty = line.Qty,
+            }).ToArray(),
+            new PreviewTotalsRow { LineCount = lines.Count, PatPay = patPay, CashCollected = amountDue });
+
+    /// <summary>Cash draft in discount mode <paramref name="discT"/> with the given final discount, a percent of 15 and an operator split of 120 / 80.</summary>
+    private static async Task<DraftDto> FinalDiscountDraft(int? discT, decimal? finalDisc, decimal? finalDiscPerc = 15m) => WithHeader(
+        await CashDraft(),
+        header => header with { DiscT = discT, FinalDisc = finalDisc, FinalDiscPerc = finalDiscPerc, Amount1 = 120m, Amount2 = 80m });
+
+    /// <summary>Validates <paramref name="target"/> of <paramref name="draft"/> with a maximum discount of 10, a patient share of 200 and an amount due of 190.</summary>
+    private static async Task<(ValidateDraftResponse Response, FakeDataPorts Fakes)> ValidateDiscount(DraftDto draft, string target)
+    {
+        var fakes = Arrange(draft);
+        fakes.Lookups.UserMaxDiscount = 10m;
+        fakes.InvoiceApi.Preview = PreviewWithShare(200m, 190m);
+        var response = await fakes.CreateService().Validate(new ValidateDraftRequest { Draft = draft, Target = target }, Operator);
+        return (response, fakes);
+    }
+
+    /// <summary>Asserts an empty validate answer given without any port call.</summary>
+    private static void AssertNothingChecked(ValidateDraftResponse response, FakeDataPorts fakes)
+    {
+        Assert.Empty(response.Messages);
+        Assert.Empty(response.Adjusted);
+        Assert.Empty(response.OpenItems);
+        Assert.Null(response.VisitLine);
+        Assert.Empty(fakes.Journal);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-187")]
+    [InlineData(null)]
+    [InlineData(0)]
+    public async Task ValidateFinalDiscPerc_ValueMode_ChecksNothingAndKeepsThePercentAndTheSplit(int? discT)
+    {
+        var (response, fakes) = await ValidateDiscount(await FinalDiscountDraft(discT, finalDisc: null), FinalDiscPercItem);
+
+        AssertNothingChecked(response, fakes);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-187")]
+    public async Task ValidateFinalDisc_RateMode_ChecksNothingAndKeepsTheAmountAndTheSplit()
+    {
+        var (response, fakes) = await ValidateDiscount(await FinalDiscountDraft(1, finalDisc: 150m), FinalDiscItem);
+
+        AssertNothingChecked(response, fakes);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-187")]
+    [InlineData(null, null)]
+    [InlineData(null, 0)]
+    [InlineData(0, null)]
+    [InlineData(0, 0)]
+    public async Task ValidateFinalDisc_ValueModeWithoutAnAmount_ClearsOnlyThePercent(int? discT, int? finalDisc)
+    {
+        var (response, fakes) = await ValidateDiscount(await FinalDiscountDraft(discT, finalDisc), FinalDiscItem);
+
+        Assert.Empty(response.Messages);
+        Assert.Equal(FinalDiscPercItem, Assert.Single(response.Adjusted).Key);
+        Assert.Equal(0m, response.Adjusted[FinalDiscPercItem]);
+        Assert.Empty(response.OpenItems);
+        Assert.Empty(fakes.Journal);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-187")]
+    public async Task ValidateFinalDisc_ValueModeWithAnAmount_DerivesThePercentAndResetsTheSplit()
+    {
+        var (response, fakes) = await ValidateDiscount(await FinalDiscountDraft(0, finalDisc: 10m), FinalDiscItem);
+
+        Assert.Empty(response.Messages);
+        Assert.Equal(new[] { Amount1Item, Amount2Item, FinalDiscPercItem }, response.Adjusted.Keys.Order(StringComparer.Ordinal));
+        Assert.Equal(5m, response.Adjusted[FinalDiscPercItem]);
+        Assert.Equal(190m, response.Adjusted[Amount1Item]);
+        Assert.Equal(0m, response.Adjusted[Amount2Item]);
+        Assert.Equal(new object?[] { Operator.UserNo }, SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetUserMaxDiscount)).Args);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-187")]
+    public async Task ValidateFinalDiscPerc_RateModeOverTheLimit_RaisesTheDiscountAlertWithoutResettingTheSplit()
+    {
+        var (response, fakes) = await ValidateDiscount(await FinalDiscountDraft(1, finalDisc: null), FinalDiscPercItem);
+
+        Assert.Equal(new[] { BlockingMessage(FinalDiscPercItem, "Maximum discount allawed is10", "DR-06") }, response.Messages);
+        Assert.Empty(response.Adjusted);
+        Assert.Equal(new object?[] { Operator.UserNo }, SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetUserMaxDiscount)).Args);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-187")]
+    public async Task ValidateFinalDiscPerc_RateModeWithinTheLimit_ResetsTheSplitToTheAmountDue()
+    {
+        var (response, _) = await ValidateDiscount(await FinalDiscountDraft(1, finalDisc: null, finalDiscPerc: 5m), FinalDiscPercItem);
+
+        Assert.Empty(response.Messages);
+        Assert.Equal(new[] { Amount1Item, Amount2Item }, response.Adjusted.Keys.Order(StringComparer.Ordinal));
+        Assert.Equal(190m, response.Adjusted[Amount1Item]);
+        Assert.Equal(0m, response.Adjusted[Amount2Item]);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-52")]
+    [Trait("OpenItem", "OI-32")]
+    public async Task Create_ForgedPreAuthorizationWithQueuedService_GatesOi32()
+    {
+        var request = ForgedRequest(await CreditDraft());
+        var fakes = Arrange(request.Draft);
+        fakes.Lookups.PatientCoverage = InsuredCoverage(request.Draft);
+        fakes.Lookups.ServiceProfile = serviceId => Profile(serviceId) with { AddToQue = 1 };
+
+        var failure = await GateAsync(() => fakes.CreateService().Create(request, Operator), OpenItemIds.OI32);
+
+        Assert.Contains(OpenItemIds.OI32, GateIds(failure));
+        Assert.Equal(0, CreateCalls(fakes));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-52")]
+    [Trait("OpenItem", "OI-21")]
+    public async Task Create_ForgedPreAuthorizationWithUnqueuedService_BindsNoPreAuthorization()
+    {
+        var request = ForgedRequest(await CreditDraft());
+        var fakes = Arrange(request.Draft);
+        fakes.Lookups.PatientCoverage = InsuredCoverage(request.Draft);
+
+        var response = await fakes.CreateService().Create(request, Operator);
+
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        Assert.Null(CreateCall(fakes).Arg<InvoiceHeaderDraft>().PreAuthorization);
+        Assert.Contains(OpenItemIds.OI21, response.OpenItems);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-52")]
+    [Trait("OpenItem", "OI-21")]
+    public async Task Create_InMemoryPreAuthorizationOnTheDraft_ReachesThePackageAsNull()
+    {
+        var request = await InMemoryForgedRequest();
+        var fakes = Arrange(request.Draft);
+        fakes.Lookups.PatientCoverage = InsuredCoverage(request.Draft);
+
+        var response = await fakes.CreateService().Create(request, Operator);
+
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        Assert.Null(CreateCall(fakes).Arg<InvoiceHeaderDraft>().PreAuthorization);
+        Assert.Contains(OpenItemIds.OI21, response.OpenItems);
+        Assert.False(Called(fakes.Legacy.Calls, nameof(ILegacyExternalCalls.GetPreAuthorization)));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-52")]
+    [Trait("OpenItem", "OI-32")]
+    public async Task Create_InMemoryPreAuthorizationWithQueuedService_GatesOi32()
+    {
+        var request = await InMemoryForgedRequest();
+        var fakes = Arrange(request.Draft);
+        fakes.Lookups.PatientCoverage = InsuredCoverage(request.Draft);
+        fakes.Lookups.ServiceProfile = serviceId => Profile(serviceId) with { AddToQue = 1 };
+
+        var failure = await GateAsync(() => fakes.CreateService().Create(request, Operator), OpenItemIds.OI32);
+
+        Assert.Contains(OpenItemIds.OI32, GateIds(failure));
+        Assert.Equal(0, CreateCalls(fakes));
+        Assert.False(Called(fakes.Legacy.Calls, nameof(ILegacyExternalCalls.GetPreAuthorization)));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-52")]
+    [Trait("OpenItem", "OI-32")]
+    public async Task Create_CashDraftWithServerReadCard_GatesOi32()
+    {
+        var draft = await CashDraft();
+        var fakes = Arrange(draft);
+        fakes.Lookups.PatientCardId = 42;
+
+        var failure = await GateAsync(() => fakes.CreateService().Create(CreateRequest(draft), Operator), OpenItemIds.OI32);
+
+        Assert.Contains(OpenItemIds.OI32, GateIds(failure));
+        Assert.True(Called(fakes.Lookups.Calls, nameof(ILookupQueries.GetPatientCardId)));
+        Assert.Equal(0, CreateCalls(fakes));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-51")]
+    [Trait("OpenItem", "OI-23")]
+    public async Task PreviewAndCreate_CreditWithDeductible_GateOi23()
+    {
+        var draft = await CreditDraft();
+        var fakes = Arrange(draft);
+        fakes.Lookups.PatientCoverage = ValidCoverage(draft) with { MaxDeductable = 50m };
+        var service = fakes.CreateService();
+
+        await GateAsync(() => service.Preview(draft, Operator), OpenItemIds.OI23);
+        var failure = await GateAsync(() => service.Create(CreateRequest(draft), Operator), OpenItemIds.OI23);
+
+        Assert.Contains(OpenItemIds.OI23, GateIds(failure));
+        Assert.True(Called(fakes.Legacy.Calls, nameof(ILegacyExternalCalls.GetPaidBefore)));
+        Assert.False(Called(fakes.InvoiceApi.Calls, nameof(IBilInvoiceApiGateway.CalculatePreview)));
+        Assert.Equal(0, CreateCalls(fakes));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-51")]
+    [Trait("OpenItem", "OI-23")]
+    public async Task PreviewAndCreate_CreditWithAdvancedClass_GateOi23()
+    {
+        var draft = await CreditDraft();
+        var fakes = Arrange(draft);
+        fakes.Lookups.PatientCoverage = InsuredCoverage(draft) with { MaxDeductable = 0m };
+        fakes.Lookups.ClassAdvancedMode = 2;
+        var service = fakes.CreateService();
+
+        await GateAsync(() => service.Preview(draft, Operator), OpenItemIds.OI23);
+        var failure = await GateAsync(() => service.Create(CreateRequest(draft), Operator), OpenItemIds.OI23);
+
+        Assert.Contains(OpenItemIds.OI23, GateIds(failure));
+        Assert.True(Called(fakes.Lookups.Calls, nameof(ILookupQueries.GetClassAdvancedMode)));
+        Assert.False(Called(fakes.InvoiceApi.Calls, nameof(IBilInvoiceApiGateway.CalculatePreview)));
+        Assert.Equal(0, CreateCalls(fakes));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-37")]
+    public async Task Create_ExpandedPackageWithQueuedComponent_SendsAddToListOne()
+    {
+        var draft = await ExpandedPackageDraft();
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = PackageAwareProfile;
+        fakes.Lookups.ServiceQueueFlags = serviceIds => serviceIds.ToDictionary(
+            serviceId => serviceId,
+            serviceId => string.Equals(serviceId, FirstComponent, StringComparison.Ordinal) ? 1 : 0,
+            StringComparer.Ordinal);
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        var queueFlagIds = QueueFlagIds(fakes);
+        Assert.Contains(FirstComponent, queueFlagIds);
+        Assert.Contains(SecondComponent, queueFlagIds);
+        Assert.Equal((int?)1, CreateCall(fakes).Arg<InvoiceHeaderDraft>().AddToList);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-37")]
+    public async Task Create_ExpandedPackageWithoutQueuedComponent_SendsAddToListZero()
+    {
+        var draft = await ExpandedPackageDraft();
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = PackageAwareProfile;
+        fakes.Lookups.ServiceQueueFlags = serviceIds => serviceIds.ToDictionary(
+            serviceId => serviceId,
+            _ => 0,
+            StringComparer.Ordinal);
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        var queueFlagIds = QueueFlagIds(fakes);
+        Assert.Contains(FirstComponent, queueFlagIds);
+        Assert.Contains(SecondComponent, queueFlagIds);
+        Assert.Equal((int?)0, CreateCall(fakes).Arg<InvoiceHeaderDraft>().AddToList);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-53")]
+    [Trait("OpenItem", "OI-33")]
+    public async Task Create_DeptWiseAtErClinic_GatesOi33()
+    {
+        var draft = WithHeader(await CashDraft(), header => header with { DeptWise = 1 });
+        var fakes = Arrange(draft);
+        fakes.Lookups.ClinicProfile = (clinicId, _) => new ClinicProfile { ClinicId = clinicId, SysCatType = ErCategory };
+
+        var failure = await GateAsync(() => fakes.CreateService().Create(CreateRequest(draft), Operator), OpenItemIds.OI33);
+
+        Assert.Contains(OpenItemIds.OI33, GateIds(failure));
+        Assert.True(Called(fakes.Lookups.Calls, nameof(ILookupQueries.GetClinicProfile)));
+        Assert.Equal(0, CreateCalls(fakes));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-53")]
+    [Trait("OpenItem", "OI-33")]
+    public async Task Create_CallFlagWithoutDeptWise_GatesOi33()
+    {
+        var draft = WithHeader(await CashDraft(), header => header with { Call = 1, DeptWise = 0 });
+        var fakes = Arrange(draft);
+
+        var failure = await GateAsync(() => fakes.CreateService().Create(CreateRequest(draft), Operator), OpenItemIds.OI33);
+
+        Assert.Contains(OpenItemIds.OI33, GateIds(failure));
+        Assert.Equal(0, CreateCalls(fakes));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-53")]
+    [Trait("OpenItem", "OI-33")]
+    public async Task Create_DeptWiseAtNonErClinic_ReturnsBlockingDr05BeforeGate()
+    {
+        var draft = WithHeader(await CashDraft(), header => header with { DeptWise = 1 });
+        var fakes = Arrange(draft);
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.True(HasBlocking(response.Messages, "DR-05"));
+        Assert.Contains(OpenItemIds.OI33, response.OpenItems);
+        Assert.Equal(0, CreateCalls(fakes));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-38")]
+    [Trait("OpenItem", "OI-24")]
+    public async Task ImportPackage_OnlyPackageParentWithoutClaimPreload_GatesOi24()
+    {
+        var draft = (await CashDraft()) with { Lines = new[] { Line(PackageService, "p1") } };
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = PackageAwareProfile;
+
+        await GateAsync(() => fakes.CreateService().ImportPackage(PackageRequest(draft), Operator), OpenItemIds.OI24);
+
+        Assert.True(Called(fakes.Legacy.Calls, nameof(ILegacyExternalCalls.ResolvePricePlan)));
+        Assert.False(Called(fakes.InvoiceApi.Calls, nameof(IBilInvoiceApiGateway.GetPackageLines)));
+        Assert.DoesNotContain(PreviewedLines(fakes), lines => lines.Any(IsPackageParent));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-38")]
+    public async Task ImportPackage_OnlyPackageParentWithClaimPreload_UsesPreloadList()
+    {
+        var draft = (await CashDraft()) with
+        {
+            Lines = new[] { Line(PackageService, "p1") },
+            Parameters = new InvoiceEntryParameters { ClaimNo = ClaimNumber },
+        };
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = PackageAwareProfile;
+        fakes.Invoices.ClaimPreload = claimNo => string.Equals(claimNo, ClaimNumber, StringComparison.Ordinal)
+            ? (new InvoiceHeaderDraft { PatientNo = PatientNo, CompCode = CashCompany, PayType = 1 }, 55m, null, null)
+            : null;
+
+        await fakes.CreateService().ImportPackage(PackageRequest(draft), Operator);
+
+        var packageCall = Assert.Single(
+            fakes.InvoiceApi.Calls, call => call.Method == nameof(IBilInvoiceApiGateway.GetPackageLines));
+        Assert.Equal(55m, packageCall.Arg<decimal>());
+        Assert.Equal(PackageService, packageCall.Arg<string>());
+        Assert.DoesNotContain(PreviewedLines(fakes), lines => lines.Any(IsPackageParent));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-38")]
+    public async Task ImportPackage_AfterOrdinaryLine_UsesThatLinePreviewList()
+    {
+        var draft = (await CashDraft()) with { Lines = new[] { Line(OrdinaryService, "c1"), Line(PackageService, "p1") } };
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = PackageAwareProfile;
+        fakes.InvoiceApi.PreviewListId = 77m;
+
+        await fakes.CreateService().ImportPackage(PackageRequest(draft), Operator);
+
+        var packageCall = Assert.Single(
+            fakes.InvoiceApi.Calls, call => call.Method == nameof(IBilInvoiceApiGateway.GetPackageLines));
+        Assert.Equal(77m, packageCall.Arg<decimal>());
+        Assert.Contains(PreviewedLines(fakes), lines => lines.Any(line => line.ServiceId == OrdinaryService));
+        Assert.DoesNotContain(PreviewedLines(fakes), lines => lines.Any(IsPackageParent));
+    }
+
+    [Fact]
+    public async Task ImportBundledOffer_ComponentLines_KeepPackageDiscountTypeThroughPreviewAndCreate()
+    {
+        var cash = await CashDraft();
+        var fakes = Arrange(cash);
+        var components = new[] { OfferComponent(FirstComponent, 71L, 40m), OfferComponent(SecondComponent, 72L, 60m) };
+        var clientIds = components.Select(component => component.ClientId).ToArray();
+        fakes.InvoiceApi.BundledOfferLines = (_, _, _) => components;
+        fakes.InvoiceApi.PreviewFailure = RefuseAlteredOfferComponent;
+        var service = fakes.CreateService();
+
+        var imported = await service.ImportBundledOffer(new BundledOfferRequest { Draft = cash }, Operator);
+
+        Assert.Equal(clientIds, imported.Lines.Select(line => line.ClientId));
+        Assert.All(imported.Lines, AssertUnalteredOfferComponent);
+        foreach (var (component, line) in components.Zip(imported.Lines))
+        {
+            Assert.Equal(component.ServiceId, line.ServiceId);
+            Assert.Equal(component.Qty, line.Qty);
+            Assert.Equal(component.Price, line.Price);
+            Assert.Equal(component.OfferId, line.OfferId);
+            Assert.Equal(component.OfferDtlId, line.OfferDtlId);
+            Assert.Equal(component.OfferType, line.OfferType);
+            Assert.Equal(component.OfferInstanceId, line.OfferInstanceId);
+            Assert.Equal(component.OfferLineRole, line.OfferLineRole);
+            Assert.Equal(component.OfferParentLineId, line.OfferParentLineId);
+            Assert.Equal(component.OfferPriceApplied, line.OfferPriceApplied);
+            Assert.Equal(component.OfferDisApplied, line.OfferDisApplied);
+            Assert.Equal(component.OfferNameSnapshot, line.OfferNameSnapshot);
+            Assert.Equal(component.OfferObjectVersionNumber, line.OfferObjectVersionNumber);
+            Assert.Equal(component.OfferDtlObjectVersionNumber, line.OfferDtlObjectVersionNumber);
+        }
+
+        var draft = cash with { Lines = cash.Lines.Concat(imported.Lines).ToArray() };
+        var preview = await service.Preview(draft, Operator);
+        var created = await service.Create(CreateRequest(draft), Operator);
+
+        Assert.DoesNotContain(preview.Messages, IsBlocking);
+        Assert.DoesNotContain(created.Messages, IsBlocking);
+        Assert.Equal(1, CreateCalls(fakes));
+        Assert.Contains(PreviewedLines(fakes), lines => clientIds.All(clientId => lines.Any(line => line.ClientId == clientId)));
+        Assert.All(PreviewedLines(fakes).SelectMany(lines => lines).Where(line => clientIds.Contains(line.ClientId)), AssertUnalteredOfferComponent);
+        var createdComponents = CreateCall(fakes).Arg<IReadOnlyList<InvoiceLineDraft>>().Where(line => clientIds.Contains(line.ClientId)).ToArray();
+        Assert.Equal(clientIds, createdComponents.Select(line => line.ClientId));
+        Assert.All(createdComponents, AssertUnalteredOfferComponent);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-38")]
+    [Trait("OpenItem", "OI-24")]
+    public async Task ValidateLine_LonePlainPackageParentWithoutList_GatesOi24AfterOnePreview()
+    {
+        var draft = (await CashDraft()) with { Lines = new[] { Line(PackageService, "p1") } };
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = PackageAwareProfile;
+        fakes.InvoiceApi.PreviewFailure = RefuseUnexpandedParent;
+
+        await GateAsync(
+            () => fakes.CreateService().Validate(LineTarget(draft, 0), Operator),
+            OpenItemIds.OI24);
+
+        Assert.True(Called(fakes.Legacy.Calls, nameof(ILegacyExternalCalls.ResolvePricePlan)));
+        Assert.Single(PreviewedLines(fakes));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-38")]
+    [Trait("OpenItem", "OI-24")]
+    public async Task Create_LonePlainPackageParentWithoutList_GatesOi24AfterOnePreview()
+    {
+        var draft = (await CashDraft()) with { Lines = new[] { Line(PackageService, "p1") } };
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = PackageAwareProfile;
+        fakes.InvoiceApi.PreviewFailure = RefuseUnexpandedParent;
+
+        await GateAsync(() => fakes.CreateService().Create(CreateRequest(draft), Operator), OpenItemIds.OI24);
+
+        Assert.True(Called(fakes.Legacy.Calls, nameof(ILegacyExternalCalls.ResolvePricePlan)));
+        Assert.Single(PreviewedLines(fakes));
+        Assert.Equal(0, CreateCalls(fakes));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-38")]
+    public async Task Create_PackageRefusalOfPlainLines_PropagatesWithoutProbing()
+    {
+        var draft = await PlainLinesDraft(OrdinaryService, "S2", "S3");
+        var fakes = Arrange(draft);
+        fakes.InvoiceApi.PreviewFailure = (_, _) => FakeOracleFailures.DiscountRefused();
+
+        var failure = await Assert.ThrowsAsync<OracleException>(
+            () => fakes.CreateService().Create(CreateRequest(draft), Operator));
+
+        Assert.Equal(20906, failure.Number);
+        Assert.Equal(3, Assert.Single(PreviewedLines(fakes)).Count);
+        Assert.Equal(0, CreateCalls(fakes));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-38")]
+    [Trait("OpenItem", "OI-24")]
+    public async Task Create_UnexpandedParentAmongPlainLines_GatesOi24AfterOnePreview()
+    {
+        var draft = await PlainLinesDraft(OrdinaryService, PackageService, "S2");
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = PackageAwareProfile;
+        fakes.InvoiceApi.PreviewFailure = RefuseUnexpandedParent;
+
+        await GateAsync(() => fakes.CreateService().Create(CreateRequest(draft), Operator), OpenItemIds.OI24);
+
+        Assert.True(Called(fakes.Legacy.Calls, nameof(ILegacyExternalCalls.ResolvePricePlan)));
+        Assert.Single(PreviewedLines(fakes));
+        Assert.Equal(0, CreateCalls(fakes));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-38")]
+    public async Task Create_ServiceProfileConnectivityFailure_PropagatesDespiteBlockingField()
+    {
+        var draft = WithHeader(await CashDraft(), header => header with { DocId = null });
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = _ => throw FakeOracleFailures.NoListener();
+
+        var failure = await Assert.ThrowsAsync<OracleException>(
+            () => fakes.CreateService().Create(CreateRequest(draft), Operator));
+
+        Assert.Equal(12541, failure.Number);
+        Assert.Equal(0, CreateCalls(fakes));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-38")]
+    public async Task ValidateLine_ServiceProfileConnectivityFailure_PropagatesDespiteBlockingLine()
+    {
+        var draft = (await CashDraft()) with
+        {
+            Lines = new[] { Line(OrdinaryService, "c1") with { Qty = 0m }, Line("S2", "c2") },
+        };
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = _ => throw FakeOracleFailures.NoListener();
+
+        var failure = await Assert.ThrowsAsync<OracleException>(
+            () => fakes.CreateService().Validate(LineTarget(draft, 0), Operator));
+
+        Assert.Equal(12541, failure.Number);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-38")]
+    public async Task Create_FallbackProfileReadFailure_PropagatesAfterPackageRefusal()
+    {
+        var draft = WithHeader(await CashDraft(), header => header with { DocId = null }) with
+        {
+            Parameters = new InvoiceEntryParameters { ClaimNo = ClaimNumber },
+        };
+        var fakes = Arrange(draft);
+        fakes.Invoices.ClaimPreload = claimNo => string.Equals(claimNo, ClaimNumber, StringComparison.Ordinal)
+            ? (new InvoiceHeaderDraft { PatientNo = PatientNo, CompCode = CashCompany, PayType = 1 }, 55m, null, null)
+            : null;
+        var profileReads = 0;
+        fakes.Lookups.ServiceProfile = serviceId =>
+            ++profileReads == 1 ? Profile(serviceId) : throw FakeOracleFailures.NoListener();
+        fakes.InvoiceApi.PreviewFailure = (_, _) => FakeOracleFailures.DiscountRefused();
+
+        var failure = await Assert.ThrowsAsync<OracleException>(
+            () => fakes.CreateService().Create(CreateRequest(draft), Operator));
+
+        Assert.Equal(12541, failure.Number);
+        Assert.Single(PreviewedLines(fakes));
+        Assert.Equal(0, CreateCalls(fakes));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-38")]
+    public async Task Create_PackageRefusalWithBlockingField_ReturnsBlockingMessages()
+    {
+        var draft = WithHeader(await CashDraft(), header => header with { DocId = null });
+        var fakes = Arrange(draft);
+        fakes.InvoiceApi.PreviewFailure = (_, _) => FakeOracleFailures.DiscountRefused();
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.True(HasBlocking(response.Messages, "DR-01"));
+        Assert.Null(response.InvNo);
+        Assert.Single(PreviewedLines(fakes));
+        Assert.Equal(0, CreateCalls(fakes));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-38")]
+    [Trait("OpenItem", "OI-24")]
+    public async Task Create_UnexpandedParentWithBlockingField_ListsOi24WithBlockingMessages()
+    {
+        var draft = WithHeader(await CashDraft(), header => header with { DocId = null }) with
+        {
+            Lines = new[] { Line(PackageService, "p1") },
+        };
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = PackageAwareProfile;
+        fakes.InvoiceApi.PreviewFailure = RefuseUnexpandedParent;
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.True(HasBlocking(response.Messages, "DR-01"));
+        Assert.Contains(OpenItemIds.OI24, response.OpenItems);
+        Assert.Null(response.InvNo);
+        Assert.Single(PreviewedLines(fakes));
+        Assert.Equal(0, CreateCalls(fakes));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-38")]
+    public async Task ValidateLine_LonePlainPackageParentWithClaimPreload_IsNotPreviewed()
+    {
+        var draft = (await CashDraft()) with
+        {
+            Lines = new[] { Line(PackageService, "p1") },
+            Parameters = new InvoiceEntryParameters { ClaimNo = ClaimNumber },
+        };
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = PackageAwareProfile;
+        fakes.Invoices.ClaimPreload = PreloadWithList;
+        fakes.InvoiceApi.PreviewFailure = RefuseUnexpandedParent;
+
+        await fakes.CreateService().Validate(LineTarget(draft, 0), Operator);
+
+        Assert.Empty(PreviewedLines(fakes));
+        Assert.False(Called(fakes.Legacy.Calls, nameof(ILegacyExternalCalls.ResolvePricePlan)));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-38")]
+    public async Task Create_PlainPackageParentWithClaimPreload_IsExcludedFromEveryPreview()
+    {
+        var draft = (await CashDraft()) with
+        {
+            Lines = new[] { Line(OrdinaryService, "c1"), Line(PackageService, "p1") },
+            Parameters = new InvoiceEntryParameters { ClaimNo = ClaimNumber },
+        };
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = PackageAwareProfile;
+        fakes.Invoices.ClaimPreload = PreloadWithList;
+        fakes.InvoiceApi.PreviewFailure = RefuseUnexpandedParent;
+
+        await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.NotEmpty(PreviewedLines(fakes));
+        Assert.DoesNotContain(PreviewedLines(fakes), lines => lines.Any(IsPackageParent));
+        Assert.False(Called(fakes.Legacy.Calls, nameof(ILegacyExternalCalls.ResolvePricePlan)));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-38")]
+    public async Task Create_ServiceProfileApplicationError_PropagatesDespiteBlockingField()
+    {
+        var draft = WithHeader(await CashDraft(), header => header with { DocId = null });
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = _ => throw FakeOracleFailures.LookupApplicationError();
+
+        var failure = await Assert.ThrowsAsync<OracleException>(
+            () => fakes.CreateService().Create(CreateRequest(draft), Operator));
+
+        Assert.Equal(20001, failure.Number);
+        Assert.Single(PreviewedLines(fakes));
+        Assert.Equal(0, CreateCalls(fakes));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-38")]
+    public async Task ValidateLine_ServiceProfileApplicationError_PropagatesDespiteBlockingLine()
+    {
+        var draft = (await CashDraft()) with
+        {
+            Lines = new[] { Line(OrdinaryService, "c1") with { Qty = 0m }, Line("S2", "c2") },
+        };
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = _ => throw FakeOracleFailures.LookupApplicationError();
+
+        var failure = await Assert.ThrowsAsync<OracleException>(
+            () => fakes.CreateService().Validate(LineTarget(draft, 0), Operator));
+
+        Assert.Equal(20001, failure.Number);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-38")]
+    public async Task Create_PriceOverrideProfileApplicationError_PropagatesDespiteBlockingField()
+    {
+        var draft = WithHeader(await CashDraft(), header => header with { DocId = null }) with
+        {
+            Lines = new[] { Line(OrdinaryService, "c1") with { PriceOverride = 25m } },
+        };
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = _ => throw FakeOracleFailures.LookupApplicationError();
+
+        var failure = await Assert.ThrowsAsync<OracleException>(
+            () => fakes.CreateService().Create(CreateRequest(draft), Operator));
+
+        Assert.Equal(20001, failure.Number);
+        Assert.Single(PreviewedLines(fakes));
+        Assert.Equal(0, CreateCalls(fakes));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-38")]
+    public async Task Create_QueueFlagsApplicationError_PropagatesDespiteBlockingField()
+    {
+        var draft = WithHeader(await CashDraft(), header => header with { DocId = null });
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceQueueFlags = _ => throw FakeOracleFailures.LookupApplicationError();
+
+        var failure = await Assert.ThrowsAsync<OracleException>(
+            () => fakes.CreateService().Create(CreateRequest(draft), Operator));
+
+        Assert.Equal(20001, failure.Number);
+        Assert.Equal(0, CreateCalls(fakes));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-38")]
+    public async Task Create_RequestedServicesApplicationError_PropagatesDespiteBlockingField()
+    {
+        var draft = WithHeader(await CashDraft(), header => header with { DocId = null });
+        var fakes = Arrange(draft);
+        fakes.Lookups.RequestedServicesFailure = FakeOracleFailures.LookupApplicationError;
+
+        var failure = await Assert.ThrowsAsync<OracleException>(
+            () => fakes.CreateService().Create(CreateRequest(draft), Operator));
+
+        Assert.Equal(20001, failure.Number);
+        Assert.True(Called(fakes.Lookups.Calls, nameof(ILookupQueries.GetRequestedServices)));
+        Assert.Equal(0, CreateCalls(fakes));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-38")]
+    public async Task ValidateLine_RequestedServicesApplicationError_PropagatesDespiteBlockingLine()
+    {
+        var draft = (await CashDraft()) with
+        {
+            Lines = new[] { Line(OrdinaryService, "c1") with { Qty = 0m }, Line("S2", "c2") },
+        };
+        var fakes = Arrange(draft);
+        fakes.Lookups.RequestedServicesFailure = FakeOracleFailures.LookupApplicationError;
+
+        var failure = await Assert.ThrowsAsync<OracleException>(
+            () => fakes.CreateService().Validate(LineTarget(draft, 0), Operator));
+
+        Assert.Equal(20001, failure.Number);
+        Assert.True(Called(fakes.Lookups.Calls, nameof(ILookupQueries.GetRequestedServices)));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-54")]
+    [Trait("OpenItem", "OI-20")]
+    public async Task Create_RecordedRequestId_ReplaysBeforePreflight()
+    {
+        var draft = await CreditDraft();
+        var fakes = Arrange(draft);
+        fakes.Invoices.CreateRequest = RecordedFor(draft, Recorded(9001L, CreditCompany, null, false));
+        fakes.Lookups.PatientCoverage = ValidCoverage(draft) with { CompanyIsActive = OnHold };
+        fakes.Lookups.ServiceProfile = serviceId => Profile(serviceId) with { ConsRev = 1 };
+        fakes.InvoiceApi.CreateMessage = ReplayMessage;
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        Assert.Equal(1, CreateCalls(fakes));
+        Assert.Equal(draft.RequestId, CreateCall(fakes).Arg<string>());
+        Assert.False(Called(fakes.Lookups.Calls, nameof(ILookupQueries.GetPatientCoverage)));
+        Assert.False(Called(fakes.Invoices.Calls, nameof(IInvoiceQueries.GetInvoice)));
+        Assert.False(Called(fakes.Lookups.Calls, nameof(ILookupQueries.GetClinicProfile)));
+        Assert.Empty(fakes.PatientTransfer.Calls);
+        Assert.False(Called(fakes.Legacy.Calls, nameof(ILegacyExternalCalls.ValidateTotalInvoice)));
+        Assert.DoesNotContain(
+            fakes.SessionFactory.Sessions.SelectMany(session => session.Events),
+            sessionEvent => sessionEvent == ReceptionTransferSavepointEvent);
+        Assert.Equal(ReplayMessage, response.Message);
+        Assert.Contains(OpenItemIds.OI20, response.OpenItems);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-39")]
+    [InlineData(-400 * TimeSpan.TicksPerDay)]
+    [InlineData(-1L)]
+    [InlineData(1L)]
+    [InlineData(30 * TimeSpan.TicksPerDay)]
+    public async Task Create_DraftDateChangedAfterIssue_ReturnsBlockingInvDateBeforeAnyRead(long shiftTicks)
+    {
+        var issued = await CreditDraft();
+        var draft = issued with { DraftDate = issued.DraftDate.AddTicks(shiftTicks) };
+        var fakes = Arrange(draft);
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        AssertDraftDateRejected(response, fakes);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-39")]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("A1B2")]
+    [InlineData("0000000000000000000000000000000000000000000000000000000000000000")]
+    public async Task Create_MissingOrUnissuedSeal_ReturnsBlockingInvDateBeforeAnyRead(string? seal)
+    {
+        var draft = (await CreditDraft()) with { DraftSeal = seal };
+        var fakes = Arrange(draft);
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        AssertDraftDateRejected(response, fakes);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-39")]
+    public async Task Create_SealIssuedForAnotherRequestId_ReturnsBlockingInvDateBeforeAnyRead()
+    {
+        var other = await CreditDraft();
+        var draft = (await CreditDraft()) with { DraftSeal = other.DraftSeal };
+        var fakes = Arrange(draft);
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.NotEqual(other.RequestId, draft.RequestId);
+        AssertDraftDateRejected(response, fakes);
+    }
+
+    [Fact]
+    public async Task Create_Refused_ReturnsNoInvoice()
+    {
+        var draft = WithHeader(await CashDraft(), header => header with { DeptWise = 1 });
+        var fakes = Arrange(draft);
+
+        var outcome = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.Null(outcome.Invoice);
+        Assert.Null(outcome.InvNo);
+        Assert.Contains(outcome.Messages, IsBlocking);
+        Assert.Equal(0, CreateCalls(fakes));
+    }
+
+    [Fact]
+    public async Task Create_Saved_ReturnsThePackageResultUnderTheDraftRequestId()
+    {
+        var draft = await CashDraft();
+        var fakes = Arrange(draft);
+
+        var outcome = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        var call = CreateCall(fakes);
+        Assert.Equal(draft.RequestId, call.Arg<string>());
+        Assert.True(call.Arg<FakeOracleSession>().Committed);
+        var invoice = Assert.IsType<CreateInvoiceResponse>(outcome.Invoice);
+        Assert.NotNull(outcome.InvNo);
+        Assert.Equal(invoice.InvNo, outcome.InvNo);
+        Assert.Equal(invoice.Messages, outcome.Messages);
+        Assert.Equal(invoice.OpenItems, outcome.OpenItems);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-54")]
+    public async Task Create_Replay_ReturnsThePackageReplayUnderTheSameRequestIdWithoutPreflight()
+    {
+        var draft = await CreditDraft();
+        var fakes = Arrange(draft);
+        fakes.Invoices.CreateRequest = RecordedFor(draft, Recorded(9001L, CreditCompany, null, false));
+
+        var outcome = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        var call = CreateCall(fakes);
+        Assert.Equal(draft.RequestId, call.Arg<string>());
+        Assert.Empty(call.Arg<IReadOnlyList<InvoiceLineDraft>>());
+        Assert.False(Called(fakes.Lookups.Calls, nameof(ILookupQueries.GetPatientCoverage)));
+        Assert.Empty(fakes.PatientTransfer.Calls);
+        Assert.False(Called(fakes.Legacy.Calls, nameof(ILegacyExternalCalls.ValidateTotalInvoice)));
+        Assert.IsType<CreateInvoiceResponse>(outcome.Invoice);
+        Assert.NotNull(outcome.InvNo);
+    }
+
+    [Fact]
+    public async Task Create_PackageReturnsNoInvoiceNumber_RollsBackWithoutAnInvoice()
+    {
+        var draft = await CashDraft();
+        var fakes = Arrange(draft);
+        fakes.InvoiceApi.Create = (_, _, _) => new Billing.Invoicing.Data.Plsql.FullInvoiceResultRow { InvNo = null, Message = "No number." };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fakes.CreateService().Create(CreateRequest(draft), Operator));
+
+        var events = CreateCall(fakes).Arg<FakeOracleSession>().Events;
+        Assert.Contains(RollbackEvent, events);
+        Assert.DoesNotContain(CommitEvent, events);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-39")]
+    public async Task Create_DraftIssuedBeforeMidnight_BindsTheIssuedDateAfterMidnight()
+    {
+        var issuedAt = new DateTime(2026, 9, 29, 23, 59, 59);
+        var cash = await CashDraft();
+        var draft = await Issued(cash with
+        {
+            DraftDate = issuedAt,
+            Header = cash.Header with { InvDate = issuedAt, DraftDate = issuedAt },
+        });
+        var fakes = Arrange(draft);
+        fakes.Lookups.DatabaseTime = issuedAt.AddMinutes(6);
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        var header = CreateCall(fakes).Arg<InvoiceHeaderDraft>();
+        Assert.Equal(issuedAt, header.DraftDate);
+        Assert.Equal(issuedAt, header.InvDate);
+        Assert.NotNull(response.InvNo);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-39")]
+    [Trait("Decision", "D-43")]
+    public async Task Create_SameIdRetryAfterAnUncommittedCreate_SavesInAFreshProcessSharingTheKey()
+    {
+        var draft = await CreditDraft();
+        var firstProcess = Arrange(draft);
+        firstProcess.InvoiceApi.Create = (_, _, _) => throw new TimeoutException("create timed out");
+
+        await Assert.ThrowsAsync<TimeoutException>(() => firstProcess.CreateService().Create(CreateRequest(draft), Operator));
+        Assert.DoesNotContain(CommitEvent, CreateCall(firstProcess).Arg<FakeOracleSession>().Events);
+
+        var restarted = Arrange(draft);
+        var response = await restarted.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        Assert.NotNull(response.InvNo);
+        Assert.Equal(draft.RequestId, CreateCall(restarted).Arg<string>());
+        Assert.Equal(draft.DraftDate, CreateCall(restarted).Arg<InvoiceHeaderDraft>().InvDate);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-39")]
+    public async Task Create_InAProcessConfiguredWithAnotherKey_ReturnsBlockingInvDateBeforeAnyRead()
+    {
+        var draft = await CreditDraft();
+        var fakes = Arrange(draft);
+        fakes.InvoiceApi.DraftSealKey = Convert.ToBase64String(new byte[BilInvoiceApiGateway.MinDraftSealKeyBytes]);
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        AssertDraftDateRejected(response, fakes);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-54")]
+    [Trait("Decision", "D-39")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Create_RecordedRequestIdWithoutIssuedSeal_StillReplays(bool alterDate)
+    {
+        var issued = await CreditDraft();
+        var draft = alterDate
+            ? issued with { DraftDate = issued.DraftDate.AddDays(-1) }
+            : issued with { DraftSeal = null };
+        var fakes = Arrange(draft);
+        fakes.Invoices.CreateRequest = RecordedFor(draft, Recorded(9001L, CreditCompany, null, false));
+        fakes.InvoiceApi.CreateMessage = ReplayMessage;
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.Empty(response.Messages);
+        Assert.NotNull(response.InvNo);
+        Assert.Equal(ReplayMessage, response.Message);
+        Assert.Equal(1, CreateCalls(fakes));
+        Assert.Empty(CreateCall(fakes).Arg<IReadOnlyList<InvoiceLineDraft>>());
+    }
+
+    [Fact]
+    [Trait("Decision", "D-54")]
+    [Trait("OpenItem", "OI-22")]
+    public async Task Create_ReplayOfCashInvoiceAtAgeLimitedClinic_DerivesAdvisoriesWithoutReadsAfterCommit()
+    {
+        var draft = await CashDraft();
+        var fakes = Arrange(draft);
+        fakes.Invoices.CreateRequest = RecordedFor(draft, Recorded(9001L, CashCompany, null, true));
+        fakes.InvoiceApi.CreateMessage = ReplayMessage;
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.Empty(response.Messages);
+        Assert.NotNull(response.InvNo);
+        Assert.Equal(new[] { OpenItemIds.OI12, OpenItemIds.OI20, OpenItemIds.OI22, OpenItemIds.OI45 }, response.OpenItems);
+        var commit = fakes.Journal.IndexOf(SessionCommitEntry);
+        Assert.True(commit >= 0);
+        Assert.Equal(new[] { SessionDisposeEntry }, fakes.Journal.Skip(commit + 1));
+        var header = CreateCall(fakes).Arg<InvoiceHeaderDraft>();
+        Assert.Equal(RecordedInvDate, header.DraftDate);
+        Assert.Equal(RecordedInvDate, header.InvDate);
+        Assert.Equal(PatientNo, header.PatientNo);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-54")]
+    [Trait("OpenItem", "OI-21")]
+    public async Task Create_ReplayOfInvoiceWithSubCompany_ReturnsOi21()
+    {
+        var draft = await CreditDraft();
+        var fakes = Arrange(draft);
+        fakes.Invoices.CreateRequest = RecordedFor(draft, Recorded(9001L, CreditCompany, SubCompany, false));
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.Empty(response.Messages);
+        Assert.Equal(new[] { OpenItemIds.OI20, OpenItemIds.OI21 }, response.OpenItems);
+        Assert.Equal(new[] { SessionDisposeEntry }, fakes.Journal.Skip(fakes.Journal.IndexOf(SessionCommitEntry) + 1));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-54")]
+    public async Task Create_ReplayWhileInvoiceAndClinicReadsFail_StillReturnsTheReplayWithItsAdvisories()
+    {
+        var draft = await CashDraft();
+        var fakes = Arrange(draft);
+        fakes.Invoices.CreateRequest = RecordedFor(draft, Recorded(9001L, CashCompany, null, true));
+        fakes.Invoices.Invoice = (_, _) => throw new TimeoutException("invoice read timed out");
+        fakes.Lookups.ClinicProfile = (_, _) => throw new TimeoutException("clinic read timed out");
+        fakes.InvoiceApi.CreateMessage = ReplayMessage;
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.Empty(response.Messages);
+        Assert.NotNull(response.InvNo);
+        Assert.Equal(ReplayMessage, response.Message);
+        Assert.Equal(new[] { OpenItemIds.OI12, OpenItemIds.OI20, OpenItemIds.OI22, OpenItemIds.OI45 }, response.OpenItems);
+        Assert.True(AnySessionCommitted(fakes));
+        Assert.False(Called(fakes.Invoices.Calls, nameof(IInvoiceQueries.GetInvoice)));
+        Assert.False(Called(fakes.Lookups.Calls, nameof(ILookupQueries.GetClinicProfile)));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-54")]
+    public async Task Create_ReplayOfRequestRecordedBeforeItsInvoice_RereadsTheRequestBeforeTheCommit()
+    {
+        var draft = await CashDraft();
+        var fakes = Arrange(draft);
+        var reads = 0;
+        fakes.Invoices.CreateRequest = RecordedFor(
+            draft,
+            () => ++reads == 1 ? Recorded(null, null, null, false) : Recorded(9001L, CashCompany, null, true));
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.NotNull(response.InvNo);
+        Assert.Equal(new[] { OpenItemIds.OI12, OpenItemIds.OI20, OpenItemIds.OI22, OpenItemIds.OI45 }, response.OpenItems);
+        Assert.Equal(
+            new[]
+            {
+                CreateRequestEntry,
+                $"{nameof(IOracleSessionFactory)}.{nameof(IOracleSessionFactory.Open)}",
+                $"{nameof(IBilInvoiceApiGateway)}.{nameof(IBilInvoiceApiGateway.CreateFullInvoice)}",
+                CreateRequestEntry,
+                SessionCommitEntry,
+                SessionDisposeEntry,
+            },
+            fakes.Journal);
+        Assert.Equal(draft.DraftDate, CreateCall(fakes).Arg<InvoiceHeaderDraft>().DraftDate);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-54")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Create_ReplayOfAnotherInvoiceThanRecorded_RollsBackWithoutCommit(bool rereadFindsNothing)
+    {
+        var draft = await CashDraft();
+        var fakes = Arrange(draft);
+        var reads = 0;
+        fakes.Invoices.CreateRequest = RecordedFor(
+            draft,
+            () => ++reads > 1 && rereadFindsNothing ? null : Recorded(8001L, CashCompany, null, false));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fakes.CreateService().Create(CreateRequest(draft), Operator));
+
+        Assert.Equal(2, reads);
+        var events = CreateCall(fakes).Arg<FakeOracleSession>().Events;
+        Assert.Contains(RollbackEvent, events);
+        Assert.DoesNotContain(CommitEvent, events);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-68")]
+    [Trait("Weakness", "CWE-400")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Create_LinesOverTheCap_ReturnsBlockingLineBeforeAnyLookup(bool withNullLine)
+    {
+        var cash = await CashDraft();
+        var draft = cash with
+        {
+            Lines = new[]
+            {
+                Line(OrdinaryService, "c1"),
+                Line(OrdinaryService, "c2"),
+                Line(OrdinaryService, "c3"),
+                withNullLine ? null! : Line(OrdinaryService, "c4"),
+            },
+        };
+        var fakes = Arrange(draft);
+        fakes.InvoiceApi.MaxDraftLines = 3;
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        AssertLinesRejected(response, fakes, "The draft expands to 4 invoice lines; an invoice can be created with at most 3 lines.");
+    }
+
+    [Fact]
+    [Trait("Decision", "D-68")]
+    [Trait("Weakness", "CWE-400")]
+    public async Task Create_BundleParentsPushingOverTheCap_ReturnsBlockingLineBeforeAnyLookup()
+    {
+        var cash = await CashDraft();
+        var draft = cash with
+        {
+            Lines = new[]
+            {
+                Line(OrdinaryService, "c1"),
+                BundleLine(FirstComponent, "b1", " OFR-1"),
+                BundleLine(SecondComponent, "b2", "OFR-1 "),
+            },
+        };
+        var fakes = Arrange(draft);
+        fakes.InvoiceApi.MaxDraftLines = 3;
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        AssertLinesRejected(response, fakes, "The draft expands to 4 invoice lines; an invoice can be created with at most 3 lines.");
+    }
+
+    [Fact]
+    [Trait("Decision", "D-77")]
+    [Trait("Weakness", "CWE-20")]
+    public async Task Create_PatientNoOverTwelveBytes_RefusesPatientNoBeforeAnyLookup()
+    {
+        var draft = WithHeader(await CashDraft(), header => header with { PatientNo = "P123456789012" });
+        var fakes = Arrange(draft);
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() => fakes.CreateService().Create(CreateRequest(draft), Operator));
+
+        var message = Assert.Single(Assert.IsAssignableFrom<IReadOnlyList<MessageDto>>(error.Data[ProblemDetailsWriter.MessagesDataKey]));
+        Assert.True(IsBlocking(message));
+        Assert.Equal("PATIENTNO", message.Field);
+        Assert.Equal("PATIENTNO has 13 characters; at most 12 can be bound.", message.Text);
+        Assert.Empty(fakes.Lookups.Calls);
+        Assert.Empty(fakes.SessionFactory.Calls);
+        Assert.Equal(new[] { CreateRequestEntry }, fakes.Journal);
+        Assert.Equal(0, CreateCalls(fakes));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-68")]
+    public async Task Create_LinesAtTheCap_ProceedsToTheSave()
+    {
+        var cash = await CashDraft();
+        var draft = cash with { Lines = new[] { Line(OrdinaryService, "c1"), Line(OrdinaryService, "c2") } };
+        var fakes = Arrange(draft);
+        fakes.InvoiceApi.MaxDraftLines = 2;
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        Assert.NotNull(response.InvNo);
+        Assert.Equal(2, CreateCall(fakes).Arg<IReadOnlyList<InvoiceLineDraft>>().Count);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-54")]
+    [Trait("Decision", "D-68")]
+    [Trait("OpenItem", "OI-20")]
+    public async Task Create_RecordedRequestIdWhoseJsonLinesExceedTheCap_ReplaysAsTheBoundDraftDoes()
+    {
+        var cash = await CashDraft();
+        var draft = cash with { Lines = new[] { Line(OrdinaryService, "c1"), Line(OrdinaryService, "c2") } };
+        var bound = Arrange(draft);
+        bound.Invoices.CreateRequest = RecordedFor(draft, Recorded(9001L, CashCompany, null, false));
+        bound.InvoiceApi.CreateMessage = ReplayMessage;
+        var capped = Arrange(draft);
+        capped.Invoices.CreateRequest = RecordedFor(draft, Recorded(9001L, CashCompany, null, false));
+        capped.InvoiceApi.CreateMessage = ReplayMessage;
+
+        var expected = await bound.CreateService().Create(CreateRequest(draft), Operator);
+        var response = await capped.CreateService().Create(CappedRequest(draft, 1), Operator);
+
+        Assert.Empty(response.Messages);
+        Assert.Equal(9001L, response.InvNo);
+        Assert.Equal(ReplayMessage, response.Message);
+        Assert.Contains(OpenItemIds.OI20, response.OpenItems);
+        Assert.Equal(expected.InvNo, response.InvNo);
+        Assert.Equal(expected.Message, response.Message);
+        Assert.Equal(expected.OpenItems, response.OpenItems);
+        Assert.Equal(expected.Messages, response.Messages);
+        Assert.Equal(draft.RequestId, CreateCall(capped).Arg<string>());
+        Assert.Empty(CreateCall(capped).Arg<IReadOnlyList<InvoiceLineDraft>>());
+        Assert.Equal(new[] { CreateRequestEntry, SessionOpenEntry, CreateFullInvoiceEntry, SessionCommitEntry, SessionDisposeEntry }, capped.Journal);
+        Assert.Equal(bound.Journal, capped.Journal);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-68")]
+    [Trait("Weakness", "CWE-400")]
+    public async Task Create_UnrecordedRequestIdWhoseJsonLinesExceedTheCap_ReturnsBlockingLineBeforeAnyLookup()
+    {
+        var cash = await CashDraft();
+        var draft = cash with { Lines = new[] { Line(OrdinaryService, "c1"), Line(OrdinaryService, "c2") } };
+        var fakes = Arrange(draft);
+
+        var response = await fakes.CreateService().Create(CappedRequest(draft, 1), Operator);
+
+        AssertLinesRejected(response, fakes, "The draft has 2 lines; an invoice can be created with at most 1 lines.");
+    }
+
+    [Fact]
+    [Trait("Decision", "D-39")]
+    [Trait("Decision", "D-68")]
+    public async Task Create_UnsealedDraftWhoseJsonLinesExceedTheCap_ReturnsBlockingInvDateBeforeTheLineCap()
+    {
+        var cash = await CashDraft();
+        var draft = cash with { DraftSeal = null, Lines = new[] { Line(OrdinaryService, "c1"), Line(OrdinaryService, "c2") } };
+        var fakes = Arrange(draft);
+
+        var response = await fakes.CreateService().Create(CappedRequest(draft, 1), Operator);
+
+        AssertDraftDateRejected(response, fakes);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-68")]
+    [Trait("Weakness", "CWE-400")]
+    [InlineData("validate")]
+    [InlineData("preview")]
+    [InlineData("import-requests")]
+    [InlineData("import-visit-line")]
+    [InlineData("import-package")]
+    [InlineData("import-bundled-offer")]
+    public async Task DraftOperation_JsonLinesOverTheCap_RefusesLineBeforeAnyPortCall(string operation)
+    {
+        const string text = "The draft has 3 lines; an invoice can be created with at most 2 lines.";
+        var cash = await CashDraft();
+        var draft = CappedRequest(
+                cash with { Lines = new[] { Line(OrdinaryService, "c1"), null!, Line(OrdinaryService, "c3") } },
+                2)
+            .Draft;
+        var fakes = Arrange(draft);
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() => DraftOperation(fakes.CreateService(), operation, draft));
+
+        Assert.Equal("draft", error.ParamName);
+        var message = Assert.Single(Assert.IsAssignableFrom<IReadOnlyList<MessageDto>>(error.Data[ProblemDetailsWriter.MessagesDataKey]));
+        Assert.True(IsBlocking(message));
+        Assert.Equal(LineField, message.Field);
+        Assert.Equal(text, message.Text);
+        Assert.Null(message.Rule);
+        Assert.Empty(fakes.Journal);
+        var written = await ProblemDetailsWriterTests.WriteHandled(error);
+        Assert.Equal(422, written.Status);
+        Assert.Equal("field-validation", written.Body.GetProperty("type").GetString());
+        var writtenMessage = Assert.Single(written.Body.GetProperty("messages").EnumerateArray());
+        Assert.Equal(LineField, writtenMessage.GetProperty("field").GetString());
+        Assert.Equal(text, writtenMessage.GetProperty("text").GetString());
+    }
+
+    [Fact]
+    [Trait("Decision", "D-45")]
+    [Trait("OpenItem", "OI-20")]
+    public async Task Create_TotalValidationOpenItem_CommitsAfterTheCheck()
+    {
+        var draft = await CreditDraft();
+        var fakes = Arrange(draft);
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.Contains(CommitEvent, CreateCall(fakes).Arg<FakeOracleSession>().Events);
+        var check = fakes.Journal.IndexOf($"{nameof(ILegacyExternalCalls)}.{nameof(ILegacyExternalCalls.ValidateTotalInvoice)}");
+        var commit = fakes.Journal.IndexOf($"{nameof(IOracleSession)}.{CommitEvent}");
+        Assert.True(check >= 0);
+        Assert.True(check < commit);
+        Assert.Contains(OpenItemIds.OI20, response.OpenItems);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-45")]
+    [Trait("OpenItem", "OI-20")]
+    public async Task Create_TotalValidationFailure_RollsBackWithoutCommit()
+    {
+        var draft = await CreditDraft();
+        var fakes = Arrange(draft);
+        fakes.Legacy.ValidateTotalInvoiceException = () => new InvalidOperationException("total check failed");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => fakes.CreateService().Create(CreateRequest(draft), Operator));
+
+        var events = CreateCall(fakes).Arg<FakeOracleSession>().Events;
+        Assert.Contains(RollbackEvent, events);
+        Assert.DoesNotContain(CommitEvent, events);
+        Assert.True(Called(fakes.Legacy.Calls, nameof(ILegacyExternalCalls.ValidateTotalInvoice)));
+    }
+
+    [Theory]
+    [Trait("Decision", "D-45")]
+    [Trait("OpenItem", "OI-20")]
+    [InlineData("OI-22: DAY_TO_DAYES is not available in this build.")]
+    [InlineData(null)]
+    public async Task Create_TotalValidationOtherNotImplemented_PropagatesAndRollsBack(string? message)
+    {
+        var draft = await CreditDraft();
+        var fakes = Arrange(draft);
+        var thrown = message is null ? new NotImplementedException() : new NotImplementedException(message);
+        fakes.Legacy.ValidateTotalInvoiceException = () => thrown;
+
+        var failure = await Assert.ThrowsAsync<NotImplementedException>(
+            () => fakes.CreateService().Create(CreateRequest(draft), Operator));
+
+        Assert.Equal(thrown.Message, failure.Message);
+        var events = CreateCall(fakes).Arg<FakeOracleSession>().Events;
+        Assert.Contains(RollbackEvent, events);
+        Assert.DoesNotContain(CommitEvent, events);
+        Assert.Single(fakes.Legacy.Calls, call => call.Method == nameof(ILegacyExternalCalls.ValidateTotalInvoice));
+        Assert.DoesNotContain(SessionCommitEntry, fakes.Journal);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-44")]
+    [Trait("Decision", "D-45")]
+    [Trait("OpenItem", "OI-20")]
+    [InlineData(1)]
+    [InlineData(0)]
+    public async Task Create_NewCreate_ClearsReceptionTransferBehindItsSavepointBeforeTheTotalCheck(int rowsAffected)
+    {
+        var draft = await CreditDraft();
+        var fakes = Arrange(draft);
+        fakes.PatientTransfer.RowsAffected = rowsAffected;
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        Assert.Equal(
+            new[]
+            {
+                CreateFullInvoiceEntry,
+                CreateRequestEntry,
+                ReceptionTransferSaveEntry,
+                ReceptionTransferClearEntry,
+                TotalCheckEntry,
+                SessionCommitEntry,
+                SessionDisposeEntry,
+            },
+            JournalFromTheSave(fakes));
+        var clear = Assert.Single(fakes.PatientTransfer.Calls);
+        Assert.Same(CreateCall(fakes).Arg<FakeOracleSession>(), clear.Arg<FakeOracleSession>());
+        Assert.Equal(PatientNo, clear.Arg<string>());
+        Assert.DoesNotContain(response.Messages, message => message.Rule == ReceptionTransferRuleId);
+        Assert.Contains(OpenItemIds.OI20, response.OpenItems);
+        Assert.NotNull(response.InvNo);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-44")]
+    [Trait("Decision", "D-45")]
+    [Trait("OpenItem", "OI-20")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Create_ReceptionTransferClearFails_RollsBackToItsSavepointAndSavesWithTheDr21Warning(bool oracleFailure)
+    {
+        var draft = await CreditDraft();
+        var fakes = Arrange(draft);
+        fakes.PatientTransfer.Throw = oracleFailure
+            ? FakeOracleFailures.LookupApplicationError
+            : () => new InvalidOperationException("reception transfer clear failed");
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.Equal(
+            new[]
+            {
+                CreateFullInvoiceEntry,
+                CreateRequestEntry,
+                ReceptionTransferSaveEntry,
+                ReceptionTransferClearEntry,
+                ReceptionTransferRollbackEntry,
+                TotalCheckEntry,
+                SessionCommitEntry,
+                SessionDisposeEntry,
+            },
+            JournalFromTheSave(fakes));
+        Assert.DoesNotContain(RollbackEvent, CreateCall(fakes).Arg<FakeOracleSession>().Events);
+        var warning = Assert.Single(response.Messages, message => message.Rule == ReceptionTransferRuleId);
+        Assert.Null(warning.Field);
+        Assert.Equal(ReceptionTransferWarningText, warning.Text);
+        Assert.Equal(ValidationMessage.Warning, warning.Severity);
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        Assert.Contains(OpenItemIds.OI20, response.OpenItems);
+        Assert.NotNull(response.InvNo);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-44")]
+    public async Task Create_ReceptionTransferClearCancelled_RollsBackTheWholeCreateWithoutTheTotalCheck()
+    {
+        var draft = await CreditDraft();
+        var fakes = Arrange(draft);
+        fakes.PatientTransfer.Throw = () => new OperationCanceledException("reception transfer clear cancelled");
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => fakes.CreateService().Create(CreateRequest(draft), Operator));
+
+        var events = CreateCall(fakes).Arg<FakeOracleSession>().Events;
+        Assert.Contains(RollbackEvent, events);
+        Assert.DoesNotContain(ReceptionTransferRollbackEvent, events);
+        Assert.DoesNotContain(CommitEvent, events);
+        Assert.Single(fakes.PatientTransfer.Calls);
+        Assert.False(Called(fakes.Legacy.Calls, nameof(ILegacyExternalCalls.ValidateTotalInvoice)));
+    }
+
+    /// <summary>Journal entries from the package create onward.</summary>
+    private static IEnumerable<string> JournalFromTheSave(FakeDataPorts fakes) =>
+        fakes.Journal.Skip(fakes.Journal.IndexOf(CreateFullInvoiceEntry));
+
+    [Theory]
+    [Trait("Decision", "D-12")]
+    [InlineData("SERVICEID")]
+    [InlineData("PAT_SERV_REQ_ROW_ID")]
+    public async Task ImportRequests_SelectedRowWithNullColumn_ReturnsBlockingFormMessageBeforeImport(string column)
+    {
+        var draft = await RequestImportDraft();
+        var fakes = Arrange(draft);
+        var thrownText = $"Column {column} of {SelectedRequestView} holds null.";
+        fakes.Invoices.SelectedRequestRows = (_, _, _) => throw new InvalidCastException(thrownText);
+
+        var response = await fakes.CreateService().ImportRequests(new ImportRequestsRequest { Draft = draft }, Operator);
+
+        var message = Assert.Single(response.Messages);
+        Assert.True(IsBlocking(message));
+        Assert.Null(message.Field);
+        Assert.Null(message.Rule);
+        Assert.Equal(SelectedRequestRowUnreadableText, message.Text);
+        Assert.DoesNotContain(column, message.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain(SelectedRequestView, message.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain(thrownText, message.Text, StringComparison.Ordinal);
+        Assert.Empty(response.Lines);
+        Assert.Null(response.Result);
+        Assert.True(Called(fakes.Invoices.Calls, nameof(IInvoiceQueries.GetSelectedRequestRows)));
+        Assert.False(Called(fakes.Import.Calls, nameof(IBilImportGateway.ImportRequestLines)));
+        Assert.False(Called(fakes.Import.Calls, nameof(IBilImportGateway.ApprovalCheckMode)));
+        Assert.Empty(fakes.SessionFactory.Sessions);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-12")]
+    public async Task ImportRequests_SelectedRowWithOutOfRangeNumber_ReturnsBlockingFormMessageBeforeImport()
+    {
+        var draft = await RequestImportDraft();
+        var fakes = Arrange(draft);
+        const string thrownText = "Value was either too large or too small for an Int32.";
+        fakes.Invoices.SelectedRequestRows = (_, _, _) => throw new OverflowException(thrownText);
+
+        var response = await fakes.CreateService().ImportRequests(new ImportRequestsRequest { Draft = draft }, Operator);
+
+        var message = Assert.Single(response.Messages);
+        Assert.True(IsBlocking(message));
+        Assert.Null(message.Field);
+        Assert.Equal(SelectedRequestRowUnreadableText, message.Text);
+        Assert.DoesNotContain(thrownText, message.Text, StringComparison.Ordinal);
+        Assert.False(Called(fakes.Import.Calls, nameof(IBilImportGateway.ImportRequestLines)));
+        Assert.Empty(fakes.SessionFactory.Sessions);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-12")]
+    public async Task ImportRequests_SelectedRowWithFractionalNumber_ReturnsFixedBlockingTextWithoutTheValue()
+    {
+        const string column = "REQ_NEED_A";
+        const string value = "1.5";
+        const string thrownText = $"Column {column} holds {value}; a whole number is required.";
+        var draft = await RequestImportDraft();
+        var fakes = Arrange(draft);
+        fakes.Invoices.SelectedRequestRows = (_, _, _) => throw new InvalidCastException(thrownText);
+
+        var response = await fakes.CreateService().ImportRequests(new ImportRequestsRequest { Draft = draft }, Operator);
+
+        var message = Assert.Single(response.Messages);
+        Assert.True(IsBlocking(message));
+        Assert.Null(message.Field);
+        Assert.Null(message.Rule);
+        Assert.Equal(SelectedRequestRowUnreadableText, message.Text);
+        Assert.DoesNotContain(column, message.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain(value, message.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain(thrownText, message.Text, StringComparison.Ordinal);
+        Assert.Empty(response.Lines);
+        Assert.Null(response.Result);
+        Assert.False(Called(fakes.Import.Calls, nameof(IBilImportGateway.ImportRequestLines)));
+        Assert.False(Called(fakes.Import.Calls, nameof(IBilImportGateway.ApprovalCheckMode)));
+        Assert.Empty(fakes.SessionFactory.Sessions);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-12")]
+    public async Task ImportRequests_CompleteSelectedRow_ImportsThatRow()
+    {
+        var draft = await RequestImportDraft();
+        var fakes = Arrange(draft);
+        fakes.Invoices.SelectedRequestRows = (_, _, _) =>
+            new[] { (SelectedRequestRowId, OrdinaryService, (int?)null, (int?)0, (string?)null) };
+
+        var response = await fakes.CreateService().ImportRequests(new ImportRequestsRequest { Draft = draft }, Operator);
+
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        var importCall = Assert.Single(
+            fakes.Import.Calls, call => call.Method == nameof(IBilImportGateway.ImportRequestLines));
+        Assert.Equal(new[] { SelectedRequestRowId }, importCall.Arg<IReadOnlyList<long>>());
+        Assert.Equal(VisitUnique, importCall.Arg<string>());
+        Assert.Single(fakes.SessionFactory.Sessions);
+    }
+
+    private static async Task<DraftDto> RequestImportDraft() => (await CashDraft()) with
+    {
+        Parameters = new InvoiceEntryParameters { VisitUnique = VisitUnique },
+    };
+
+    [Fact]
+    [Trait("OpenItem", "OI-42")]
+    public async Task GetLov_ReservNoWithEveryBind_ListsOi42AlongsideViewOnlyRows()
+    {
+        var fakes = new FakeDataPorts();
+        var rows = ReservationRows();
+        fakes.Lovs.Rows = rows;
+
+        var response = await fakes.CreateService().GetLov(ReservationList, LovBinds(), DraftDate, Operator);
+
+        Assert.NotNull(response);
+        Assert.Equal(new[] { OpenItemIds.OI42 }, response.OpenItems);
+        Assert.True(response.ViewOnly);
+        Assert.Empty(response.Messages);
+        Assert.Same(rows, response.Rows);
+        var call = Assert.Single(fakes.Lovs.Calls);
+        Assert.Equal(nameof(ILovQueries.ReservNo), call.Method);
+        Assert.Equal(DraftDate, call.Arg<DateTime>());
+        Assert.Equal(DoctorId, call.Arg<int>());
+        Assert.Equal(PatientNo, call.Arg<string>());
+        Assert.Equal(Operator.InfoCenterId, call.Args[^1]);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-106")]
+    [InlineData("SUB_COMPANY", nameof(ILovQueries.SubCompany), CreditCompany)]
+    [InlineData("THE_CLASS", nameof(ILovQueries.TheClass), SubCompany)]
+    public async Task GetLov_DependentCompanyList_BindsTheParentAndTheOperatorsCentre(string name, string query, string parent)
+    {
+        var fakes = new FakeDataPorts();
+
+        var response = await fakes.CreateService().GetLov(name, LovBinds(), DraftDate, Operator);
+
+        Assert.NotNull(response);
+        Assert.Empty(response.Messages);
+        var call = Assert.Single(fakes.Lovs.Calls);
+        Assert.Equal(query, call.Method);
+        Assert.Equal(new object?[] { parent, Operator.InfoCenterId }, call.Args);
+    }
+
+    [Theory]
+    [Trait("OpenItem", "OI-42")]
+    [InlineData("COMPANY1_2")]
+    [InlineData("SUB_COMPANY")]
+    [InlineData("THE_CLASS")]
+    [InlineData("PAY_TYPE1")]
+    [InlineData("PAY_TYPE2")]
+    [InlineData("DOC")]
+    [InlineData("OFFERS")]
+    [InlineData("CAT")]
+    public async Task GetLov_OtherServedList_ListsNoOpenItem(string name)
+    {
+        var fakes = new FakeDataPorts();
+
+        var response = await fakes.CreateService().GetLov(name, LovBinds(), DraftDate, Operator);
+
+        Assert.NotNull(response);
+        Assert.Empty(response.OpenItems);
+        Assert.False(response.ViewOnly);
+        Assert.Empty(response.Messages);
+        Assert.Single(fakes.Lovs.Calls);
+    }
+
+    [Theory]
+    [Trait("OpenItem", "OI-42")]
+    [InlineData(DocIdItem)]
+    [InlineData(PatientNoItem)]
+    [InlineData(InvDateItem)]
+    public async Task GetLov_ReservNoMissingBind_ReturnsBlockingMessageWithoutOi42(string missingItem)
+    {
+        var fakes = new FakeDataPorts();
+        var binds = LovBinds();
+        binds.Remove(missingItem);
+        DateTime? draftDate = string.Equals(missingItem, InvDateItem, StringComparison.Ordinal) ? null : DraftDate;
+
+        var response = await fakes.CreateService().GetLov(ReservationList, binds, draftDate, Operator);
+
+        Assert.NotNull(response);
+        var message = Assert.Single(response.Messages);
+        Assert.True(IsBlocking(message));
+        Assert.Equal(missingItem, message.Field);
+        Assert.Empty(response.OpenItems);
+        Assert.Empty(response.Rows);
+        Assert.Empty(fakes.Lovs.Calls);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-49")]
+    [Trait("OpenItem", "OI-42")]
+    public async Task GetLov_ReservNoWithoutAnyBind_NamesEveryMissingBindInItemOrder()
+    {
+        var fakes = new FakeDataPorts();
+
+        var response = await fakes.CreateService().GetLov(ReservationList, new Dictionary<string, string?>(), null, Operator);
+
+        AssertBindsRefused(
+            response,
+            fakes,
+            ReservationList,
+            LovBindRefusal(DocIdItem, "DOCIDX is required for the RESERV_NO list."),
+            LovBindRefusal(PatientNoItem, "PATIENTNO is required for the RESERV_NO list."),
+            LovBindRefusal(InvDateItem, "INVDATE is required for the RESERV_NO list."));
+    }
+
+    [Theory]
+    [Trait("Decision", "D-49")]
+    [InlineData("abc")]
+    [InlineData("012")]
+    public async Task GetLov_ReservNoWithANonCanonicalDoctorAndNoPatientOrDate_RefusesTheDoctorAndNamesTheMissingBinds(string docIdx)
+    {
+        var fakes = new FakeDataPorts();
+        var binds = new Dictionary<string, string?> { [DocIdItem] = docIdx };
+
+        var response = await fakes.CreateService().GetLov(ReservationList, binds, null, Operator);
+
+        AssertBindsRefused(
+            response,
+            fakes,
+            ReservationList,
+            LovBindRefusal(DocIdItem, "DOCIDX must be a positive whole number."),
+            LovBindRefusal(PatientNoItem, "PATIENTNO is required for the RESERV_NO list."),
+            LovBindRefusal(InvDateItem, "INVDATE is required for the RESERV_NO list."));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-49")]
+    public async Task GetLov_ReservNoWithAnOverlongPatientAndNoDate_RefusesThePatientAndNamesTheDate()
+    {
+        var fakes = new FakeDataPorts();
+        var binds = LovBinds();
+        binds[PatientNoItem] = "P123456789012";
+
+        var response = await fakes.CreateService().GetLov(ReservationList, binds, null, Operator);
+
+        AssertBindsRefused(
+            response,
+            fakes,
+            ReservationList,
+            LovBindRefusal(PatientNoItem, "PATIENTNO has 13 characters; at most 12 can be bound."),
+            LovBindRefusal(InvDateItem, "INVDATE is required for the RESERV_NO list."));
+    }
+
+    [Theory]
+    [Trait("Decision", "D-49")]
+    [InlineData(null, "PAYTYPE is required for the OFFERS list.")]
+    [InlineData("3", "PAYTYPE must be 1 (Cash) or 2 (Credit).")]
+    public async Task GetLov_OffersWithoutACashOrCreditPayTypeOrDate_NamesThePayTypeThenTheDate(string? payType, string payTypeText)
+    {
+        var fakes = new FakeDataPorts();
+        var binds = new Dictionary<string, string?>();
+        if (payType is not null)
+        {
+            binds[PayTypeItem] = payType;
+        }
+
+        var response = await fakes.CreateService().GetLov("OFFERS", binds, null, Operator);
+
+        AssertBindsRefused(
+            response,
+            fakes,
+            "OFFERS",
+            LovBindRefusal(PayTypeItem, payTypeText),
+            LovBindRefusal(InvDateItem, "INVDATE is required for the OFFERS list."));
+    }
+
+    private static MessageDto LovBindRefusal(string item, string text) =>
+        new() { Field = item, Text = text, Severity = ValidationMessage.Blocking, Rule = null };
+
+    private static void AssertBindsRefused(LovResponse? response, FakeDataPorts fakes, string lov, params MessageDto[] expected)
+    {
+        Assert.NotNull(response);
+        Assert.Equal(lov, response.Name);
+        Assert.Equal(expected, response.Messages);
+        Assert.Empty(response.Rows);
+        Assert.Empty(response.OpenItems);
+        Assert.False(response.ViewOnly);
+        Assert.Empty(fakes.Lovs.Calls);
+    }
+
+    private static Dictionary<string, string?> LovBinds() => new(StringComparer.Ordinal)
+    {
+        [CompCodeItem] = CreditCompany,
+        [SubCompCodeItem] = SubCompany,
+        [DocIdItem] = DoctorId.ToString(CultureInfo.InvariantCulture),
+        [PatientNoItem] = PatientNo,
+        [PayTypeItem] = CashPayType,
+    };
+
+    private static IReadOnlyList<IReadOnlyDictionary<string, object?>> ReservationRows() =>
+        new IReadOnlyDictionary<string, object?>[]
+        {
+            new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["RESERV_NO"] = 7,
+                ["THE_TIME"] = "10:30",
+                ["PATAINTNO"] = PatientNo,
+            },
+        };
+
+    [Fact]
+    [Trait("Decision", "D-42")]
+    public async Task Preview_CashDraft_ListsOnlyTheLineWhosePriceIsNotFixed()
+    {
+        var draft = (await CashDraft()) with { Lines = new[] { Line(OrdinaryService, "c1"), Line(FixedPriceService, "c2") } };
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = serviceId => Profile(serviceId) with
+        {
+            PriceIsFixed = string.Equals(serviceId, OrdinaryService, StringComparison.Ordinal) ? PriceNotFixed : PriceFixed,
+        };
+
+        var response = await fakes.CreateService().Preview(draft, Operator);
+
+        Assert.Equal(new[] { "c1" }, response.PriceEditableClientIds);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-42")]
+    public async Task Preview_CashDraftWithUnfixedPrices_ExcludesRequestComponentAndOfferLines()
+    {
+        var draft = (await CashDraft()) with
+        {
+            Lines = new[]
+            {
+                Line(OrdinaryService, "c1"),
+                Line(RequestService, "r1") with { PatServReqRowId = 7L },
+                PackageLine(FirstComponent, ComponentRole, "k1", 1),
+                Line(OfferService, "o1") with { OfferId = 3 },
+                Line(OfferComponentService, "o2") with { OfferLineRole = ComponentRole },
+            },
+        };
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = serviceId => Profile(serviceId) with { PriceIsFixed = PriceNotFixed };
+
+        var response = await fakes.CreateService().Preview(draft, Operator);
+
+        Assert.Equal(new[] { "c1" }, response.PriceEditableClientIds);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-42")]
+    public async Task Preview_CreditDraftWithNonDirectCompany_ListsNoLine()
+    {
+        var draft = (await CreditDraft()) with { Lines = new[] { Line(OrdinaryService, "c1"), Line(FixedPriceService, "c2") } };
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = serviceId => Profile(serviceId) with { PriceIsFixed = PriceNotFixed };
+        fakes.Lookups.CompanyIsDirect = 0;
+
+        var response = await fakes.CreateService().Preview(draft, Operator);
+
+        Assert.Empty(response.PriceEditableClientIds);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-42")]
+    public async Task Preview_CreditDraftWithDirectCompany_ListsTheOrdinaryLines()
+    {
+        var draft = (await CreditDraft()) with
+        {
+            Lines = new[]
+            {
+                Line(OrdinaryService, "c1"),
+                Line(FixedPriceService, "c2"),
+                Line(OfferService, "o1") with { OfferId = 3 },
+            },
+        };
+        var fakes = Arrange(draft);
+        fakes.Lookups.CompanyIsDirect = 1;
+
+        var response = await fakes.CreateService().Preview(draft, Operator);
+
+        Assert.Equal(new[] { "c1", "c2" }, response.PriceEditableClientIds);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-42")]
+    public async Task Preview_RefusedManualOverride_IsNotListed()
+    {
+        var draft = (await CashDraft()) with
+        {
+            Lines = new[]
+            {
+                Line(FixedPriceService, "c1") with { PriceOverride = 50m, UsePriceOverride = "Y" },
+                Line(OrdinaryService, "c2") with { PriceOverride = 60m, UsePriceOverride = "Y" },
+            },
+        };
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = serviceId => Profile(serviceId) with
+        {
+            PriceIsFixed = string.Equals(serviceId, OrdinaryService, StringComparison.Ordinal) ? PriceNotFixed : PriceFixed,
+        };
+
+        var response = await fakes.CreateService().Preview(draft, Operator);
+
+        Assert.Equal(new[] { "c2" }, response.PriceEditableClientIds);
+        Assert.Contains(response.Messages, message => IsBlocking(message) && message.Field == PriceItem);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-42")]
+    public async Task Validate_ServiceIdOnCashLineWithUnfixedPrice_ReturnsPriceEditableTrue()
+    {
+        var draft = await CashDraft();
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = serviceId => Profile(serviceId) with { PriceIsFixed = PriceNotFixed };
+
+        var response = await fakes.CreateService().Validate(
+            new ValidateDraftRequest { Draft = draft, Target = "SERVICEID", LineIndex = 0 }, Operator);
+
+        Assert.True(response.PriceEditable);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-42")]
+    public async Task Validate_ServiceIdOnCashLineWithFixedPrice_ReturnsPriceEditableFalse()
+    {
+        var draft = await CashDraft();
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = serviceId => Profile(serviceId) with { PriceIsFixed = PriceFixed };
+
+        var response = await fakes.CreateService().Validate(
+            new ValidateDraftRequest { Draft = draft, Target = "SERVICEID", LineIndex = 0 }, Operator);
+
+        Assert.False(response.PriceEditable);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-42")]
+    public async Task Validate_PatientNo_ReturnsNoPriceEditability()
+    {
+        var draft = await CashDraft();
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = serviceId => Profile(serviceId) with { PriceIsFixed = PriceNotFixed };
+
+        var response = await fakes.CreateService().Validate(
+            new ValidateDraftRequest { Draft = draft, Target = "PATIENTNO" }, Operator);
+
+        Assert.Null(response.PriceEditable);
+        Assert.Null(response.PriceJudgedServiceId);
+        Assert.Null(response.PriceJudgedPatientNo);
+        Assert.Null(response.PriceJudgedCompCode);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-42")]
+    public async Task Preview_EchoesThePatientAndCompanyThePriceEditabilityWasJudgedOn()
+    {
+        var draft = await CreditDraft();
+        var fakes = Arrange(draft);
+        fakes.Lookups.CompanyIsDirect = 1;
+
+        var response = await fakes.CreateService().Preview(draft, Operator);
+
+        Assert.Equal(new[] { "c1" }, response.PriceEditableClientIds);
+        Assert.Equal(PatientNo, response.PriceJudgedPatientNo);
+        Assert.Equal(CreditCompany, response.PriceJudgedCompCode);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-42")]
+    public async Task Validate_LineTarget_EchoesTheServicePatientAndCompanyThePriceEditabilityWasJudgedOn()
+    {
+        var draft = await CreditDraft();
+        var fakes = Arrange(draft);
+        fakes.Lookups.CompanyIsDirect = 1;
+
+        var response = await fakes.CreateService().Validate(
+            new ValidateDraftRequest { Draft = draft, Target = "QTY", LineIndex = 0 }, Operator);
+
+        Assert.True(response.PriceEditable);
+        Assert.Equal(OrdinaryService, response.PriceJudgedServiceId);
+        Assert.Equal(PatientNo, response.PriceJudgedPatientNo);
+        Assert.Equal(CreditCompany, response.PriceJudgedCompCode);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-72")]
+    public async Task ValidatePatient_NoCoverageRow_BlocksDr03BeforePayTypeSelection()
+    {
+        var draft = (await CreditDraft()) with { Parameters = new InvoiceEntryParameters { ClaimNo = ClaimNumber } };
+        var fakes = Arrange(draft);
+        fakes.Lookups.PatientCoverage = null;
+        fakes.Invoices.ClaimPreload = SubCompanyClaimPreload;
+
+        var response = await fakes.CreateService().Validate(
+            new ValidateDraftRequest { Draft = draft, Target = "PATIENTNO" }, Operator);
+
+        AssertOnlyMissingCoverageRow(response.Messages);
+        Assert.False(response.Adjusted.ContainsKey(PayTypeItem));
+        Assert.Empty(response.OpenItems);
+        Assert.False(Called(fakes.Lookups.Calls, nameof(ILookupQueries.GetCompanyType)));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-72")]
+    public async Task ValidatePatient_BlankPatient_AdjustsPayTypeWithoutDr03()
+    {
+        var draft = WithHeader(await CreditDraft(), header => header with { PatientNo = "   " });
+        var fakes = Arrange(draft);
+        fakes.Lookups.PatientCoverage = null;
+
+        var response = await fakes.CreateService().Validate(
+            new ValidateDraftRequest { Draft = draft, Target = "PATIENTNO" }, Operator);
+
+        Assert.DoesNotContain(response.Messages, message => message.Rule == "DR-03");
+        Assert.Equal(2, response.Adjusted[PayTypeItem]);
+        Assert.False(Called(fakes.Lookups.Calls, nameof(ILookupQueries.GetPatientCoverage)));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-72")]
+    public async Task GetCoverage_NoCoverageRow_BlocksDr03WithoutFurtherReads()
+    {
+        var parameters = new InvoiceEntryParameters { ClaimNo = ClaimNumber };
+        var fakes = Arrange(await CreditDraft());
+        fakes.Lookups.PatientCoverage = null;
+        fakes.Invoices.ClaimPreload = SubCompanyClaimPreload;
+
+        var response = await fakes.CreateService().GetCoverage(PatientNo, DraftDate, parameters, Operator);
+
+        AssertOnlyMissingCoverageRow(response.Messages);
+        Assert.Null(response.Coverage);
+        Assert.Equal(0, response.PayType);
+        Assert.Empty(response.OpenItems);
+        Assert.Equal(new[] { nameof(ILookupQueries.GetPatientCoverage) }, fakes.Lookups.Calls.Select(call => call.Method));
+        Assert.Empty(fakes.Invoices.Calls);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-72")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Create_NoCoverageRow_BlocksDr03BeforePayTypeSelection(bool credit)
+    {
+        var draft = credit ? await CreditDraft() : await CashDraft();
+        var fakes = Arrange(draft);
+        fakes.Lookups.PatientCoverage = null;
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        AssertOnlyMissingCoverageRow(response.Messages);
+        Assert.Empty(response.OpenItems);
+        Assert.Null(response.InvNo);
+        Assert.Equal(
+            new[] { nameof(ILookupQueries.GetPatientCoverage) },
+            fakes.Lookups.Calls.Select(call => call.Method));
+        Assert.Equal(0, CreateCalls(fakes));
+        Assert.False(Called(fakes.InvoiceApi.Calls, nameof(IBilInvoiceApiGateway.CalculatePreview)));
+        Assert.Empty(fakes.SessionFactory.Calls);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-72")]
+    [InlineData(null)]
+    [InlineData("")]
+    public async Task Create_BlankPatient_BlocksDr01WithoutDr03(string? patientNo)
+    {
+        var draft = WithHeader(await CashDraft(), header => header with { PatientNo = patientNo });
+        var fakes = Arrange(draft);
+        fakes.Lookups.PatientCoverage = null;
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.True(HasBlocking(response.Messages, "DR-01"));
+        Assert.DoesNotContain(response.Messages, message => message.Rule == "DR-03");
+        Assert.Null(response.InvNo);
+        Assert.Equal(0, CreateCalls(fakes));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-72")]
+    public async Task Create_ClaimBackedDraftWithNoCoverageRow_ReadsOnlyTheRequestAndClaimPreloadBeforeDr03()
+    {
+        var draft = (await CreditDraft()) with { Parameters = new InvoiceEntryParameters { ClaimNo = ClaimNumber } };
+        var fakes = Arrange(draft);
+        fakes.Lookups.PatientCoverage = null;
+        fakes.Invoices.ClaimPreload = SubCompanyClaimPreload;
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        AssertOnlyMissingCoverageRow(response.Messages);
+        Assert.Null(response.InvNo);
+        Assert.Equal(0, CreateCalls(fakes));
+        Assert.Equal(
+            new[]
+            {
+                CreateRequestEntry,
+                $"{nameof(IInvoiceQueries)}.{nameof(IInvoiceQueries.GetClaimPreload)}",
+                $"{nameof(ILookupQueries)}.{nameof(ILookupQueries.GetPatientCoverage)}",
+            },
+            fakes.Journal);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-72")]
+    public async Task ValidatePatient_ClaimBackedDraftWithNoCoverageRow_ReadsOnlyTheClaimPreloadBeforeDr03()
+    {
+        var draft = (await CreditDraft()) with { Parameters = new InvoiceEntryParameters { ClaimNo = ClaimNumber } };
+        var fakes = Arrange(draft);
+        fakes.Lookups.PatientCoverage = null;
+        fakes.Invoices.ClaimPreload = SubCompanyClaimPreload;
+
+        var response = await fakes.CreateService().Validate(PatientValidation(draft), Operator);
+
+        AssertOnlyMissingCoverageRow(response.Messages);
+        Assert.Equal(
+            new[]
+            {
+                $"{nameof(IInvoiceQueries)}.{nameof(IInvoiceQueries.GetClaimPreload)}",
+                $"{nameof(ILookupQueries)}.{nameof(ILookupQueries.GetPatientCoverage)}",
+            },
+            fakes.Journal);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-67")]
+    public async Task Preview_ManualOverrideBesideAnOrdinaryLine_ReadsCompanyIsDirectOnce()
+    {
+        var draft = (await CreditDraft()) with
+        {
+            Lines = new[]
+            {
+                Line(OrdinaryService, "c1") with { PriceOverride = OverriddenPrice, UsePriceOverride = "Y" },
+                Line(SecondService, "c2"),
+            },
+        };
+        var fakes = Arrange(draft);
+        fakes.Lookups.CompanyIsDirect = 1;
+
+        var response = await fakes.CreateService().Preview(draft, Operator);
+
+        var read = Assert.Single(fakes.Lookups.Calls, call => call.Method == nameof(ILookupQueries.GetCompanyIsDirect));
+        Assert.Equal(CreditCompany, read.Arg<string>());
+        Assert.Equal(new[] { "c1", "c2" }, response.PriceEditableClientIds);
+        Assert.DoesNotContain(response.Messages, message => IsBlocking(message) && message.Field == PriceItem);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-67")]
+    public async Task Validate_LineBesideAManualOverride_ReadsCompanyIsDirectOnce()
+    {
+        var draft = (await CreditDraft()) with
+        {
+            Lines = new[]
+            {
+                Line(OrdinaryService, "c1") with { PriceOverride = OverriddenPrice, UsePriceOverride = "Y" },
+                Line(SecondService, "c2"),
+            },
+        };
+        var fakes = Arrange(draft);
+        fakes.Lookups.CompanyIsDirect = 1;
+
+        var response = await fakes.CreateService().Validate(
+            new ValidateDraftRequest { Draft = draft, Target = "QTY", LineIndex = 1 }, Operator);
+
+        var read = Assert.Single(fakes.Lookups.Calls, call => call.Method == nameof(ILookupQueries.GetCompanyIsDirect));
+        Assert.Equal(CreditCompany, read.Arg<string>());
+        Assert.True(response.PriceEditable);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-73")]
+    [InlineData(false, null, 2, false)]
+    [InlineData(false, null, 1, true)]
+    [InlineData(false, null, null, false)]
+    [InlineData(true, "1", 2, true)]
+    [InlineData(true, " 1 ", 2, true)]
+    [InlineData(true, "2", 1, false)]
+    [InlineData(true, "x", 2, false)]
+    [InlineData(true, "x", 1, true)]
+    [InlineData(true, null, 1, false)]
+    [InlineData(true, null, 2, false)]
+    [InlineData(true, "  ", 2, false)]
+    public async Task ValidateLineAndCreate_Pref422ElseEntryParameter_DecidesApprovalCheck(
+        bool prefPresent, string? prefValue, int? x422ApprovCheck, bool blocks)
+    {
+        var draft = (await CreditDraft()) with { Parameters = new InvoiceEntryParameters { X422ApprovCheck = x422ApprovCheck } };
+        var fakes = ArrangeApproval(draft, prefPresent, prefValue);
+        var service = fakes.CreateService();
+
+        var validated = await service.Validate(
+            new ValidateDraftRequest { Draft = draft, Target = "SERVICEID", LineIndex = 0 }, Operator);
+        var created = await service.Create(CreateRequest(draft), Operator);
+
+        Assert.Equal(blocks, HasBlocking(validated.Messages, "DR-14"));
+        Assert.Equal(blocks, HasBlocking(created.Messages, "DR-14"));
+        Assert.Equal(blocks ? 0 : 1, CreateCalls(fakes));
+        Assert.Equal(blocks, created.InvNo is null);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-73")]
+    [InlineData(false, null, 2, 2, 0)]
+    [InlineData(false, null, 1, 1, 1)]
+    [InlineData(true, "1", 2, 1, 1)]
+    [InlineData(true, "x", 2, 2, 0)]
+    [InlineData(true, null, 2, null, 1)]
+    [InlineData(true, "2", 1, 2, 0)]
+    public async Task ImportRequests_Pref422ElseEntryParameter_DecidesApprovalMode(
+        bool prefPresent, string? prefValue, int? x422ApprovCheck, int? expectedX422, int expectedMode)
+    {
+        var draft = (await CreditDraft()) with
+        {
+            Parameters = new InvoiceEntryParameters { X422ApprovCheck = x422ApprovCheck, VisitUnique = "V1" },
+        };
+        var fakes = ArrangeApproval(draft, prefPresent, prefValue);
+        fakes.Invoices.SelectedRequestRows = (_, _, _) => new[] { (7L, OrdinaryService, (int?)1, (int?)1, (string?)null) };
+
+        var response = await fakes.CreateService().ImportRequests(new ImportRequestsRequest { Draft = draft }, Operator);
+
+        var mode = Assert.Single(fakes.Import.Calls, call => call.Method == nameof(IBilImportGateway.ApprovalCheckMode));
+        Assert.Equal(expectedX422, (int?)mode.Args[0]);
+        var import = Assert.Single(fakes.Import.Calls, call => call.Method == nameof(IBilImportGateway.ImportRequestLines));
+        Assert.Equal(expectedMode, import.Arg<int>());
+        Assert.Equal(
+            expectedX422 == 1,
+            response.Messages.Any(message => message.Text == OrdinaryService + " Need Approval"));
+    }
+
+    /// <summary>Asserts DR-14 takes REQ_NEED_A from the preview lines of the draft line's client id, else of its service id, else from the profile.</summary>
+    /// <param name="previewLines">Comma-separated client id:service id:REQ_NEED_A entries; an empty REQ_NEED_A is null.</param>
+    /// <param name="profileReqNeedA">REQ_NEED_A of the service profile.</param>
+    /// <param name="blocks">Whether DR-14 blocks the line.</param>
+    [Theory]
+    [InlineData("c1:S1:0,c1:S1:1", 0, true)]
+    [InlineData("c1:S1:,c9:S1:0", 1, true)]
+    [InlineData("c1:S1:0,c9:S1:1", 1, false)]
+    [InlineData("c9: s1 :1", 0, true)]
+    [InlineData("c9:S1:0,c8:S1:", 1, false)]
+    [InlineData("c9:S1:", 1, true)]
+    [InlineData("c9:S2:1", 0, false)]
+    public async Task ValidateLine_PreviewReqNeedA_ByClientIdElseServiceIdElseProfile(string previewLines, int profileReqNeedA, bool blocks)
+    {
+        var draft = (await CreditDraft()) with { Parameters = new InvoiceEntryParameters { X422ApprovCheck = 1 } };
+        var fakes = ArrangeApproval(draft, false, null);
+        fakes.Lookups.ServiceProfile = serviceId => Profile(serviceId) with { ReqNeedA = profileReqNeedA };
+        var preview = previewLines.Split(',')
+            .Select(entry => entry.Split(':'))
+            .Select((fields, index) => new EditablePreviewLine
+            {
+                ClientId = fields[0],
+                LineNo = index + 1,
+                ServiceId = fields[1],
+                Qty = 1m,
+                ListId = DefaultListId,
+                ReqNeedA = fields[2].Length == 0 ? null : int.Parse(fields[2], CultureInfo.InvariantCulture),
+            })
+            .ToArray();
+        fakes.InvoiceApi.Preview = (_, lines) => (
+            preview,
+            new PreviewTotalsRow { LineCount = lines.Count, PatPay = 0m, CashCollected = 0m, Amount1 = 0m, Amount2 = 0m });
+
+        var validated = await fakes.CreateService().Validate(
+            new ValidateDraftRequest { Draft = draft, Target = "SERVICEID", LineIndex = 0 }, Operator);
+
+        Assert.Equal(blocks, HasBlocking(validated.Messages, "DR-14"));
+    }
+
+    private static FakeDataPorts ArrangeApproval(DraftDto draft, bool prefPresent, string? prefValue)
+    {
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = serviceId => Profile(serviceId) with { ReqNeedA = 1 };
+        fakes.Lookups.Preferences = prefPresent
+            ? new Dictionary<int, string?> { [ApprovalPreference] = prefValue }
+            : new Dictionary<int, string?>();
+        return fakes;
+    }
+
+    [Theory]
+    [Trait("Decision", "D-98")]
+    [InlineData("contract", 1)]
+    [InlineData("contract", null)]
+    [InlineData("contract", 2)]
+    [InlineData("card", 1)]
+    [InlineData("card", null)]
+    [InlineData("card", 2)]
+    [InlineData("policy", 1)]
+    [InlineData("policy", null)]
+    [InlineData("policy", 2)]
+    public async Task ValidatePatientAndCreate_ExpiredCoverage_FollowsTheRequestDateAdmin(string expiry, int? invDateAdmin)
+    {
+        var draft = (await CreditDraft()) with { Parameters = new InvoiceEntryParameters { InvDateAdmin = invDateAdmin } };
+        var fakes = Arrange(draft);
+        fakes.Lookups.PatientCoverage = ExpiredCoverage(draft, expiry);
+        var service = fakes.CreateService();
+
+        var validated = await service.Validate(PatientValidation(draft), Operator);
+        var created = await service.Create(CreateRequest(draft), Operator);
+
+        var blocks = ExpiryBlocks(expiry, invDateAdmin);
+        AssertOnlyExpiryMessage(validated.Messages, expiry, blocks);
+        AssertOnlyExpiryMessage(created.Messages, expiry, blocks);
+        Assert.Equal(blocks, created.InvNo is null);
+        Assert.Equal(blocks ? 0 : 1, CreateCalls(fakes));
+        Assert.Equal(!blocks, AnySessionCommitted(fakes));
+    }
+
+    [Theory]
+    [Trait("Decision", "D-98")]
+    [InlineData("contract", 1)]
+    [InlineData("contract", null)]
+    [InlineData("contract", 2)]
+    [InlineData("card", 1)]
+    [InlineData("card", null)]
+    [InlineData("card", 2)]
+    [InlineData("policy", 1)]
+    [InlineData("policy", null)]
+    [InlineData("policy", 2)]
+    public async Task GetCoverage_ExpiredCoverage_FollowsTheRequestDateAdmin(string expiry, int? invDateAdmin)
+    {
+        var draft = await CreditDraft();
+        var fakes = Arrange(draft);
+        fakes.Lookups.PatientCoverage = ExpiredCoverage(draft, expiry);
+
+        var response = await fakes.CreateService().GetCoverage(
+            PatientNo, DraftDate, new InvoiceEntryParameters { InvDateAdmin = invDateAdmin }, Operator);
+
+        AssertOnlyExpiryMessage(response.Messages, expiry, ExpiryBlocks(expiry, invDateAdmin));
+        Assert.Equal(fakes.Lookups.PatientCoverage, response.Coverage);
+    }
+
+    /// <summary>Insured coverage whose contract, card or policy ended the day before the draft date; card and policy cases are card companies (type 2).</summary>
+    private static PatientCoverageSnapshot ExpiredCoverage(DraftDto draft, string expiry) => expiry switch
+    {
+        "contract" => InsuredCoverage(draft) with { ContractEnd = DraftDate.AddDays(-1) },
+        "card" => InsuredCoverage(draft) with { CompanyType = 2, CardEnd = DraftDate.AddDays(-1) },
+        "policy" => InsuredCoverage(draft) with { CompanyType = 2, SubCompanyContractEnd = DraftDate.AddDays(-1) },
+        _ => throw new ArgumentOutOfRangeException(nameof(expiry), expiry, "Unknown expiry case."),
+    };
+
+    /// <summary>Returns whether T023 blocks the expiry: contract and card block only when INV_DATE_ADMIN is 2, policy blocks unless it is 1.</summary>
+    private static bool ExpiryBlocks(string expiry, int? invDateAdmin) =>
+        expiry == "policy" ? invDateAdmin != 1 : invDateAdmin == 2;
+
+    /// <summary>Asserts the only DR-03 message is the legacy expiry text of <paramref name="expiry"/>: the blocking text, or the date-admin warning.</summary>
+    private static void AssertOnlyExpiryMessage(IReadOnlyList<MessageDto> messages, string expiry, bool blocks)
+    {
+        var ended = DraftDate.AddDays(-1).ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
+        var expected = (expiry, blocks) switch
+        {
+            ("contract", true) => "Contract  Ended " + ended,
+            ("contract", false) => "Contract  Ended " + ended + " , But due to that user have date admin privileges system will open claim",
+            ("card", true) => "Card Expired " + ended,
+            ("card", false) => "Card Expired " + ended + " , But due to that user have date admin privileges system will open claim",
+            ("policy", true) => "Policy  Ended " + ended + " Patient well treated as cash patient ",
+            ("policy", false) => "Policy  Ended " + ended + " ,But due to that user have date admin privileges system will open claim",
+            _ => throw new ArgumentOutOfRangeException(nameof(expiry), expiry, "Unknown expiry case."),
+        };
+
+        var dr03 = Assert.Single(messages, message => message.Rule == "DR-03");
+        Assert.Equal(PatientNoItem, dr03.Field);
+        Assert.Equal(expected, dr03.Text);
+        Assert.Equal(blocks ? ValidationMessage.Blocking : ValidationMessage.Warning, dr03.Severity);
+    }
+
+    private static (InvoiceHeaderDraft Header, decimal? ListId, decimal? MaxDeductable, int? CardId)? SubCompanyClaimPreload(string claimNo) =>
+        string.Equals(claimNo, ClaimNumber, StringComparison.Ordinal)
+            ? (new InvoiceHeaderDraft
+            {
+                PatientNo = PatientNo,
+                CompCode = CreditCompany,
+                PayType = 2,
+                SubCompCode = SubCompany,
+                ClassCode = ClassCode,
+            }, 55m, null, null)
+            : null;
+
+    private static void AssertOnlyMissingCoverageRow(IReadOnlyList<MessageDto> messages)
+    {
+        var message = Assert.Single(messages);
+        Assert.Equal(PatientNoItem, message.Field);
+        Assert.Equal(CoverageRowMissingText, message.Text);
+        Assert.Equal(ValidationMessage.Blocking, message.Severity);
+        Assert.Equal("DR-03", message.Rule);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-55")]
+    public async Task Create_PlainLinesOnOneList_ReadsTheirProfilesInOneBatchedLookup()
+    {
+        var draft = await ThreeLineDraft();
+        var fakes = Arrange(draft);
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        Assert.Equal(1, CreateCalls(fakes));
+        Assert.False(Called(fakes.Lookups.Calls, nameof(ILookupQueries.GetServiceProfile)));
+        var read = Assert.Single(ProfileReadCalls(fakes));
+        Assert.Equal(DefaultListId, read.Arg<decimal>());
+        Assert.Equal(
+            new[] { OrdinaryService, SecondService, ThirdService },
+            read.Arg<IReadOnlyCollection<string>>().Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-42")]
+    public async Task Preview_ManualPriceLine_ReadsEachServiceProfileOnce()
+    {
+        var draft = (await CashDraft()) with
+        {
+            Lines = new[] { Line(OrdinaryService, "c1") with { PriceOverride = OverriddenPrice }, Line(SecondService, "c2") },
+        };
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = serviceId => Profile(serviceId) with { PriceIsFixed = PriceNotFixed };
+
+        var response = await fakes.CreateService().Preview(draft, Operator);
+
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        Assert.Contains(PreviewedLines(fakes), lines => lines.Any(line => line.PriceOverride == OverriddenPrice));
+        Assert.False(Called(fakes.Lookups.Calls, nameof(ILookupQueries.GetServiceProfiles)));
+        var reads = ProfileReadKeys(fakes);
+        Assert.Equal(reads.Distinct().ToArray(), reads);
+        Assert.Equal(new[] { OrdinaryService, SecondService }, ServicesReadOn(reads, DefaultListId));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-38")]
+    public async Task Create_LinesOnDifferentPreviewLists_ReadsEachProfileOnItsOwnList()
+    {
+        var draft = await ThreeLineDraft();
+        var fakes = Arrange(draft);
+        fakes.InvoiceApi.Preview = (_, lines) => (
+            lines.Select((line, index) => new EditablePreviewLine
+            {
+                ClientId = line.ClientId,
+                LineNo = index + 1,
+                ServiceId = line.ServiceId,
+                Qty = line.Qty,
+                ListId = line.ClientId switch { "c1" => DefaultListId, "c2" => SecondListId, _ => null },
+            }).ToArray(),
+            new PreviewTotalsRow { LineCount = lines.Count, PatPay = 0m, CashCollected = 0m, Amount1 = 0m, Amount2 = 0m });
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        var reads = ProfileReadKeys(fakes);
+        Assert.Equal(2, ProfileReadCalls(fakes).Length);
+        Assert.Equal(new[] { OrdinaryService, ThirdService }, ServicesReadOn(reads, DefaultListId));
+        Assert.Equal(new[] { SecondService }, ServicesReadOn(reads, SecondListId));
+        var single = Assert.Single(ProfileReadCalls(fakes, nameof(ILookupQueries.GetServiceProfile)));
+        Assert.Equal(SecondService, single.Arg<string>());
+        Assert.Equal(SecondListId, single.Arg<decimal>());
+        var batched = Assert.Single(ProfileReadCalls(fakes, nameof(ILookupQueries.GetServiceProfiles)));
+        Assert.Equal(DefaultListId, batched.Arg<decimal>());
+    }
+
+    [Fact]
+    [Trait("Decision", "D-80")]
+    public async Task Create_OneLineDraft_ReadsItsProfileThroughTheSingleRowLookup()
+    {
+        var draft = await CashDraft();
+        var fakes = Arrange(draft);
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        Assert.Equal(1, CreateCalls(fakes));
+        Assert.False(Called(fakes.Lookups.Calls, nameof(ILookupQueries.GetServiceProfiles)));
+        var read = Assert.Single(ProfileReadCalls(fakes));
+        Assert.Equal(nameof(ILookupQueries.GetServiceProfile), read.Method);
+        Assert.Equal(new object?[] { OrdinaryService, DefaultListId }, read.Args);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-80")]
+    public async Task Create_ServiceNotOnItsList_ReadAloneGivesTheBatchedOutcome()
+    {
+        var lone = await PlainLinesDraft(UnlistedService);
+        var batched = await PlainLinesDraft(UnlistedService, OrdinaryService);
+        var loneFakes = UnlistedServiceFakes(lone);
+        var batchedFakes = UnlistedServiceFakes(batched);
+
+        var loneResponse = await loneFakes.CreateService().Create(CreateRequest(lone), Operator);
+        var batchedResponse = await batchedFakes.CreateService().Create(CreateRequest(batched), Operator);
+
+        var loneRead = Assert.Single(ProfileReadCalls(loneFakes));
+        Assert.Equal(nameof(ILookupQueries.GetServiceProfile), loneRead.Method);
+        Assert.Equal(UnlistedService, loneRead.Arg<string>());
+        var batchedRead = Assert.Single(ProfileReadCalls(batchedFakes));
+        Assert.Equal(nameof(ILookupQueries.GetServiceProfiles), batchedRead.Method);
+        Assert.Contains(UnlistedService, batchedRead.Arg<IReadOnlyCollection<string>>());
+        Assert.DoesNotContain(loneResponse.Messages, IsBlocking);
+        Assert.Equal(batchedResponse.Messages, loneResponse.Messages);
+        Assert.Equal(batchedResponse.OpenItems, loneResponse.OpenItems);
+        Assert.Equal(1, CreateCalls(loneFakes));
+        Assert.Equal(1, CreateCalls(batchedFakes));
+        Assert.Equal(
+            CreateCall(batchedFakes).Arg<InvoiceHeaderDraft>().AddToList,
+            CreateCall(loneFakes).Arg<InvoiceHeaderDraft>().AddToList);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-80")]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task Create_BlankServiceLine_NeverReachesTheSingleRowLookup(string? serviceId)
+    {
+        var draft = (await CashDraft()) with
+        {
+            Lines = new[] { Line(OrdinaryService, "c1") with { ServiceId = serviceId }, Line(OrdinaryService, "c2") },
+        };
+        var fakes = Arrange(draft);
+
+        await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.DoesNotContain(ProfileReadKeys(fakes), read => string.IsNullOrWhiteSpace(read.ServiceId));
+        var read = Assert.Single(ProfileReadCalls(fakes));
+        Assert.Equal(nameof(ILookupQueries.GetServiceProfile), read.Method);
+        Assert.Equal(new object?[] { OrdinaryService, DefaultListId }, read.Args);
+    }
+
+    [Theory]
+    [InlineData(PaddedLowerCaseOrdinaryService, false)]
+    [InlineData(UnrequestedService, true)]
+    public async Task Create_RequestedServiceMatchedTrimmedIgnoringCase_DecidesDr16Warning(string requestedServiceId, bool warned)
+    {
+        var draft = await CreditDraft();
+        var fakes = Arrange(draft);
+        fakes.Lookups.PatientCoverage = InsuredCoverage(draft);
+        fakes.Lookups.ServiceProfile = serviceId => Profile(serviceId) with { BeginOfClaim = 0 };
+        fakes.Lookups.RequestedServices = new[] { requestedServiceId };
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        Assert.True(Called(fakes.Lookups.Calls, nameof(ILookupQueries.GetRequestedServices)));
+        Assert.Equal(warned, HasWarning(response.Messages, "DR-16"));
+    }
+
+    [Theory]
+    [Trait("Decision", "D-37")]
+    [InlineData(SecondComponent, 0)]
+    [InlineData(FirstComponent, 1)]
+    public async Task Create_InterleavedPackageInstances_NestEachComponentUnderItsOwnParent(string queuedComponent, int addToList)
+    {
+        var draft = await InterleavedPackagesDraft();
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = serviceId => serviceId switch
+        {
+            PackageService => Profile(serviceId) with { ServLocId = PackageServiceLocation, IsPackage = 1 },
+            SecondPackageService => Profile(serviceId) with { IsPackage = 1 },
+            _ => Profile(serviceId),
+        };
+        // PACKAGE_DTL of each package lists its own component.
+        fakes.Lookups.PackageComponentFlags = packageServiceId => packageServiceId switch
+        {
+            PackageService => new[] { Profile(FirstComponent) },
+            SecondPackageService => new[] { Profile(SecondComponent) },
+            _ => Array.Empty<ServiceProfile>(),
+        };
+        fakes.Lookups.ServiceQueueFlags = serviceIds => serviceIds.ToDictionary(
+            serviceId => serviceId,
+            serviceId => string.Equals(serviceId, queuedComponent, StringComparison.Ordinal) ? 1 : 0,
+            StringComparer.Ordinal);
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        Assert.Equal((int?)addToList, CreateCall(fakes).Arg<InvoiceHeaderDraft>().AddToList);
+    }
+
+    private static FakeDataPorts UnlistedServiceFakes(DraftDto draft)
+    {
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = serviceId =>
+            string.Equals(serviceId, UnlistedService, StringComparison.Ordinal) ? null : Profile(serviceId);
+        return fakes;
+    }
+
+    private static async Task<DraftDto> ThreeLineDraft() => (await CashDraft()) with
+    {
+        Lines = new[] { Line(OrdinaryService, "c1"), Line(SecondService, "c2"), Line(ThirdService, "c3") },
+    };
+
+    private static async Task<DraftDto> InterleavedPackagesDraft() => (await CashDraft()) with
+    {
+        Lines = new[]
+        {
+            PackageLine(PackageService, ParentRole, "p1", null) with { PackageInstanceId = FirstPackageInstance },
+            PackageLine(SecondPackageService, ParentRole, "p2", null) with
+            {
+                PackageServiceId = SecondPackageService,
+                PackageInstanceId = SecondPackageInstance,
+            },
+            PackageLine(SecondComponent, ComponentRole, "k2", 1) with
+            {
+                PackageServiceId = SecondPackageService,
+                PackageInstanceId = SecondPackageInstance,
+            },
+            PackageLine(FirstComponent, ComponentRole, "k1", 1) with { PackageInstanceId = FirstPackageInstance },
+        },
+    };
+
+    [Fact]
+    [Trait("Decision", "D-52")]
+    [Trait("OpenItem", "OI-21")]
+    public async Task ValidatePatient_InsuredCreditDraft_EmbedsCoverageFromOneRead()
+    {
+        var draft = await CreditDraft();
+        var fakes = Arrange(draft);
+        fakes.Lookups.PatientCoverage = InsuredCoverage(draft);
+
+        var response = await fakes.CreateService().Validate(PatientValidation(draft), Operator);
+
+        var coverage = Assert.IsType<CoverageResponse>(response.Coverage);
+        Assert.Equal(fakes.Lookups.PatientCoverage, coverage.Coverage);
+        Assert.Equal(2, coverage.PayType);
+        Assert.Contains(OpenItemIds.OI24, coverage.OpenItems);
+        Assert.Contains(OpenItemIds.OI21, coverage.OpenItems);
+        Assert.Contains(OpenItemIds.OI24, response.OpenItems);
+        Assert.Contains(OpenItemIds.OI21, response.OpenItems);
+        Assert.Equal(1, CoverageReads(fakes));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task ValidatePatient_BlankPatientNo_ReturnsNoCoverageWithoutCoverageRead(string? patientNo)
+    {
+        var draft = WithHeader(await CreditDraft(), header => header with { PatientNo = patientNo });
+        var fakes = Arrange(draft);
+
+        var response = await fakes.CreateService().Validate(PatientValidation(draft), Operator);
+
+        Assert.Null(response.Coverage);
+        Assert.Empty(response.OpenItems);
+        Assert.Equal(0, CoverageReads(fakes));
+    }
+
+    [Theory]
+    [InlineData("cash")]
+    [InlineData("insured-credit")]
+    [InlineData("referral-credit")]
+    [InlineData("on-hold-credit")]
+    public async Task ValidatePatient_EmbeddedCoverage_EqualsGetCoverage(string coverageCase)
+    {
+        var draft = coverageCase == "cash" ? await CashDraft() : await CreditDraft();
+        var fakes = Arrange(draft);
+        fakes.Lookups.PatientCoverage = coverageCase switch
+        {
+            "insured-credit" => InsuredCoverage(draft),
+            "referral-credit" => InsuredCoverage(draft) with { CompanyType = 2, ClassWithRef = 1 },
+            "on-hold-credit" => InsuredCoverage(draft) with { CompanyIsActive = OnHold },
+            _ => ValidCoverage(draft),
+        };
+        var service = fakes.CreateService();
+
+        var validated = await service.Validate(PatientValidation(draft), Operator);
+        var expected = await service.GetCoverage(PatientNo, draft.DraftDate, draft.Parameters, Operator);
+
+        var embedded = Assert.IsType<CoverageResponse>(validated.Coverage);
+        Assert.Equal(expected.Coverage, embedded.Coverage);
+        Assert.Equal(expected.PayType, embedded.PayType);
+        Assert.Equal(expected.OpenItems, embedded.OpenItems);
+        Assert.Equal(expected.Messages, embedded.Messages);
+        Assert.Equal(coverageCase is "referral-credit" or "on-hold-credit", expected.Messages.Count > 0);
+        Assert.All(expected.OpenItems, openItem => Assert.Contains(openItem, validated.OpenItems));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GetCoverage_ReturnsSnapshotPayTypeMessagesAndOrderedOpenItems(bool credit)
+    {
+        var draft = credit ? await CreditDraft() : await CashDraft();
+        var fakes = Arrange(draft);
+        fakes.Lookups.PatientCoverage = credit
+            ? InsuredCoverage(draft) with { MaxDeductable = 50m, CompanyIsActive = OnHold }
+            : ValidCoverage(draft);
+
+        var response = await fakes.CreateService().GetCoverage(PatientNo, draft.DraftDate, draft.Parameters, Operator);
+
+        Assert.Equal(fakes.Lookups.PatientCoverage, response.Coverage);
+        Assert.Equal(credit ? 2 : 1, response.PayType);
+        Assert.Equal(
+            credit ? new[] { OpenItemIds.OI21, OpenItemIds.OI23, OpenItemIds.OI24 } : new[] { OpenItemIds.OI24 },
+            response.OpenItems);
+        Assert.Equal(credit ? new[] { "Company Is Holed" } : Array.Empty<string>(), response.Messages.Select(message => message.Text));
+        Assert.Equal(credit, HasBlocking(response.Messages, "DR-03"));
+        Assert.Equal(1, CoverageReads(fakes));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-51")]
+    [Trait("OpenItem", "OI-23")]
+    public async Task ValidatePatient_CreditWithDeductible_ListsOi23()
+    {
+        var draft = await CreditDraft();
+        var fakes = Arrange(draft);
+        fakes.Lookups.PatientCoverage = ValidCoverage(draft) with { MaxDeductable = 50m };
+
+        var response = await fakes.CreateService().Validate(PatientValidation(draft), Operator);
+
+        Assert.Contains(OpenItemIds.OI23, response.OpenItems);
+        Assert.Contains(OpenItemIds.OI23, Assert.IsType<CoverageResponse>(response.Coverage).OpenItems);
+        Assert.Equal(1, CoverageReads(fakes));
+    }
+
+    [Theory]
+    [Trait("Decision", "D-111")]
+    [InlineData(505)]
+    [InlineData(532)]
+    [InlineData(783)]
+    public async Task GetInvoice_ReadsWithTheRequestLocalDocTypeAndReturnsTheView(int localDocType)
+    {
+        var fakes = new FakeDataPorts();
+        var header = new InvoiceHeaderDraft { PatientNo = PatientNo, InvNo = SavedInvoiceNo };
+        fakes.Invoices.Invoice = (invNo, docType) => invNo == SavedInvoiceNo && docType == localDocType
+            ? (header, Array.Empty<InvoiceLineDraft>(), new Dictionary<string, object?>())
+            : null;
+
+        var view = await fakes.CreateService().GetInvoice(
+            SavedInvoiceNo, new InvoiceEntryParameters { LocalDocType = localDocType }, Operator);
+
+        Assert.NotNull(view);
+        Assert.Same(header, view.Header);
+        Assert.True(view.ReadOnly);
+        Assert.Equal(new object?[] { SavedInvoiceNo, localDocType }, SingleCall(fakes.Invoices.Calls, nameof(IInvoiceQueries.GetInvoice)).Args);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-111")]
+    [InlineData(505)]
+    [InlineData(532)]
+    [InlineData(783)]
+    public async Task GetMoreDetails_ReadsWithTheRequestLocalDocType(int localDocType)
+    {
+        var fakes = new FakeDataPorts();
+        fakes.Invoices.MoreDetails = (invNo, docType) => invNo == SavedInvoiceNo && docType == localDocType
+            ? (new Dictionary<string, object?> { ["INS_NUMBER"] = SavedInsuranceNumber },
+                Array.Empty<IReadOnlyDictionary<string, object?>>(),
+                Array.Empty<IReadOnlyDictionary<string, object?>>())
+            : null;
+
+        var details = await fakes.CreateService().GetMoreDetails(
+            SavedInvoiceNo, new InvoiceEntryParameters { LocalDocType = localDocType }, Operator);
+
+        Assert.NotNull(details);
+        Assert.Equal(SavedInvoiceNo, details.InvNo);
+        Assert.Equal(SavedInsuranceNumber, details.InsNumber);
+        Assert.Equal(new object?[] { SavedInvoiceNo, localDocType }, SingleCall(fakes.Invoices.Calls, nameof(IInvoiceQueries.GetMoreDetails)).Args);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-111")]
+    public async Task GetInvoiceAndGetMoreDetails_DefaultParameters_ReadWithTheFormLocalDocType505()
+    {
+        var fakes = new FakeDataPorts();
+        var service = fakes.CreateService();
+
+        Assert.Null(await service.GetInvoice(SavedInvoiceNo, new InvoiceEntryParameters(), Operator));
+        Assert.Null(await service.GetMoreDetails(SavedInvoiceNo, new InvoiceEntryParameters(), Operator));
+
+        Assert.Equal(new object?[] { SavedInvoiceNo, FormLocalDocType }, SingleCall(fakes.Invoices.Calls, nameof(IInvoiceQueries.GetInvoice)).Args);
+        Assert.Equal(new object?[] { SavedInvoiceNo, FormLocalDocType }, SingleCall(fakes.Invoices.Calls, nameof(IInvoiceQueries.GetMoreDetails)).Args);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-111")]
+    [InlineData(0)]
+    [InlineData(-505)]
+    [InlineData(504)]
+    [InlineData(999)]
+    public async Task GetInvoiceAndGetMoreDetails_UnmappedLocalDocType_ThrowTheLocalDocTypeValidationWithoutReads(int localDocType)
+    {
+        var fakes = new FakeDataPorts();
+        var service = fakes.CreateService();
+        var parameters = new InvoiceEntryParameters { LocalDocType = localDocType };
+
+        var invoice = await Assert.ThrowsAsync<ArgumentException>(() => service.GetInvoice(SavedInvoiceNo, parameters, Operator));
+        var details = await Assert.ThrowsAsync<ArgumentException>(() => service.GetMoreDetails(SavedInvoiceNo, parameters, Operator));
+
+        foreach (var failure in new[] { invoice, details })
+        {
+            var message = Assert.Single(Assert.IsAssignableFrom<IReadOnlyList<MessageDto>>(failure.Data[ProblemDetailsWriter.MessagesDataKey]));
+            Assert.Equal("LOCAL_DOC_TYPE", message.Field);
+            Assert.Equal("LOCAL_DOC_TYPE must be 505, 532 or 783.", message.Text);
+            Assert.True(IsBlocking(message));
+            Assert.Null(message.Rule);
+        }
+
+        Assert.Empty(fakes.Journal);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-111")]
+    public void InvoiceEntryParameters_FromRequestJsonCarryingLocalDocType783_BindsIt()
+    {
+        var parameters = JsonSerializer.Deserialize<InvoiceEntryParameters>($$"""{"localDocType":783,"claimNo":"{{ClaimNumber}}"}""", Json)!;
+
+        Assert.Equal(783, parameters.LocalDocType);
+        Assert.Equal(ClaimNumber, parameters.ClaimNo);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-111")]
+    public async Task DraftDto_FromRequestJsonCarryingLocalDocType783_BindsIt()
+    {
+        var json = JsonSerializer.SerializeToNode(await CashDraft(), Json)!.AsObject();
+        json["parameters"]!["localDocType"] = 783;
+        var text = json.ToJsonString(Json);
+        Assert.Contains("\"localDocType\":783", text, StringComparison.Ordinal);
+
+        var draft = JsonSerializer.Deserialize<DraftDto>(text, Json)!;
+
+        Assert.Equal(783, draft.Parameters.LocalDocType);
+    }
+
+    private static async Task<DraftDto> ExpandedPackageDraft() => (await CashDraft()) with
+    {
+        Lines = new[]
+        {
+            PackageLine(PackageService, ParentRole, "p1", null),
+            PackageLine(FirstComponent, ComponentRole, "k1", 1),
+            PackageLine(SecondComponent, ComponentRole, "k2", 2),
+        },
+    };
+
+    private static PackageImportRequest PackageRequest(DraftDto draft) => new()
+    {
+        Draft = draft,
+        PackageServiceId = PackageService,
+        ParentSourceId = null,
+    };
+
+    private static bool IsPackageParent(InvoiceLineDraft line) =>
+        string.Equals(line.ServiceId, PackageService, StringComparison.Ordinal);
+
+    private static Exception? RefuseUnexpandedParent(InvoiceHeaderDraft header, IReadOnlyList<InvoiceLineDraft> lines) =>
+        lines.Any(IsPackageParent) ? FakeOracleFailures.UnexpandedParent() : null;
+
+    /// <summary>Bundled-offer component line as GET_BUNDLED_OFFER_IG_LINES returns it: no manual discount, no price override, the offer's price.</summary>
+    private static EditablePreviewLine OfferComponent(string serviceId, long offerDtlId, decimal price) => new()
+    {
+        ClientId = $"{OfferInstance}:{offerDtlId}",
+        ServiceId = serviceId,
+        Qty = 1m,
+        Price = price,
+        ManualDiscountType = NoManualDiscount,
+        ManualDiscountPct = 0m,
+        ManualDiscountAmount = 0m,
+        Disc = 0m,
+        MyDisc = 0m,
+        OfferId = BundledOfferId,
+        OfferDtlId = offerDtlId,
+        OfferType = BundledOfferType,
+        OfferInstanceId = OfferInstance,
+        OfferLineRole = ComponentRole,
+        OfferParentLineId = -1L,
+        OfferPriceApplied = price,
+        OfferDisApplied = 0m,
+        OfferObjectVersionNumber = 3L,
+        OfferDtlObjectVersionNumber = 5L,
+    };
+
+    /// <summary>The package's -20978 refusal when any bundled-offer component carries a manual discount or a price override.</summary>
+    private static Exception? RefuseAlteredOfferComponent(InvoiceHeaderDraft header, IReadOnlyList<InvoiceLineDraft> lines) =>
+        lines.Any(IsAlteredOfferComponent) ? FakeOracleFailures.BundledOfferRowsInvalid() : null;
+
+    /// <summary>True for a bundled-offer component the package's has_manual_discount or uses_price_override holds for.</summary>
+    private static bool IsAlteredOfferComponent(InvoiceLineDraft line) =>
+        line.OfferType == BundledOfferType
+        && string.Equals(line.OfferLineRole?.Trim(), ComponentRole, StringComparison.OrdinalIgnoreCase)
+        && (!string.Equals((line.DiscountType ?? NoManualDiscount).Trim(), NoManualDiscount, StringComparison.OrdinalIgnoreCase)
+            || (line.Disc ?? 0m) != 0m
+            || (line.MyDisc ?? 0m) != 0m
+            || line.PriceOverride is not null
+            || line.UsePriceOverride?.Trim().ToUpperInvariant() is "Y" or "YES" or "1" or "TRUE");
+
+    private static void AssertUnalteredOfferComponent(InvoiceLineDraft line)
+    {
+        Assert.Equal(NoManualDiscount, line.DiscountType);
+        Assert.Equal(0m, line.Disc);
+        Assert.Equal(0m, line.MyDisc);
+        Assert.Null(line.PriceOverride);
+        Assert.NotEqual("Y", line.UsePriceOverride);
+        Assert.False(IsAlteredOfferComponent(line));
+    }
+
+    private static (InvoiceHeaderDraft Header, decimal? ListId, decimal? MaxDeductable, int? CardId)? PreloadWithList(string claimNo) =>
+        string.Equals(claimNo, ClaimNumber, StringComparison.Ordinal)
+            ? (new InvoiceHeaderDraft { PatientNo = PatientNo, CompCode = CashCompany, PayType = 1 }, 55m, null, null)
+            : null;
+
+    private static async Task<DraftDto> PlainLinesDraft(params string[] serviceIds) => (await CashDraft()) with
+    {
+        Lines = serviceIds.Select((serviceId, index) => Line(serviceId, $"c{index + 1}")).ToArray(),
+    };
+
+    private static ValidateDraftRequest LineTarget(DraftDto draft, int lineIndex) =>
+        new() { Draft = draft, Target = "LINE", LineIndex = lineIndex };
+
+    private static string[] QueueFlagIds(FakeDataPorts fakes) =>
+        fakes.Lookups.Calls
+            .Where(call => call.Method == nameof(ILookupQueries.GetServiceQueueFlags))
+            .SelectMany(call => call.Arg<IReadOnlyCollection<string>>())
+            .ToArray();
+
+    private static FakeCall[] ProfileReadCalls(FakeDataPorts fakes) =>
+        fakes.Lookups.Calls
+            .Where(call => call.Method is nameof(ILookupQueries.GetServiceProfile) or nameof(ILookupQueries.GetServiceProfiles))
+            .ToArray();
+
+    private static FakeCall[] ProfileReadCalls(FakeDataPorts fakes, string method) =>
+        ProfileReadCalls(fakes).Where(call => call.Method == method).ToArray();
+
+    private static (decimal ListId, string ServiceId)[] ProfileReadKeys(FakeDataPorts fakes) =>
+        ProfileReadCalls(fakes)
+            .SelectMany(call => ProfileReadIds(call).Select(serviceId => (call.Arg<decimal>(), serviceId)))
+            .ToArray();
+
+    /// <summary>Service ids of one profile read: the id of a GetServiceProfile call, or the ids of a GetServiceProfiles call.</summary>
+    private static IReadOnlyCollection<string> ProfileReadIds(FakeCall call) =>
+        call.Method == nameof(ILookupQueries.GetServiceProfile)
+            ? new[] { call.Arg<string>() }
+            : call.Arg<IReadOnlyCollection<string>>();
+
+    private static string[] ServicesReadOn(IEnumerable<(decimal ListId, string ServiceId)> reads, decimal listId) =>
+        reads.Where(read => read.ListId == listId).Select(read => read.ServiceId).Order(StringComparer.Ordinal).ToArray();
+
+    [Fact]
+    [Trait("Decision", "D-112")]
+    public async Task Create_NewCreate_RunsEveryLookupReadBeforeTheCreateTransactionOpens()
+    {
+        var draft = (await CreditDraft()) with
+        {
+            Lines = new[] { Line(OrdinaryService, "c1"), Line(PackageService, "p1") },
+            Parameters = new InvoiceEntryParameters { ClaimNo = ClaimNumber },
+        };
+        var fakes = Arrange(draft);
+        fakes.Lookups.PatientCoverage = InsuredCoverage(draft);
+        fakes.Lookups.ServiceProfile = PackageAwareProfile;
+        fakes.Invoices.ClaimPreload = PreloadOf(credit: true, maxDeductable: 0m, cardId: null);
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        Assert.NotNull(response.InvNo);
+        var create = fakes.Journal.IndexOf(CreateFullInvoiceEntry);
+        var open = fakes.Journal.LastIndexOf(SessionOpenEntry, create);
+        Assert.True(open >= 0);
+        Assert.Equal(open + 1, create);
+        Assert.Equal(CreateRequestEntry, fakes.Journal[create + 1]);
+        Assert.DoesNotContain(
+            fakes.Journal.Skip(create + 2),
+            entry => entry.StartsWith($"{nameof(ILookupQueries)}.", StringComparison.Ordinal)
+                || entry.StartsWith($"{nameof(IInvoiceQueries)}.", StringComparison.Ordinal));
+        foreach (var read in new[]
+        {
+            nameof(ILookupQueries.GetPatientCardId),
+            nameof(ILookupQueries.GetClassAdvancedMode),
+            nameof(ILookupQueries.GetServiceQueueFlags),
+            nameof(ILookupQueries.GetPackageComponentFlags),
+        })
+        {
+            Assert.True(Called(fakes.Lookups.Calls, read), read);
+        }
+
+        Assert.True(Called(fakes.Invoices.Calls, nameof(IInvoiceQueries.GetClaimPreload)));
+        Assert.True(CreateCall(fakes).Arg<FakeOracleSession>().Committed);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-89")]
+    [Trait("Decision", "D-44")]
+    public async Task Create_ReceptionTransferSavepointTimesOut_RollsBackTheWholeCreateWithoutTheClearOrTheTotalCheck()
+    {
+        const string wholeRollbackEntry = $"{nameof(IOracleSession)}.{RollbackEvent}";
+        var draft = await CreditDraft();
+        var fakes = Arrange(draft);
+        fakes.SessionFactory.SavepointFailure = sessionEvent => sessionEvent == ReceptionTransferSavepointEvent
+            ? new TimeoutException("The Oracle savepoint did not complete within 30 seconds.")
+            : null;
+
+        await Assert.ThrowsAsync<TimeoutException>(() => fakes.CreateService().Create(CreateRequest(draft), Operator));
+
+        Assert.Equal(
+            new[] { CreateFullInvoiceEntry, CreateRequestEntry, ReceptionTransferSaveEntry, wholeRollbackEntry, SessionDisposeEntry },
+            JournalFromTheSave(fakes));
+        Assert.Empty(fakes.PatientTransfer.Calls);
+        Assert.False(Called(fakes.Legacy.Calls, nameof(ILegacyExternalCalls.ValidateTotalInvoice)));
+        Assert.False(AnySessionCommitted(fakes));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-89")]
+    [Trait("Decision", "D-44")]
+    public async Task Create_ReceptionTransferSavepointRollbackTimesOut_RollsBackTheWholeCreateWithoutTheTotalCheck()
+    {
+        const string wholeRollbackEntry = $"{nameof(IOracleSession)}.{RollbackEvent}";
+        var draft = await CreditDraft();
+        var fakes = Arrange(draft);
+        fakes.PatientTransfer.Throw = () => new InvalidOperationException("reception transfer clear failed");
+        fakes.SessionFactory.SavepointFailure = sessionEvent => sessionEvent == ReceptionTransferRollbackEvent
+            ? new TimeoutException("The Oracle savepoint rollback did not complete within 30 seconds.")
+            : null;
+
+        await Assert.ThrowsAsync<TimeoutException>(() => fakes.CreateService().Create(CreateRequest(draft), Operator));
+
+        Assert.Equal(
+            new[]
+            {
+                CreateFullInvoiceEntry,
+                CreateRequestEntry,
+                ReceptionTransferSaveEntry,
+                ReceptionTransferClearEntry,
+                ReceptionTransferRollbackEntry,
+                wholeRollbackEntry,
+                SessionDisposeEntry,
+            },
+            JournalFromTheSave(fakes));
+        Assert.Single(fakes.PatientTransfer.Calls);
+        Assert.False(Called(fakes.Legacy.Calls, nameof(ILegacyExternalCalls.ValidateTotalInvoice)));
+        Assert.False(AnySessionCommitted(fakes));
+    }
+
+    /// <summary>Cash draft that reaches the package call of a rolled-back operation: a visit for ImportRequests, claim parameter 1 for ImportVisitLine, an ordinary line beside the package for ImportPackage.</summary>
+    private static async Task<DraftDto> RolledBackDraft(string operation) => operation switch
+    {
+        nameof(InvoiceWorkflowService.ImportRequests) => await RequestImportDraft(),
+        nameof(InvoiceWorkflowService.ImportVisitLine) =>
+            (await CashDraft()) with { Parameters = new InvoiceEntryParameters { ClaimNo = ConsultationClaim } },
+        nameof(InvoiceWorkflowService.ImportPackage) =>
+            (await CashDraft()) with { Lines = new[] { Line(OrdinaryService, "c1"), Line(PackageService, "p1") } },
+        _ => await CashDraft(),
+    };
+
+    /// <summary>Fakes answering one selected request row and two bundled-offer components.</summary>
+    private static FakeDataPorts ArrangeRolledBack(DraftDto draft)
+    {
+        var fakes = Arrange(draft);
+        fakes.Lookups.ServiceProfile = PackageAwareProfile;
+        fakes.Invoices.SelectedRequestRows = (_, _, _) =>
+            new[] { (SelectedRequestRowId, OrdinaryService, (int?)null, (int?)0, (string?)null) };
+        fakes.InvoiceApi.BundledOfferLines = (_, _, _) =>
+            new[] { OfferComponent(FirstComponent, 71L, 40m), OfferComponent(SecondComponent, 72L, 60m) };
+        return fakes;
+    }
+
+    /// <summary>Runs a rolled-back operation, or the validation of a line target on line 0, and returns its response.</summary>
+    private static async Task<object> RunRolledBack(FakeDataPorts fakes, DraftDto draft, string operation)
+    {
+        var service = fakes.CreateService();
+        return operation switch
+        {
+            nameof(InvoiceWorkflowService.Preview) => await service.Preview(draft, Operator),
+            nameof(InvoiceWorkflowService.ImportRequests) =>
+                await service.ImportRequests(new ImportRequestsRequest { Draft = draft }, Operator),
+            nameof(InvoiceWorkflowService.ImportVisitLine) =>
+                await service.ImportVisitLine(new VisitLineRequest { Draft = draft }, Operator),
+            nameof(InvoiceWorkflowService.ImportPackage) => await service.ImportPackage(PackageRequest(draft), Operator),
+            nameof(InvoiceWorkflowService.ImportBundledOffer) =>
+                await service.ImportBundledOffer(new BundledOfferRequest { Draft = draft, OfferId = BundledOfferId }, Operator),
+            _ => await service.Validate(new ValidateDraftRequest { Draft = draft, Target = operation, LineIndex = 0 }, Operator),
+        };
+    }
+
+    /// <summary>Makes the package call of a rolled-back operation throw <paramref name="failure"/>.</summary>
+    private static void FailPackageCall(FakeDataPorts fakes, string operation, Exception failure)
+    {
+        switch (operation)
+        {
+            case nameof(InvoiceWorkflowService.ImportRequests):
+                fakes.Import.RequestLines = (_, _, _, _) => throw failure;
+                break;
+            case nameof(InvoiceWorkflowService.ImportVisitLine):
+                fakes.Import.VisitLine = (_, _) => throw failure;
+                break;
+            case nameof(InvoiceWorkflowService.ImportPackage):
+                fakes.InvoiceApi.PackageLines = (_, _, _) => throw failure;
+                break;
+            case nameof(InvoiceWorkflowService.ImportBundledOffer):
+                fakes.InvoiceApi.BundledOfferLines = (_, _, _) => throw failure;
+                break;
+            default:
+                fakes.InvoiceApi.PreviewFailure = (_, _) => failure;
+                break;
+        }
+    }
+
+    /// <summary>Sessions a rolled-back operation opens: the context preview and the package lines for ImportPackage, else one.</summary>
+    private static int RolledBackSessions(string operation) =>
+        operation == nameof(InvoiceWorkflowService.ImportPackage) ? 2 : 1;
+
+    /// <summary>Asserts that <paramref name="count"/> sessions were opened and each was rolled back, then disposed, and never committed.</summary>
+    private static void AssertRolledBackBeforeDisposal(FakeDataPorts fakes, int count)
+    {
+        Assert.Equal(count, fakes.SessionFactory.Sessions.Count);
+        Assert.All(fakes.SessionFactory.Sessions, session => Assert.Equal(new[] { RollbackEvent, DisposeEvent }, session.Events));
+        Assert.False(AnySessionCommitted(fakes));
+    }
+
+    [Theory]
+    [Trait("Decision", "D-135")]
+    [Trait("Decision", "D-10")]
+    [InlineData(nameof(InvoiceWorkflowService.Preview))]
+    [InlineData(nameof(InvoiceWorkflowService.ImportRequests))]
+    [InlineData(nameof(InvoiceWorkflowService.ImportVisitLine))]
+    [InlineData(nameof(InvoiceWorkflowService.ImportPackage))]
+    [InlineData(nameof(InvoiceWorkflowService.ImportBundledOffer))]
+    [InlineData("SERVICEID")]
+    [InlineData("QTY")]
+    public async Task RolledBackOperation_PackageCallSucceeds_RollsBackEverySessionBeforeDisposal(string operation)
+    {
+        var draft = await RolledBackDraft(operation);
+        var fakes = ArrangeRolledBack(draft);
+
+        await RunRolledBack(fakes, draft, operation);
+
+        AssertRolledBackBeforeDisposal(fakes, RolledBackSessions(operation));
+    }
+
+    [Theory]
+    [Trait("Decision", "D-135")]
+    [Trait("Decision", "D-10")]
+    [InlineData(nameof(InvoiceWorkflowService.Preview), true)]
+    [InlineData(nameof(InvoiceWorkflowService.Preview), false)]
+    [InlineData("SERVICEID", true)]
+    [InlineData("SERVICEID", false)]
+    [InlineData("QTY", true)]
+    [InlineData("QTY", false)]
+    [InlineData(nameof(InvoiceWorkflowService.ImportRequests), false)]
+    [InlineData(nameof(InvoiceWorkflowService.ImportVisitLine), false)]
+    [InlineData(nameof(InvoiceWorkflowService.ImportPackage), false)]
+    [InlineData(nameof(InvoiceWorkflowService.ImportBundledOffer), false)]
+    public async Task RolledBackOperation_PackageCallFails_PropagatesThatFailureAndRollsBackBeforeDisposal(string operation, bool refused)
+    {
+        var draft = await RolledBackDraft(operation);
+        var fakes = ArrangeRolledBack(draft);
+        var failure = refused ? FakeOracleFailures.DiscountRefused() : FakeOracleFailures.NoListener();
+        FailPackageCall(fakes, operation, failure);
+
+        var thrown = await Assert.ThrowsAsync<OracleException>(() => RunRolledBack(fakes, draft, operation));
+
+        Assert.Same(failure, thrown);
+        AssertRolledBackBeforeDisposal(fakes, RolledBackSessions(operation));
+    }
+
+    [Theory]
+    [Trait("Decision", "D-135")]
+    [Trait("Decision", "D-10")]
+    [InlineData(nameof(InvoiceWorkflowService.Preview))]
+    [InlineData(nameof(InvoiceWorkflowService.ImportRequests))]
+    [InlineData(nameof(InvoiceWorkflowService.ImportVisitLine))]
+    [InlineData(nameof(InvoiceWorkflowService.ImportPackage))]
+    [InlineData(nameof(InvoiceWorkflowService.ImportBundledOffer))]
+    [InlineData("SERVICEID")]
+    [InlineData("QTY")]
+    public async Task RolledBackOperation_RollbackFails_ReturnsTheResponseOfARolledBackCall(string operation)
+    {
+        var draft = await RolledBackDraft(operation);
+        var rolledBack = ArrangeRolledBack(draft);
+        var fakes = ArrangeRolledBack(draft);
+        fakes.SessionFactory.RollbackFailure = () => new TimeoutException("The Oracle rollback did not complete within 30 seconds.");
+
+        var expected = await RunRolledBack(rolledBack, draft, operation);
+        var response = await RunRolledBack(fakes, draft, operation);
+
+        Assert.Equal(JsonSerializer.Serialize(expected, Json), JsonSerializer.Serialize(response, Json));
+        AssertRolledBackBeforeDisposal(fakes, RolledBackSessions(operation));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-135")]
+    [Trait("Decision", "D-10")]
+    public async Task Create_NewCreate_RollsBackEachPreflightPreviewSessionAndCommitsTheCreateSessionWithoutRollback()
+    {
+        var draft = await CashDraft();
+        var fakes = Arrange(draft);
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.NotNull(response.InvNo);
+        var createSession = CreateCall(fakes).Arg<FakeOracleSession>();
+        Assert.Equal(new[] { ReceptionTransferSavepointEvent, CommitEvent, DisposeEvent }, createSession.Events);
+        var previewSessions = fakes.SessionFactory.Sessions.Where(session => !ReferenceEquals(session, createSession)).ToArray();
+        Assert.NotEmpty(previewSessions);
+        Assert.All(previewSessions, session => Assert.Equal(new[] { RollbackEvent, DisposeEvent }, session.Events));
+    }
+
+    /// <summary>Cash draft with amount 1 of 60 and amount 2 of 40, both on the cash method, and 200 tendered.</summary>
+    private static async Task<DraftDto> TenderedCashDraft() => WithHeader(
+        await CashDraft(),
+        header => header with { Amount1 = 60m, Amount2 = 40m, SubPayType = 1, SubPayType2 = 1, CashPayed = 200m });
+
+    /// <summary>Preview echoing each line on the default list with the package's amount due and amounts 1 and 2.</summary>
+    private static Func<InvoiceHeaderDraft, IReadOnlyList<InvoiceLineDraft>, (IReadOnlyList<EditablePreviewLine> Lines, PreviewTotalsRow Totals)> PreviewWithAmounts(
+        decimal amountDue, decimal? amount1, decimal? amount2) =>
+        (_, lines) => (
+            lines.Select((line, index) => new EditablePreviewLine
+            {
+                ClientId = line.ClientId,
+                LineNo = index + 1,
+                ServiceId = line.ServiceId,
+                ListId = DefaultListId,
+                Qty = line.Qty,
+            }).ToArray(),
+            new PreviewTotalsRow { LineCount = lines.Count, CashCollected = amountDue, Amount1 = amount1, Amount2 = amount2 });
+
+    [Fact]
+    [Trait("Decision", "D-136")]
+    public async Task Preview_PackageReturnsNoAmounts_DerivesRefundAndTotalCollectedFromTheHeaderAmounts()
+    {
+        var draft = await TenderedCashDraft();
+        var fakes = Arrange(draft);
+        fakes.InvoiceApi.Preview = PreviewWithAmounts(100m, null, null);
+
+        var response = await fakes.CreateService().Preview(draft, Operator);
+
+        Assert.Equal(100m, response.Refund);
+        Assert.Equal(100m, response.TotalCollected);
+        Assert.Null(response.Totals.Amount1);
+        Assert.Null(response.Totals.Amount2);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-136")]
+    public async Task Preview_PackageReturnsAmounts_DerivesRefundAndTotalCollectedFromThePackageAmounts()
+    {
+        var draft = await TenderedCashDraft();
+        var fakes = Arrange(draft);
+        fakes.InvoiceApi.Preview = PreviewWithAmounts(150m, 150m, 0m);
+
+        var response = await fakes.CreateService().Preview(draft, Operator);
+
+        Assert.Equal(50m, response.Refund);
+        Assert.Equal(150m, response.TotalCollected);
+        Assert.Equal(150m, response.Totals.Amount1);
+        Assert.Equal(0m, response.Totals.Amount2);
+    }
+
+    /// <summary>Doctor-clinic rows of <see cref="LockedDoctor"/> and <see cref="PickedDoctor"/>; any other doctor has none.</summary>
+    private static (int ClinicId, string? ClinicName, string? DocName)? DoctorClinicOf(int docId) => docId switch
+    {
+        LockedDoctor => (LockedDoctorClinic, LockedDoctorClinicName, LockedDoctorName),
+        PickedDoctor => (PickedDoctorClinic, PickedDoctorClinicName, PickedDoctorName),
+        _ => null,
+    };
+
+    /// <summary>A cash draft of <see cref="ConsultationPatient"/> with <see cref="PickedDoctor"/> at its clinic and a new-consultation claim parameter, locked to <paramref name="theDoc"/>.</summary>
+    private static async Task<DraftDto> PickedDoctorDraft(int? theDoc, string compCode = CashCompany) =>
+        WithHeader(await CashDraft(), header => header with
+        {
+            PatientNo = ConsultationPatient,
+            DocId = PickedDoctor,
+            ClinicId = PickedDoctorClinic,
+            CompCode = compCode,
+        }) with
+        {
+            Parameters = new InvoiceEntryParameters { ClaimNo = NewConsultationClaim, TheDoc = theDoc },
+        };
+
+    private static ValidateDraftRequest DoctorValidation(DraftDto draft) => new() { Draft = draft, Target = DocIdItem };
+
+    [Fact]
+    [Trait("Decision", "D-138")]
+    public async Task ValidateDoctor_LockedDoctorReset_RereadsTheLockedDoctorsClinicForTheClaimNumberVisitLineAndLines()
+    {
+        var draft = await PickedDoctorDraft(LockedDoctor);
+        var fakes = Arrange(draft);
+        fakes.Lookups.PatientCoverage = new PatientCoverageSnapshot { PatientNo = ConsultationPatient, CompCode = CashCompany };
+        fakes.Lookups.DoctorClinic = DoctorClinicOf;
+
+        var response = await fakes.CreateService().Validate(DoctorValidation(draft), Operator);
+
+        Assert.Equal(new[] { WarningMessage(DocIdItem, "You Cant Change doctor", "DR-11") }, response.Messages);
+        Assert.Equal(LockedDoctor, response.Adjusted[DocIdItem]);
+        Assert.Equal(LockedDoctorClinic, response.Adjusted[ClinicItem]);
+        Assert.Equal(LockedDoctorClinicName, response.Adjusted[ClinicNameItem]);
+        Assert.Equal(LockedDoctorName, response.Adjusted[DocNameItem]);
+        Assert.Equal("O-2001-14-290926", response.Adjusted[ClaimNoItem]);
+        Assert.Equal(VisitLineChoice.Consultation, response.VisitLine);
+        Assert.Equal(new object?[] { LockedDoctor }, SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetDoctorClinic)).Args);
+        var previews = fakes.InvoiceApi.Calls.Where(call => call.Method == nameof(IBilInvoiceApiGateway.CalculatePreview)).ToArray();
+        Assert.NotEmpty(previews);
+        Assert.All(previews, call =>
+        {
+            Assert.Equal(LockedDoctor, call.Arg<InvoiceHeaderDraft>().DocId);
+            Assert.Equal(LockedDoctorClinic, call.Arg<InvoiceHeaderDraft>().ClinicId);
+        });
+    }
+
+    [Fact]
+    [Trait("Decision", "D-138")]
+    public async Task ValidateDoctor_FixedServiceCompanyWithADoctorAtClinic14_ChoosesServiceTwoThousandFromTheDoctorsClinic()
+    {
+        var draft = (await PickedDoctorDraft(theDoc: null, FixedServiceCompany)) with { Lines = Array.Empty<InvoiceLineDraft>() };
+        var fakes = Arrange(draft);
+        fakes.Lookups.DoctorClinic = docId => docId == PickedDoctor ? (LockedDoctorClinic, LockedDoctorClinicName, PickedDoctorName) : null;
+
+        var response = await fakes.CreateService().Validate(DoctorValidation(draft), Operator);
+
+        Assert.Empty(response.Messages);
+        Assert.Equal(VisitLineChoice.FixedService("2000"), response.VisitLine);
+        Assert.Equal(LockedDoctorClinic, response.Adjusted[ClinicItem]);
+        Assert.Equal(
+            string.Create(CultureInfo.InvariantCulture, $"O-{ConsultationPatient}-{LockedDoctorClinic}-{DraftDate:ddMMyy}"),
+            response.Adjusted[ClaimNoItem]);
+        Assert.False(response.Adjusted.ContainsKey(DocIdItem));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-138")]
+    public async Task ValidateDoctor_DoctorWithoutAClinicRow_KeepsTheClinicSkipsTheClaimNumberAndStillChoosesTheVisitLine()
+    {
+        var draft = (await PickedDoctorDraft(LockedDoctor)) with { Lines = Array.Empty<InvoiceLineDraft>() };
+        var fakes = Arrange(draft);
+
+        var response = await fakes.CreateService().Validate(DoctorValidation(draft), Operator);
+
+        Assert.Equal(new[] { WarningMessage(DocIdItem, "You Cant Change doctor", "DR-11") }, response.Messages);
+        Assert.Equal(new[] { AddToListItem, DocIdItem }, response.Adjusted.Keys.Order(StringComparer.Ordinal));
+        Assert.Equal(LockedDoctor, response.Adjusted[DocIdItem]);
+        Assert.Equal(VisitLineChoice.Consultation, response.VisitLine);
+        Assert.Equal(new object?[] { LockedDoctor }, SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetDoctorClinic)).Args);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-138")]
+    public async Task ValidateDoctor_NoDoctor_ReadsNoClinicAndAdjustsNoClaimNumber()
+    {
+        var draft = WithHeader(await PickedDoctorDraft(theDoc: null), header => header with { DocId = null }) with
+        {
+            Lines = Array.Empty<InvoiceLineDraft>(),
+        };
+        var fakes = Arrange(draft);
+        fakes.Lookups.DoctorClinic = DoctorClinicOf;
+
+        var response = await fakes.CreateService().Validate(DoctorValidation(draft), Operator);
+
+        Assert.Equal(new[] { WarningMessage(DocIdItem, "You Must Select Doctor", "DR-11") }, response.Messages);
+        Assert.Equal(new[] { AddToListItem }, response.Adjusted.Keys);
+        Assert.False(Called(fakes.Lookups.Calls, nameof(ILookupQueries.GetDoctorClinic)));
+    }
+
+    [Theory]
+    [Trait("Decision", "D-187")]
+    [InlineData(NewConsultationClaim, "N", CashCompany, PickedDoctorClinic)]
+    [InlineData("2", "N", CashCompany, PickedDoctorClinic)]
+    [InlineData("0", "Y", CashCompany, PickedDoctorClinic)]
+    [InlineData(NewConsultationClaim, "N", FixedServiceCompany, LockedDoctorClinic)]
+    public async Task ValidateDoctor_NoDoctor_ChoosesNoVisitLineBesideTheDr11Warning(string claimNo, string doReview, string compCode, int clinicId)
+    {
+        var draft = WithHeader(
+            await PickedDoctorDraft(theDoc: null),
+            header => header with { DocId = null, CompCode = compCode, ClinicId = clinicId }) with
+        {
+            Parameters = new InvoiceEntryParameters { ClaimNo = claimNo, DoReview = doReview },
+            Lines = Array.Empty<InvoiceLineDraft>(),
+        };
+        var fakes = Arrange(draft);
+        fakes.Lookups.DoctorClinic = DoctorClinicOf;
+
+        var response = await fakes.CreateService().Validate(DoctorValidation(draft), Operator);
+
+        Assert.Equal(new[] { WarningMessage(DocIdItem, "You Must Select Doctor", "DR-11") }, response.Messages);
+        Assert.Equal(VisitLineChoice.None, response.VisitLine);
+        Assert.False(Called(fakes.Lookups.Calls, nameof(ILookupQueries.GetDoctorClinic)));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-138")]
+    public async Task NewDraft_NewConsultationDoctor_CarriesTheDoctorsClinicAndNamesWithoutBuildingTheClaimNumber()
+    {
+        var fakes = new FakeDataPorts();
+        fakes.Lookups.DoctorClinic = DoctorClinicOf;
+
+        var response = await fakes.CreateService().NewDraft(
+            new InvoiceEntryParameters { ClaimNo = NewConsultationClaim, NewDoc = LockedDoctor }, Operator);
+
+        Assert.Equal(LockedDoctor, response.Draft.Header.DocId);
+        Assert.Equal(LockedDoctorClinic, response.Draft.Header.ClinicId);
+        Assert.Null(response.Draft.Header.ClaimNo);
+        Assert.Equal(
+            new Dictionary<string, string?>(StringComparer.Ordinal)
+            {
+                [DocNameItem] = LockedDoctorName,
+                [ClinicNameItem] = LockedDoctorClinicName,
+            },
+            response.Display);
+        Assert.Equal(new object?[] { LockedDoctor }, SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetDoctorClinic)).Args);
+        var json = JsonSerializer.Serialize(response, Json);
+        Assert.Contains("\"display\":{\"DOC_NAME\":\"Dr. Ahmed Ali\",\"CLINICNAME\":\"General Clinic\"}", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-138")]
+    public async Task NewDraft_PresetDoctorWithoutAClinicRow_LeavesTheClinicUnsetAndTheDisplayEmpty()
+    {
+        var fakes = new FakeDataPorts();
+
+        var response = await fakes.CreateService().NewDraft(
+            new InvoiceEntryParameters { ClaimNo = NewConsultationClaim, NewDoc = LockedDoctor }, Operator);
+
+        Assert.Equal(LockedDoctor, response.Draft.Header.DocId);
+        Assert.Null(response.Draft.Header.ClinicId);
+        Assert.Empty(response.Display);
+        Assert.True(Called(fakes.Lookups.Calls, nameof(ILookupQueries.GetDoctorClinic)));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-138")]
+    public async Task NewDraft_VisitDoctor_CarriesTheVisitDoctorsClinicAndNames()
+    {
+        var fakes = new FakeDataPorts();
+        fakes.Lookups.VisitDoctor = PickedDoctor;
+        fakes.Lookups.DoctorClinic = DoctorClinicOf;
+
+        var response = await fakes.CreateService().NewDraft(new InvoiceEntryParameters { VisitUnique = VisitUnique }, Operator);
+
+        Assert.Equal(PickedDoctor, response.Draft.Header.DocId);
+        Assert.Equal(PickedDoctorClinic, response.Draft.Header.ClinicId);
+        Assert.Equal(PickedDoctorName, response.Display[DocNameItem]);
+        Assert.Equal(PickedDoctorClinicName, response.Display[ClinicNameItem]);
+        Assert.Equal(new object?[] { PickedDoctor }, SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetDoctorClinic)).Args);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-138")]
+    public async Task NewDraft_NoPresetDoctor_ReadsNoDoctorClinic()
+    {
+        var fakes = new FakeDataPorts();
+        fakes.Lookups.DoctorClinic = DoctorClinicOf;
+
+        var response = await fakes.CreateService().NewDraft(new InvoiceEntryParameters(), Operator);
+
+        Assert.Null(response.Draft.Header.DocId);
+        Assert.Null(response.Draft.Header.ClinicId);
+        Assert.Empty(response.Display);
+        Assert.False(Called(fakes.Lookups.Calls, nameof(ILookupQueries.GetDoctorClinic)));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-55")]
+    [Trait("Decision", "D-138")]
+    public async Task Create_WithoutPriorValidation_LockedDoctor_SendsTheLockedDoctorsClinicAndChecksAndBuildsTheClaimFromIt()
+    {
+        var draft = await PickedDoctorDraft(LockedDoctor);
+        var fakes = Arrange(draft);
+        fakes.Lookups.PatientCoverage = new PatientCoverageSnapshot { PatientNo = ConsultationPatient, CompCode = CashCompany };
+        fakes.Lookups.DoctorClinic = DoctorClinicOf;
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.Contains(WarningMessage(DocIdItem, "You Cant Change doctor", "DR-11"), response.Messages);
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        var header = CreateCall(fakes).Arg<InvoiceHeaderDraft>();
+        Assert.Equal(LockedDoctor, header.DocId);
+        Assert.Equal(LockedDoctorClinic, header.ClinicId);
+        Assert.Equal(
+            string.Create(CultureInfo.InvariantCulture, $"O-{ConsultationPatient}-{LockedDoctorClinic}-{DraftDate:ddMMyy}"),
+            header.ClaimNo);
+        Assert.Equal(new object?[] { LockedDoctor }, SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetDoctorClinic)).Args);
+        Assert.Equal(
+            new object?[] { LockedDoctorClinic, ConsultationPatient },
+            SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetClinicProfile)).Args);
+        Assert.All(
+            fakes.InvoiceApi.Calls.Where(call => call.Method == nameof(IBilInvoiceApiGateway.CalculatePreview)),
+            call => Assert.Equal(LockedDoctorClinic, call.Arg<InvoiceHeaderDraft>().ClinicId));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-55")]
+    [Trait("Decision", "D-138")]
+    public async Task Create_WithoutPriorValidation_DoctorWithoutAClinicRow_KeepsTheDraftClinic()
+    {
+        var draft = await PickedDoctorDraft(theDoc: null);
+        var fakes = Arrange(draft);
+        fakes.Lookups.PatientCoverage = new PatientCoverageSnapshot { PatientNo = ConsultationPatient, CompCode = CashCompany };
+
+        var response = await fakes.CreateService().Create(CreateRequest(draft), Operator);
+
+        Assert.DoesNotContain(response.Messages, IsBlocking);
+        var header = CreateCall(fakes).Arg<InvoiceHeaderDraft>();
+        Assert.Equal(PickedDoctor, header.DocId);
+        Assert.Equal(PickedDoctorClinic, header.ClinicId);
+        Assert.Equal(
+            string.Create(CultureInfo.InvariantCulture, $"O-{ConsultationPatient}-{PickedDoctorClinic}-{DraftDate:ddMMyy}"),
+            header.ClaimNo);
+        Assert.Equal(
+            new object?[] { PickedDoctorClinic, ConsultationPatient },
+            SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetClinicProfile)).Args);
+    }
+}

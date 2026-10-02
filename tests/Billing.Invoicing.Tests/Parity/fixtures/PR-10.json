@@ -1,0 +1,85 @@
+{
+  "id": "PR-10",
+  "class": "package",
+  "source": [
+    { "construct": "BIL_INVOICE_ENGINE.create_invoice bil_cashier_shift.assert_can_create_invoice", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:3203" },
+    { "construct": "T003 FORM WHEN-NEW-FORM-INSTANCE", "locator": "05_Complex/Inv_Small_Cash.xml:1096" },
+    { "construct": "T011 T_INV PRE-INSERT", "locator": "05_Complex/Inv_Small_Cash.xml:363" }
+  ],
+  "cases": [
+    {
+      "name": "pending-oi-01-open-shift-allows-create",
+      "status": "pending-evidence",
+      "pendingOn": "OI-01",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CreateFullInvoice",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [ { "serviceId": "1001", "qty": 1 } ],
+        "operatorContext": { "userNo": 990001, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "A0100000000000000000000000000000" },
+        "requestId": "10100000000000000000000000000001",
+        "parameters": { "invAdmin": 2 }
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "IS_PACKAGE": 0 } },
+          { "table": "CASHIER_SHIFT", "key": { "USER_NO": 990001, "SHIFT_STATUS": 2 }, "columns": { "INFO_CENTER_ID": "1" } }
+        ],
+        "context": [
+          { "bil_cashier_shift.shift_open": true }
+        ]
+      },
+      "expected": {}
+    },
+    {
+      "name": "pending-oi-01-no-open-shift-refuses-create",
+      "status": "pending-evidence",
+      "pendingOn": "OI-01",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CreateFullInvoice",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [ { "serviceId": "1001", "qty": 1 } ],
+        "operatorContext": { "userNo": 990002, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "A0100000000000000000000000000000" },
+        "requestId": "10100000000000000000000000000002",
+        "parameters": { "invAdmin": 2 }
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "IS_PACKAGE": 0 } },
+          { "table": "CASHIER_SHIFT", "key": { "USER_NO": 990002, "SHIFT_STATUS": 2 }, "columns": {}, "exists": false }
+        ],
+        "context": [
+          { "bil_cashier_shift.shift_open": false }
+        ]
+      },
+      "expected": {}
+    },
+    {
+      "name": "pending-oi-01-invoice-admin-without-shift",
+      "status": "pending-evidence",
+      "pendingOn": "OI-01",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CreateFullInvoice",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [ { "serviceId": "1001", "qty": 1 } ],
+        "operatorContext": { "userNo": 990003, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "A0100000000000000000000000000000" },
+        "requestId": "10100000000000000000000000000003",
+        "parameters": { "invAdmin": 1 }
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "IS_PACKAGE": 0 } },
+          { "table": "CASHIER_SHIFT", "key": { "USER_NO": 990003, "SHIFT_STATUS": 2 }, "columns": {}, "exists": false }
+        ],
+        "context": [
+          { "bil_cashier_shift.shift_open": false }
+        ]
+      },
+      "expected": {},
+      "decision": "D-25"
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome"] }
+}

@@ -1,0 +1,1524 @@
+/* Base */
+:root {
+  --color-page-bg: #eef3f8;
+  --color-text: #1b2733;
+  --color-panel-bg: #dbe9f6;
+  --color-panel-border: #8fb0cf;
+  --color-subpanel-bg: #eaf2fa;
+  --color-title-bg: #245a8d;
+  --color-title-text: #ffffff;
+  --color-heading: #0d4a86;
+  --color-input-bg: #ffffff;
+  /* Field borders at least 3:1 against the panel, sub-panel and current-row fills (D-134). */
+  --color-input-border: #557799;
+  --color-input-hover-bg: #f3f8fd;
+  --color-input-hover-border: #33587d;
+  --color-input-active-border: #0b3d73;
+  --color-readonly-bg: #cdd6df;
+  --color-readonly-border: #9aa9b8;
+  --color-readonly-text: #2f3a45;
+  --color-disabled-bg: #f1f4f7;
+  --color-disabled-border: #76889b;
+  --color-disabled-text: #55616d;
+  --color-button-bg: #e3eef9;
+  /* Button hover and pressed states change fill and border (D-134). */
+  --color-button-hover-bg: #b8d3ee;
+  --color-button-hover-border: #0b3d73;
+  --color-button-border: #5d82a8;
+  --color-button-text: #0b3d73;
+  --color-button-active-bg: #97bbe0;
+  --color-button-active-border: #0b3d73;
+  --color-focus: #1a5fb4;
+  --color-grid-border: #b5c8da;
+  --color-grid-header-bg: #c9ddef;
+  --color-grid-header-text: #0d3b66;
+  --color-current-row-bg: #cfe5fa;
+  --color-current-row-accent: #1f5f9e;
+  --color-row-active-bg: #b3d2f0;
+  /* Hovered LOV row fill and first-cell accent (D-134). */
+  --color-row-hover-bg: #e1e8ef;
+  --color-row-hover-accent: #5d82a8;
+  --color-error-text: #a3221b;
+  --color-error-bg: #fdecea;
+  --color-error-border: #b3261e;
+  --color-warning-text: #6e4400;
+  --color-warning-bg: #fff5d1;
+  --color-warning-border: #d9b85a;
+  --color-success-text: #1b5e20;
+  --color-success-bg: #e8f5e9;
+  --color-success-border: #2e7d32;
+  --color-dismiss-hover-bg: rgb(15 30 45 / 0.1);
+  --color-dismiss-active-bg: rgb(15 30 45 / 0.16);
+  --color-banner-bg: #8b1a1a;
+  --color-banner-text: #ffffff;
+  --color-notice-bg: #e8eef5;
+  --color-notice-border: #4f6f96;
+  --color-notice-text: #1f3147;
+  --color-status-bg: #fdf3c4;
+  --color-status-border: #c9a93c;
+  --color-backdrop: rgb(15 30 45 / 0.45);
+  --color-modal-bg: #ffffff;
+  --color-separator: var(--color-panel-border);
+  --shadow-modal: 0 8px 24px rgb(15 30 45 / 0.35);
+
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --font-size-base: 0.8125rem;
+  --font-size-small: 0.75rem;
+  --font-size-title: 0.9375rem;
+  --line-height-base: 1.4;
+
+  --space-1: 0.125rem;
+  --space-2: 0.25rem;
+  --space-3: 0.375rem;
+  --space-4: 0.5rem;
+  --space-5: 0.75rem;
+  --space-6: 1rem;
+
+  --radius: 3px;
+  --border-width: 1px;
+  --field-label-size: 9rem;
+  --field-value-min-size: 5.5rem;
+  --field-code-size: 6rem;
+  --field-button-room: 3rem;
+  /* Target sizes: 24px floor, 44px with a coarse pointer and in the action bar (D-134). */
+  --control-block-size: max(1.5rem, calc(var(--font-size-base) * var(--line-height-base) + 2 * var(--space-1) + 2 * var(--border-width)));
+  --target-size: 1.5rem;
+  --action-target-size: 2.75rem;
+  --grid-row-size: 1.875rem;
+  --grid-header-size: var(--grid-row-size);
+  --lines-col-code-size: 4.5rem;
+  --lines-col-name-size: 4.25rem;
+  --lines-col-desc-size: 7rem;
+  --lines-col-qty-size: 5.5rem;
+  --lines-col-price-size: 4.5rem;
+  --lines-col-choice-size: 4.5rem;
+  --lines-col-disc-size: 4.25rem;
+  --lines-col-amount-size: 4.5rem;
+  --lines-col-rate-size: 4.75rem;
+  --lines-col-action-size: 4.75rem;
+  /* Sum of the InvoiceLinesGrid column sizes; Servicedesc takes the width above it (D-158). */
+  --lines-grid-min-size: calc(
+    2 * var(--lines-col-code-size) + var(--lines-col-name-size) + var(--lines-col-desc-size) +
+      var(--lines-col-qty-size) + var(--lines-col-price-size) + var(--lines-col-choice-size) +
+      2 * var(--lines-col-disc-size) + 5 * var(--lines-col-amount-size) + 2 * var(--lines-col-rate-size) +
+      var(--lines-col-action-size)
+  );
+  --method-code-size: 3.5rem;
+  --method-fill-size: 6rem;
+  --column-min-size: 26rem;
+  --lov-accent-width: 3px;
+  --connectivity-banner-reserve: calc(var(--font-size-base) * 1.4 + 2 * var(--space-4));
+  --header-col-size: 28rem;
+  --header-label-size: 7rem;
+  --header-flags-size: 6rem;
+  --header-flags-message-size: 9rem;
+  --waiting-panel-size: 22.5rem;
+  --waiting-label-size: 5rem;
+  --totals-panel-size: 16rem;
+  --payment-panel-size: 29.5rem;
+  --modal-padding: var(--space-5);
+  --button-padding-inline: var(--space-4);
+  --panel-padding: var(--space-4);
+  --panel-inset: calc(var(--panel-padding) + var(--border-width));
+  --gap-actions: var(--space-3);
+  --action-status-basis: 25%;
+  --transition-fast: 150ms ease-out;
+}
+
+/* From a 96rem viewport the price, discount, amount and rate line columns are 5rem wide (D-158). */
+@media (min-width: 96rem) {
+  :root {
+    --lines-col-price-size: 5rem;
+    --lines-col-disc-size: 5rem;
+    --lines-col-amount-size: 5rem;
+    --lines-col-rate-size: 5rem;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-padding-block-start: var(--outcome-strip-block-size, auto);
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-page-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-base);
+}
+
+:where(button, input, select, textarea) {
+  font: inherit;
+  color: inherit;
+}
+
+:where(input:not([type="checkbox"], [type="radio"]), select, textarea) {
+  inline-size: 100%;
+  min-inline-size: 0;
+  min-block-size: var(--control-block-size);
+  margin: 0;
+  padding-block: var(--space-1);
+  padding-inline: var(--space-2);
+  border: var(--border-width) solid var(--color-input-border);
+  border-radius: 0;
+  background-color: var(--color-input-bg);
+}
+
+:where(input:not([type="checkbox"], [type="radio"]), select) {
+  block-size: var(--control-block-size);
+}
+
+:where(input[type="checkbox"], input[type="radio"]) {
+  margin: 0;
+  accent-color: var(--color-title-bg);
+}
+
+/* Read-only: read-only fill and border, ellipsis for overflowing values. */
+:where(input[readonly], textarea[readonly]) {
+  border-color: var(--color-readonly-border);
+  background-color: var(--color-readonly-bg);
+  color: var(--color-readonly-text);
+  text-overflow: ellipsis;
+  cursor: default;
+}
+
+/* Disabled: dashed border on the disabled fill; `.read-only` controls keep the read-only look. */
+:where(
+    input:not([type="checkbox"], [type="radio"], .read-only):disabled,
+    select:not(.read-only):disabled,
+    textarea:not(.read-only):disabled
+  ) {
+  border-style: dashed;
+  border-color: var(--color-disabled-border);
+  background-color: var(--color-disabled-bg);
+  color: var(--color-disabled-text);
+  opacity: 1;
+  cursor: default;
+}
+
+/* Disabled checkboxes and radios: a 13px box with a 7px mark shown when checked. */
+:where(input[type="checkbox"]:disabled, input[type="radio"]:disabled) {
+  appearance: none;
+  position: relative;
+  display: inline-block;
+  inline-size: 13px;
+  block-size: 13px;
+  border: var(--border-width) dashed var(--color-disabled-border);
+  border-radius: 0;
+  background-color: var(--color-disabled-bg);
+  opacity: 1;
+  cursor: default;
+}
+
+:where(input[type="radio"]:disabled) {
+  border-radius: 50%;
+}
+
+:where(input[type="checkbox"]:disabled, input[type="radio"]:disabled)::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  inline-size: 7px;
+  block-size: 7px;
+  background-color: var(--color-disabled-text);
+  transform: scale(0);
+}
+
+:where(input[type="checkbox"]:disabled)::before {
+  clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+}
+
+:where(input[type="radio"]:disabled)::before {
+  border-radius: 50%;
+}
+
+:where(input[type="checkbox"]:disabled:checked, input[type="radio"]:disabled:checked)::before {
+  transform: scale(1);
+}
+
+:where(button) {
+  min-inline-size: var(--target-size);
+  min-block-size: var(--control-block-size);
+  margin: 0;
+  padding-block: var(--space-1);
+  padding-inline: var(--button-padding-inline);
+  border: var(--border-width) solid var(--color-button-border);
+  border-radius: var(--radius);
+  background-color: var(--color-button-bg);
+  color: var(--color-button-text);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+button:disabled,
+button[aria-disabled="true"] {
+  border-style: dashed;
+  border-color: var(--color-disabled-border);
+  background-color: var(--color-disabled-bg);
+  color: var(--color-disabled-text);
+  opacity: 1;
+  cursor: default;
+  pointer-events: none;
+}
+
+:where(button, input, select, textarea, a, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
+}
+
+@media (hover: hover) {
+  :where(button:not(:disabled, [aria-disabled="true"])):hover {
+    border-color: var(--color-button-hover-border);
+    background-color: var(--color-button-hover-bg);
+  }
+
+  :where(
+      input:not([type="checkbox"], [type="radio"], [readonly], :disabled),
+      select:not(:disabled),
+      textarea:not([readonly], :disabled)
+    ):hover {
+    border-color: var(--color-input-hover-border);
+    background-color: var(--color-input-hover-bg);
+  }
+}
+
+:where(button:not(:disabled, [aria-disabled="true"])):active,
+:where(button)[aria-pressed="true"] {
+  border-color: var(--color-button-active-border);
+  background-color: var(--color-button-active-bg);
+}
+
+:where(
+    input:not([type="checkbox"], [type="radio"], [readonly], :disabled),
+    select:not(:disabled),
+    textarea:not([readonly], :disabled)
+  ):active {
+  border-color: var(--color-input-active-border);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  :where(button, input:not([type="checkbox"], [type="radio"]), select, textarea) {
+    transition:
+      background-color var(--transition-fast),
+      border-color var(--transition-fast);
+  }
+}
+
+/* Shell */
+html:has(.connectivity-banner) {
+  scroll-padding-block-end: calc(var(--connectivity-banner-size, var(--connectivity-banner-reserve)) + var(--space-4));
+}
+
+.app {
+  inline-size: 100%;
+  max-inline-size: 100rem;
+  margin-inline: auto;
+  padding-block: var(--space-5);
+  padding-block-end: calc(var(--space-5) + var(--connectivity-banner-size, var(--connectivity-banner-reserve)));
+  padding-inline: var(--space-5);
+}
+
+.screen {
+  --screen-padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--screen-padding);
+  border: var(--border-width) solid var(--color-panel-border);
+  border-radius: var(--radius);
+  background-color: var(--color-panel-bg);
+}
+
+.screen-title,
+.modal-title {
+  margin: 0;
+  padding-block: var(--space-3);
+  padding-inline: var(--space-5);
+  border-start-start-radius: var(--radius);
+  border-start-end-radius: var(--radius);
+  background-color: var(--color-title-bg);
+  color: var(--color-title-text);
+  font-size: var(--font-size-title);
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.screen-title {
+  margin-block: calc(-1 * var(--screen-padding, var(--space-5))) 0;
+  margin-inline: calc(-1 * var(--screen-padding, var(--space-5)));
+}
+
+/* Invoice layout */
+/* Columns from --header-col-size and the flag column from --header-flags-size, stacking when narrow (D-124, D-168). */
+.header-grid {
+  --field-label-size: var(--header-label-size);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4) var(--space-6);
+  align-items: flex-start;
+}
+
+.header-col {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 var(--header-col-size);
+  gap: var(--space-3);
+  min-inline-size: 0;
+}
+
+.header-flags {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 var(--header-flags-size);
+  gap: var(--space-3);
+  min-inline-size: 0;
+}
+
+.header-flags:has(.msg, .open-item-notice) {
+  flex-basis: var(--header-flags-message-size);
+}
+
+.header-flags .field {
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: start;
+}
+
+.header-flags .field > label:first-child {
+  text-align: start;
+}
+
+.header-flags .field > :nth-child(n + 3) {
+  grid-column: 1;
+}
+
+.field {
+  display: grid;
+  grid-template-columns: var(--field-label-size) minmax(0, 1fr);
+  column-gap: var(--space-4);
+  row-gap: var(--space-1);
+  align-items: center;
+}
+
+/* Labels of multi-control fields line up with the first line of their row (D-167). */
+.field:has(> .field-row) {
+  align-items: baseline;
+}
+
+.field > label:first-child,
+.field > .field-caption:first-child {
+  text-align: end;
+  overflow-wrap: break-word;
+}
+
+.field > .field-caption:first-child {
+  cursor: default;
+}
+
+.field > :nth-child(n + 3) {
+  grid-column: 2;
+}
+
+.field-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-inline-size: 0;
+}
+
+.field-row > :where(input:not([type="checkbox"], [type="radio"]), select, .read-only) {
+  flex: 1 1 0;
+  min-inline-size: var(--target-size);
+}
+
+.field-row > :where(input:not([type="checkbox"], [type="radio"]), select):first-child:not(:only-child) {
+  flex: 0 1 var(--field-code-size);
+}
+
+.field-row > :where(button, input[type="checkbox"], input[type="radio"], label) {
+  flex: none;
+}
+
+.field-row > label:has(> :is(input[type="radio"], input[type="checkbox"])) {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-block-size: var(--target-size);
+}
+
+.choice-group {
+  column-gap: var(--space-5);
+}
+
+.choice-group > label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Companion values after a field's first control keep a readable minimum width (D-167). */
+.field > .field-row > :where(input:not([type="checkbox"], [type="radio"]), select, .read-only):not(:first-child) {
+  min-inline-size: var(--field-value-min-size);
+}
+
+/* A label kept on one line with its control inside a field row (D-167). */
+.field-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1 1 0;
+}
+
+.field-group > :where(input:not([type="checkbox"], [type="radio"]), select) {
+  flex: 1 1 0;
+  min-inline-size: var(--field-value-min-size);
+}
+
+.field-group > label {
+  flex: none;
+}
+
+/* Header and lower-band labels above their controls, and header names on their own line, on narrow viewports (D-167). */
+@media (max-width: 30rem) {
+  :is(.header-grid, .lower-band) .field {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  :is(.header-grid, .lower-band) .field > :is(label, .field-caption):first-child {
+    text-align: start;
+  }
+
+  :is(.header-grid, .lower-band) .field > :nth-child(n + 3) {
+    grid-column: 1;
+  }
+
+  .header-grid .field > .field-row > input:nth-child(2):is(:last-child, :has(+ button)) {
+    flex-basis: calc(100% - var(--field-button-room));
+  }
+}
+
+.check-field {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.check-field > :where(.msg, .open-item-notice) {
+  flex-basis: 100%;
+}
+
+/* Lines scroller; its block-start scroll padding keeps a focused row below the sticky header, and its inline size bounds the empty-state text (D-137). */
+.lines-grid-scroll {
+  container-type: inline-size;
+  max-block-size: calc(var(--grid-row-size) * 5 + var(--grid-header-size) + 2 * var(--border-width));
+  overflow-x: auto;
+  /* Vertical scrollbar always shown (D-142). */
+  overflow-y: scroll;
+  scroll-padding-block-start: var(--grid-header-size);
+  border: var(--border-width) solid var(--color-panel-border);
+  background-color: var(--color-input-bg);
+  container-type: inline-size;
+}
+
+.lines-grid {
+  inline-size: 100%;
+  min-inline-size: var(--lines-grid-min-size);
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.lines-grid col.lines-col-code {
+  inline-size: var(--lines-col-code-size);
+}
+
+.lines-grid col.lines-col-name {
+  inline-size: var(--lines-col-name-size);
+}
+
+.lines-grid col.lines-col-desc {
+  inline-size: auto;
+}
+
+.lines-grid col.lines-col-qty {
+  inline-size: var(--lines-col-qty-size);
+}
+
+.lines-grid col.lines-col-price {
+  inline-size: var(--lines-col-price-size);
+}
+
+.lines-grid col.lines-col-choice {
+  inline-size: var(--lines-col-choice-size);
+}
+
+.lines-grid col.lines-col-disc {
+  inline-size: var(--lines-col-disc-size);
+}
+
+.lines-grid col.lines-col-amount {
+  inline-size: var(--lines-col-amount-size);
+}
+
+.lines-grid col.lines-col-rate {
+  inline-size: var(--lines-col-rate-size);
+}
+
+.lines-grid col.lines-col-action {
+  inline-size: var(--lines-col-action-size);
+}
+
+.lines-grid th,
+.lines-grid td,
+.lov-table th,
+.lov-table td {
+  block-size: var(--grid-row-size);
+  padding-block: var(--space-1);
+  padding-inline: var(--space-1);
+  border-block-end: var(--border-width) solid var(--color-grid-border);
+  border-inline-end: var(--border-width) solid var(--color-grid-border);
+  text-align: start;
+  vertical-align: middle;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lines-grid :where(th, td):last-child,
+.lov-table :where(th, td):last-child {
+  border-inline-end-width: 0;
+}
+
+.lines-grid th,
+.lines-grid td {
+  white-space: nowrap;
+}
+
+.lines-grid :where(th, td):first-child {
+  border-inline-start: 3px solid transparent;
+}
+
+.lines-grid thead th {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 1;
+  background-color: var(--color-grid-header-bg);
+  color: var(--color-grid-header-text);
+  font-weight: 700;
+}
+
+.lines-grid .field-row {
+  flex-wrap: nowrap;
+}
+
+.lines-grid :where(input) {
+  text-overflow: ellipsis;
+}
+
+.lines-grid :where(button) {
+  max-inline-size: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lines-grid td > :where(input:not([type="checkbox"], [type="radio"]), select) {
+  display: block;
+}
+
+.lines-grid :where(button, input, select):focus-visible {
+  outline-offset: -2px;
+}
+
+/* Focus ring inside the invalid border of a grid control (D-137). */
+.lines-grid .invalid:focus-visible {
+  outline-offset: calc(-2px - var(--border-width));
+}
+
+/* Line message row (D-120): its content stays within the scroller's visible width at any horizontal scroll. */
+.lines-grid td.line-messages-cell {
+  block-size: auto;
+  overflow: visible;
+  white-space: normal;
+  text-overflow: clip;
+}
+
+.line-messages {
+  position: sticky;
+  inset-inline-start: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  inline-size: calc(100cqi - 3px - 2 * var(--space-2));
+}
+
+/* Line message captions above their messages in a narrow lines scroller (D-142). */
+@container (max-width: 30rem) {
+  .line-messages > .field {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .line-messages > .field > .field-caption:first-child {
+    text-align: start;
+  }
+
+  .line-messages > .field > :nth-child(n + 2) {
+    grid-column: 1;
+  }
+}
+
+.lines-grid tr.current-line > td {
+  background-color: var(--color-current-row-bg);
+}
+
+.lines-grid tr.current-line > td:first-child {
+  border-inline-start-color: var(--color-current-row-accent);
+}
+
+/* Empty-state cell; its text stays at the scroller's inline start and wraps within the scroller's width (D-137). */
+.lines-grid td.lines-grid-empty {
+  overflow: visible;
+  color: var(--color-readonly-text);
+}
+
+.lines-grid td.lines-grid-empty > span {
+  display: inline-block;
+  position: sticky;
+  inset-inline-start: calc(3px + var(--space-2));
+  max-inline-size: calc(100cqi - 2 * var(--space-4));
+  white-space: normal;
+}
+
+/* Spacer cell holding the size of the lines not rendered (D-181). */
+.lines-grid .lines-spacer > td {
+  padding: 0;
+  border: 0;
+}
+
+.grid-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+}
+
+.grid-note > .open-item-notice {
+  margin-block: 0;
+}
+
+.summary-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+}
+
+.totals-panel .summary-row {
+  flex-wrap: nowrap;
+  justify-content: space-between;
+}
+
+/* Payment Status caption keeps its width; the status beside it wraps (D-174). */
+.totals-panel .summary-status > :first-child {
+  flex: none;
+}
+
+/* Waiting List, Totals and Payment panels from their basis sizes, wrapping when narrow (D-124, D-168). */
+.lower-band {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4) var(--space-6);
+  align-items: flex-start;
+}
+
+.waiting-list-panel {
+  --field-label-size: var(--waiting-label-size);
+  flex: 1 1 var(--waiting-panel-size);
+}
+
+.totals-panel {
+  flex: 1 1 var(--totals-panel-size);
+}
+
+.payment-panel {
+  flex: 1 1 var(--payment-panel-size);
+}
+
+.waiting-list-panel,
+.totals-panel,
+.payment-panel,
+.more-grid > section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-inline-size: 0;
+  padding: var(--panel-padding);
+  border: var(--border-width) solid var(--color-panel-border);
+  border-radius: var(--radius);
+  background-color: var(--color-subpanel-bg);
+}
+
+:is(.totals-panel, .payment-panel, .more-grid > section) .field {
+  grid-template-columns: calc(var(--field-label-size) - var(--panel-inset)) minmax(0, 1fr);
+}
+
+/* Totals values: end-aligned tabular digits in one column whose width is the widest value; the payment status row keeps its own layout (D-150). */
+.totals-panel .summary-row > .read-only {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+@supports (grid-template-columns: subgrid) {
+  .totals-panel {
+    display: grid;
+    grid-template-columns: minmax(min-content, 1fr) auto;
+    column-gap: var(--space-4);
+  }
+
+  .totals-panel > * {
+    grid-column: 1 / -1;
+  }
+
+  .totals-panel > .summary-row:not(.summary-status) {
+    display: grid;
+    grid-template-columns: subgrid;
+  }
+}
+
+.payment-panel .field-row > .method-code {
+  flex: 0 0 var(--method-code-size);
+}
+
+.payment-panel .field-row > .method-fill {
+  flex: 1 1 var(--method-fill-size);
+}
+
+/* Payment inputs, editable ones included, end an overflowing value with an ellipsis. */
+.payment-panel :where(input) {
+  text-overflow: ellipsis;
+}
+
+.panel-title {
+  padding-block-end: var(--space-2);
+  border-block-end: var(--border-width) solid var(--color-separator);
+  color: var(--color-heading);
+  font-weight: 700;
+}
+
+.action-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gap-actions);
+  padding-block-start: var(--space-4);
+  border-block-start: var(--border-width) solid var(--color-separator);
+}
+
+.action-bar > :where(button) {
+  min-inline-size: var(--action-target-size);
+  min-block-size: var(--action-target-size);
+}
+
+/* Action-bar label and control kept on one row as a single item; the bar's control width applies inside it. */
+.action-group {
+  display: inline-flex;
+  flex: none;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.action-bar .action-group > :where(input:not([type="checkbox"], [type="radio"]), select) {
+  flex: none;
+  inline-size: 4.5rem;
+  min-block-size: var(--action-target-size);
+}
+
+/* Action-bar payment status: from --action-status-basis of the bar, growing into the room left on its row up to its one-line width (D-174). */
+.action-bar > .payment-status {
+  flex: 1 1 var(--action-status-basis);
+  max-inline-size: max-content;
+}
+
+/* More details layout */
+/* Columns with a minimum of --column-min-size capped at 100% of the width, stacking when narrow, at most two (D-124, D-158). */
+.more-grid {
+  display: grid;
+  grid-template-columns: repeat(
+    auto-fit,
+    minmax(max(min(100%, var(--column-min-size)), calc((100% + var(--space-6)) / 3)), 1fr)
+  );
+  grid-template-rows: auto 1fr;
+  gap: var(--space-4) var(--space-6);
+  align-items: start;
+}
+
+/* Current Line spans two rows, so the section after it fills the cell under the first section (D-124). */
+.more-grid > .more-current-line {
+  grid-row: span 2;
+}
+
+/* Field states */
+.read-only {
+  border-color: var(--color-readonly-border);
+  background-color: var(--color-readonly-bg);
+  color: var(--color-readonly-text);
+  text-overflow: ellipsis;
+  cursor: default;
+}
+
+.read-only:disabled {
+  border-style: solid;
+  opacity: 1;
+}
+
+:is(input[type="checkbox"], input[type="radio"]).read-only:disabled::before {
+  background-color: var(--color-readonly-text);
+}
+
+.read-only.invno-saved {
+  color: var(--color-heading);
+  font-weight: 700;
+}
+
+:is(span, div, output).read-only {
+  display: inline-block;
+  min-inline-size: 5rem;
+  min-block-size: var(--control-block-size);
+  padding-block: var(--space-1);
+  padding-inline: var(--space-2);
+  border: var(--border-width) solid var(--color-readonly-border);
+  overflow-wrap: anywhere;
+}
+
+.invalid {
+  border-color: var(--color-error-border);
+  border-inline-start-width: 3px;
+  box-shadow: 0 0 0 1px var(--color-error-border);
+}
+
+/* Messages */
+.msg {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin-block-start: var(--space-1);
+  padding-block: var(--space-1);
+  padding-inline: var(--space-3);
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius);
+  font-size: var(--font-size-small);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.msg:not(.msg-blocking, .msg-warning) {
+  padding-inline: 0;
+  border-inline-width: 0;
+}
+
+.msg-blocking {
+  border-color: var(--color-error-border);
+  border-inline-start-width: 4px;
+  background-color: var(--color-error-bg);
+  color: var(--color-error-text);
+}
+
+.msg-warning {
+  border-color: var(--color-warning-border);
+  background-color: var(--color-warning-bg);
+  color: var(--color-warning-text);
+}
+
+/* Severity badge: filled for Blocking, outlined for Warning. */
+.msg-severity {
+  flex: none;
+  padding-inline: var(--space-2);
+  border: var(--border-width) solid;
+  border-radius: var(--radius);
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.msg-severity-blocking {
+  border-color: var(--color-error-border);
+  background-color: var(--color-error-border);
+  color: var(--color-banner-text);
+}
+
+.msg-severity-warning {
+  border-color: var(--color-warning-text);
+  background-color: transparent;
+  color: var(--color-warning-text);
+}
+
+.msg-dismiss {
+  flex: none;
+  margin-inline-start: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: var(--target-size);
+  min-block-size: var(--target-size);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background-color: transparent;
+  color: inherit;
+  font-size: 0.875rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+@media (hover: hover) {
+  .msg-dismiss:hover {
+    background-color: var(--color-dismiss-hover-bg);
+    box-shadow: inset 0 0 0 var(--border-width) currentColor;
+  }
+}
+
+.msg-dismiss:active {
+  background-color: var(--color-dismiss-active-bg);
+}
+
+.form-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+  padding-block: var(--space-4);
+  padding-inline: var(--space-5);
+  border: var(--border-width) solid var(--color-error-border);
+  border-inline-start-width: 4px;
+  border-radius: var(--radius);
+  background-color: var(--color-error-bg);
+  color: var(--color-error-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.form-error > :where(button):last-child {
+  margin-inline-start: auto;
+}
+
+.oracle-number {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* Notices */
+/* Status line fixed to the viewport bottom above modals; its hidden twin sizes the room the page and the modal backdrop keep for it (D-159). */
+.connectivity-banner,
+.connectivity-banner-sizer {
+  position: fixed;
+  inset-inline: 0;
+  inset-block-end: 0;
+  z-index: 1100;
+  padding-block: var(--space-4);
+  padding-inline: var(--space-5);
+  background-color: var(--color-banner-bg);
+  color: var(--color-banner-text);
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.connectivity-banner-sizer {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.open-item-notice {
+  margin-block: var(--space-1) 0;
+  margin-inline: 0;
+  padding-block: var(--space-2);
+  padding-inline: var(--space-4);
+  border-inline-start: 4px solid var(--color-notice-border);
+  border-radius: var(--radius);
+  background-color: var(--color-notice-bg);
+  color: var(--color-notice-text);
+  font-size: var(--font-size-small);
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+
+.open-item-notice > li + li {
+  margin-block-start: var(--space-1);
+}
+
+/* Payment status pill; its text wraps inside the Totals row or the action bar, and a one-line pill keeps fully rounded ends (D-150, D-174). */
+.payment-status {
+  display: inline-block;
+  max-inline-size: 100%;
+  padding-block: var(--space-1);
+  padding-inline: var(--space-4);
+  border: var(--border-width) solid var(--color-status-border);
+  border-radius: calc(0.5lh + var(--space-1) + var(--border-width));
+  background-color: var(--color-status-bg);
+  color: var(--color-grid-header-text);
+  font-size: var(--font-size-small);
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.payment-status:empty {
+  display: none;
+}
+
+.open-item-notice__item--recent {
+  margin-inline: calc(-1 * var(--space-2));
+  padding-inline: var(--space-2);
+  border-radius: var(--radius);
+  background-color: var(--color-status-bg);
+  font-weight: 700;
+}
+
+/* Outcomes */
+/* Sticky strip at most 40% of the viewport tall, scrolling its own content beyond that (D-143, D-174). */
+.outcome-strip {
+  position: sticky;
+  inset-block-start: var(--outcome-strip-offset, 0px);
+  z-index: 800;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-block-size: 40vh;
+  overflow-y: auto;
+  margin-inline: calc(-1 * var(--screen-padding, var(--space-5)));
+  padding-block: var(--space-3);
+  padding-inline: var(--screen-padding, var(--space-5));
+  border-block-end: var(--border-width) solid var(--color-panel-border);
+  background-color: var(--color-panel-bg);
+}
+
+.saved-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-5);
+  padding-block: var(--space-4);
+  padding-inline: var(--space-5);
+  border: var(--border-width) solid var(--color-success-border);
+  border-inline-start-width: 4px;
+  border-radius: var(--radius);
+  background-color: var(--color-success-bg);
+  color: var(--color-success-text);
+  font-size: var(--font-size-title);
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.saved-status-message {
+  font-size: var(--font-size-base);
+  font-weight: 600;
+}
+
+/* Outcome text, then its dismiss button at the end (D-174). */
+.outcome-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding-block: var(--space-3);
+  padding-inline: var(--space-5);
+  border: var(--border-width) solid var(--color-notice-border);
+  border-inline-start-width: 4px;
+  border-radius: var(--radius);
+  background-color: var(--color-notice-bg);
+  color: var(--color-notice-text);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* In-flow import result, at most 40% of the viewport tall, scrolling its own content beyond that (D-191). */
+.import-result {
+  max-block-size: 40vh;
+  overflow-y: auto;
+}
+
+@keyframes outcome-flash {
+  from {
+    background-color: var(--color-status-bg);
+    box-shadow: 0 0 0 2px var(--color-status-border);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .outcome-flash {
+    animation: outcome-flash 1.2s ease-out;
+  }
+}
+
+
+/* Modals */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+  overflow: hidden;
+  overscroll-behavior: contain;
+  padding-block-end: calc(var(--space-6) + var(--connectivity-banner-size, var(--connectivity-banner-reserve)));
+  background-color: var(--color-backdrop);
+}
+
+.modal {
+  display: flex;
+  flex-direction: column;
+  min-inline-size: min(26.25rem, 100%);
+  max-inline-size: min(48rem, 100%);
+  max-block-size: min(80vh, 100%);
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: var(--border-width) solid var(--color-panel-border);
+  border-radius: var(--radius);
+  background-color: var(--color-modal-bg);
+  box-shadow: var(--shadow-modal);
+}
+
+.modal-title {
+  flex: none;
+}
+
+.modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  flex: 1 1 auto;
+  min-block-size: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: var(--modal-padding);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.modal-actions {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--gap-actions);
+  padding-block: var(--space-4);
+  padding-inline: var(--space-5);
+  border-block-start: var(--border-width) solid var(--color-separator);
+}
+
+.lov-modal {
+  inline-size: min(48rem, 100%);
+  block-size: min(80vh, 36rem);
+}
+
+.lov-filter {
+  flex: none;
+  inline-size: 100%;
+}
+
+.lov-scroll {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.lov-table {
+  inline-size: 100%;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.lov-table th,
+.lov-table td {
+  white-space: pre;
+}
+
+.lov-table :where(th, td):first-child {
+  border-inline-start: var(--lov-accent-width) solid transparent;
+}
+
+.lov-table thead th {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 1;
+  background-color: var(--color-grid-header-bg);
+  color: var(--color-grid-header-text);
+  font-weight: 700;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+}
+
+.lov-table .lov-spacer > td {
+  padding: 0;
+  border: 0;
+}
+
+.lov-empty {
+  padding-block: var(--space-2);
+  padding-inline: calc(var(--space-4) + var(--lov-accent-width)) var(--space-4);
+  color: var(--color-readonly-text);
+}
+
+.lov-row {
+  cursor: pointer;
+}
+
+.lov-row > td {
+  block-size: var(--grid-row-size);
+}
+
+.lov-pick {
+  display: block;
+  inline-size: 100%;
+  min-block-size: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background-color: transparent;
+  color: inherit;
+  font-weight: inherit;
+  text-align: start;
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: inherit;
+}
+
+.lov-pick:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
+}
+
+@media (hover: hover) {
+  .lov-pick:hover {
+    background-color: transparent;
+  }
+}
+
+.lov-pick:active {
+  border-color: transparent;
+  background-color: transparent;
+}
+
+.lov-row-selected {
+  background-color: var(--color-current-row-bg);
+}
+
+.lov-row-selected > td:first-child {
+  border-inline-start-color: var(--color-current-row-accent);
+}
+
+.lov-view-only,
+.lov-view-only .lov-row {
+  cursor: default;
+}
+
+@media (hover: hover) {
+  .lov-row:not(.lov-row-selected):hover {
+    background-color: var(--color-row-hover-bg);
+  }
+
+  .lov-row:not(.lov-row-selected):hover > td:first-child {
+    border-inline-start-color: var(--color-row-hover-accent);
+  }
+
+  .lov-view-only .lov-row:not(.lov-row-selected):hover {
+    background-color: transparent;
+  }
+
+  .lov-view-only .lov-row:not(.lov-row-selected):hover > td:first-child {
+    border-inline-start-color: transparent;
+  }
+}
+
+.lov-row:not(.lov-view-only *):active {
+  background-color: var(--color-row-active-bg);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .lov-row {
+    transition: background-color var(--transition-fast);
+  }
+}
+
+.discount-prompt {
+  max-inline-size: min(32rem, 100%);
+}
+
+/* Busy and pending states (D-146) */
+:root {
+  --busy-status-max-inline-size: 9rem;
+}
+
+.busy-anchor {
+  position: relative;
+  block-size: 0;
+}
+
+/* The title band of the screen after the anchor keeps the chip's inline end free, so a narrow title wraps instead of running under the chip. */
+.busy-anchor + .screen > .screen-title {
+  padding-inline-end: calc(2 * var(--space-5) + var(--busy-status-max-inline-size));
+}
+
+/* Centred in the title band of the screen that follows the anchor. */
+.busy-status {
+  position: absolute;
+  inset-block-start: calc(var(--space-3) - var(--space-1) + (var(--font-size-title) * 1.3 - var(--font-size-small) * 1.4) / 2);
+  inset-inline-end: var(--space-5);
+  max-inline-size: min(calc(100% - 2 * var(--space-5)), var(--busy-status-max-inline-size));
+  padding-block: var(--space-1);
+  padding-inline: var(--space-4);
+  border: var(--border-width) solid transparent;
+  border-radius: 999px;
+  font-size: var(--font-size-small);
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.busy-status:not(:empty) {
+  border-color: var(--color-status-border);
+  background-color: var(--color-status-bg);
+  color: var(--color-grid-header-text);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .busy-status {
+    transition:
+      background-color var(--transition-fast),
+      border-color var(--transition-fast);
+  }
+}
+
+.is-pending {
+  border-style: dashed;
+  background-color: var(--color-status-bg);
+}
+
+:where(input[type="checkbox"], input[type="radio"]).is-pending {
+  box-shadow: 0 0 0 2px var(--color-status-border);
+}
+
+.totals-pending .summary-row > :where(.read-only, .payment-status) {
+  border-style: dashed;
+}
+
+.totals-pending .summary-row > .read-only {
+  background-color: var(--color-status-bg);
+}
+
+.pending-note {
+  margin-inline-start: var(--space-4);
+  color: var(--color-warning-text);
+  font-size: var(--font-size-small);
+  font-weight: 600;
+}
+
+:where(button)[aria-busy="true"] {
+  border-style: dashed;
+  cursor: progress;
+}
+
+/* A button label as wide as the wider of its idle and busy texts; the other text is laid out unseen and unnamed. */
+.busy-label {
+  display: inline-grid;
+  justify-items: center;
+}
+
+.busy-label > *,
+.busy-label::after {
+  grid-area: 1 / 1;
+}
+
+.busy-label::after {
+  content: attr(data-alternate);
+  content: attr(data-alternate) / "";
+  visibility: hidden;
+}
+
+/* Coarse pointers */
+@media (any-pointer: coarse) {
+  :root {
+    --control-block-size: 2.75rem;
+    --target-size: 2.75rem;
+    --grid-row-size: calc(var(--control-block-size) + 2 * var(--space-1) + var(--border-width));
+    --lines-col-code-size: 7rem;
+  }
+
+  :where(input[type="checkbox"], input[type="radio"]) {
+    inline-size: var(--target-size);
+    block-size: var(--target-size);
+  }
+}
+
+/* Forced colours */
+@media (forced-colors: active) {
+  :where(input[readonly], input:disabled, select:disabled, textarea[readonly], textarea:disabled),
+  .read-only,
+  :is(span, div, output).read-only {
+    border-style: dashed;
+  }
+
+  .invalid:not([type="checkbox"], [type="radio"]) {
+    padding-block: 0;
+    padding-inline: var(--space-1);
+    border-width: 3px;
+    border-style: double;
+  }
+
+  :is(input[type="checkbox"], input[type="radio"]).invalid:not(:focus-visible) {
+    outline: 2px dashed CanvasText;
+    outline-offset: 2px;
+  }
+
+  .msg-blocking {
+    border-inline-start-width: 4px;
+  }
+
+  .msg-warning {
+    border-style: dashed;
+  }
+
+  .lines-grid :where(th, td):first-child,
+  .lov-table :where(th, td):first-child,
+  .lov-view-only .lov-row:not(.lov-row-selected):hover > td:first-child {
+    border-inline-start-color: Canvas;
+  }
+
+  .lines-grid tr.current-line > td:first-child,
+  .lov-row-selected > td:first-child {
+    border-inline-start-color: Highlight;
+  }
+
+  .lov-row-selected > td,
+  .lov-row-selected .lov-pick {
+    forced-color-adjust: none;
+    color: HighlightText;
+  }
+
+  .lov-row-selected > td {
+    border-block-end-color: CanvasText;
+    background-color: Highlight;
+  }
+
+  .lov-row-selected .lov-pick:focus-visible {
+    outline-color: HighlightText;
+  }
+}
+

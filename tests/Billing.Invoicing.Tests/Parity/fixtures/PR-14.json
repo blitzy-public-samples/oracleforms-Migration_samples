@@ -1,0 +1,143 @@
+{
+  "id": "PR-14",
+  "class": "package",
+  "source": [
+    { "construct": "BIL_INVOICE_ENGINE.assert_lines_valid", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:542" },
+    { "construct": "-20903", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:550" },
+    { "construct": "-20904", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:560" },
+    { "construct": "-20905", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:569" },
+    { "construct": "BIL_INVOICE_ENGINE.c_max_invoice_qty", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:182" },
+    { "construct": "BIL_INVOICE_ENGINE.preview_invoice assert_lines_valid call", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:3036" },
+    { "construct": "BIL_INVOICE_ENGINE standard-offer line offer_type 1 offer_line_role SERVICE", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1913" },
+    { "construct": "BIL_INVOICE_API.expand_bundled_offer_ig_lines non-bundle row", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:758" },
+    { "construct": "BIL_INVOICE_API.calculate_editable_invoice_preview", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_API.sql:814" },
+    { "construct": "T009 FORM PRE-COMMIT", "locator": "05_Complex/Inv_Small_Cash.xml:1102" },
+    { "construct": "T068 QTY WHEN-VALIDATE-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:396" }
+  ],
+  "cases": [
+    {
+      "name": "no-lines-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "3F9A1C0E5B7D4E2A9C6B8D0F1E2A3B14" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } }
+        ],
+        "context": []
+      },
+      "expected": { "error": { "package": "BIL_INVOICE_ENGINE", "number": -20903, "messagePrefix": "Invoice create failed: at least one service line is required." } }
+    },
+    {
+      "name": "service-missing-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [
+          { "serviceId": null, "qty": 1, "discountType": "R", "offerType": 1, "offerLineRole": "SERVICE" }
+        ],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "3F9A1C0E5B7D4E2A9C6B8D0F1E2A3B14" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } }
+        ],
+        "context": []
+      },
+      "expected": { "error": { "package": "BIL_INVOICE_ENGINE", "number": -20904, "messagePrefix": "Invoice create failed: service ID is required on line " } },
+      "decision": "D-126"
+    },
+    {
+      "name": "zero-quantity-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [
+          { "serviceId": "1001", "qty": 0, "discountType": "R" }
+        ],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "3F9A1C0E5B7D4E2A9C6B8D0F1E2A3B14" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } }
+        ],
+        "context": []
+      },
+      "expected": { "error": { "package": "BIL_INVOICE_ENGINE", "number": -20905, "messagePrefix": "Invoice create failed: quantity must be a positive whole number on line " } }
+    },
+    {
+      "name": "fractional-quantity-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [
+          { "serviceId": "1001", "qty": 1.5, "discountType": "R" }
+        ],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "3F9A1C0E5B7D4E2A9C6B8D0F1E2A3B14" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } }
+        ],
+        "context": []
+      },
+      "expected": { "error": { "package": "BIL_INVOICE_ENGINE", "number": -20905, "messagePrefix": "Invoice create failed: quantity must be a positive whole number on line " } }
+    },
+    {
+      "name": "null-quantity-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [
+          { "serviceId": "1001", "qty": null, "discountType": "R" }
+        ],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "3F9A1C0E5B7D4E2A9C6B8D0F1E2A3B14" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } }
+        ],
+        "context": []
+      },
+      "expected": { "error": { "package": "BIL_INVOICE_ENGINE", "number": -20905, "messagePrefix": "Invoice create failed: quantity must be a positive whole number on line " } }
+    },
+    {
+      "name": "valid-line-passes",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [
+          { "serviceId": "1001", "qty": 2, "discountType": "R" }
+        ],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "3F9A1C0E5B7D4E2A9C6B8D0F1E2A3B14" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001", "LIST_ID": 1 }, "columns": { "IS_PACKAGE": 0 } }
+        ],
+        "context": [
+          { "package": "BIL_SERVICE_CONTEXT", "operation": "get_context", "values": { "serviceid": "1001", "curr_code": "SAR", "is_package": 0 } },
+          { "package": "BIL_PRICE_RULE", "operation": "resolve_price", "values": { "serviceid": "1001", "billing_price": 100.00 } }
+        ]
+      },
+      "expected": { "outcome": "Pass" }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome"] }
+}

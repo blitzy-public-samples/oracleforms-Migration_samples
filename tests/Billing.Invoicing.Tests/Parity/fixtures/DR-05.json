@@ -1,0 +1,65 @@
+{
+  "id": "DR-05",
+  "class": "domain",
+  "source": [
+    { "construct": "T032 DEPT_WISE WHEN-VALIDATE-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:50" },
+    { "construct": "T033 CALL WHEN-VALIDATE-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:53" }
+  ],
+  "cases": [
+    {
+      "name": "gp-flag-non-er-clinic-blocks",
+      "status": "derivable",
+      "input": {
+        "header": { "deptWise": 1, "call": 0, "clinicId": 14 },
+        "clinic": { "clinicId": 14, "sysCatType": "OPD" }
+      },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "DEPT_WISE", "text": "This open for GP at ER Clinic Only", "severity": "Blocking" }] }
+    },
+    {
+      "name": "gp-flag-er-clinic-passes",
+      "status": "derivable",
+      "input": {
+        "header": { "deptWise": 1, "call": 0, "clinicId": 21 },
+        "clinic": { "clinicId": 21, "sysCatType": "ER" }
+      },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "call-flag-only-never-rejects-passes",
+      "status": "derivable",
+      "input": {
+        "header": { "deptWise": 0, "call": 1, "clinicId": 14 },
+        "clinic": { "clinicId": 14, "sysCatType": "OPD" }
+      },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "gp-flag-null-passes",
+      "status": "derivable",
+      "input": {
+        "header": { "deptWise": null, "call": null, "clinicId": 14 },
+        "clinic": { "clinicId": 14, "sysCatType": "OPD" }
+      },
+      "expected": { "outcome": "Pass", "messages": [] }
+    },
+    {
+      "name": "gp-and-call-flags-non-er-clinic-blocks",
+      "status": "derivable",
+      "input": {
+        "header": { "deptWise": 1, "call": 1, "clinicId": 14 },
+        "clinic": { "clinicId": 14, "sysCatType": "OPD" }
+      },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "DEPT_WISE", "text": "This open for GP at ER Clinic Only", "severity": "Blocking" }] }
+    },
+    {
+      "name": "gp-flag-null-category-clinic-blocks",
+      "status": "derivable",
+      "input": {
+        "header": { "deptWise": 1, "call": 0, "clinicId": 30 },
+        "clinic": { "clinicId": 30, "sysCatType": null }
+      },
+      "expected": { "outcome": "Blocking", "messages": [{ "field": "DEPT_WISE", "text": "This open for GP at ER Clinic Only", "severity": "Blocking" }] }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "messages"] }
+}

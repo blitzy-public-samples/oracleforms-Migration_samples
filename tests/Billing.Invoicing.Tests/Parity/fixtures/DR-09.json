@@ -1,0 +1,46 @@
+{
+  "id": "DR-09",
+  "class": "domain",
+  "source": [
+    { "construct": "T_INV.CASH_COLLECTED formula", "locator": "05_Complex/Inv_Small_Cash.xml:97" }
+  ],
+  "cases": [
+    {
+      "name": "both-amounts",
+      "status": "derivable",
+      "input": { "amount1": 100.5, "amount2": 20.25 },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "TOTAL_COLLECTED": 120.75 } }
+    },
+    {
+      "name": "sub-cent-amount-unrounded",
+      "status": "derivable",
+      "input": { "amount1": 1.005, "amount2": 2 },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "TOTAL_COLLECTED": 3.005 } }
+    },
+    {
+      "name": "first-null",
+      "status": "derivable",
+      "input": { "amount1": null, "amount2": 30 },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "TOTAL_COLLECTED": 30 } }
+    },
+    {
+      "name": "second-null",
+      "status": "derivable",
+      "input": { "amount1": 50, "amount2": null },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "TOTAL_COLLECTED": 50 } }
+    },
+    {
+      "name": "both-null",
+      "status": "derivable",
+      "input": { "amount1": null, "amount2": null },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "TOTAL_COLLECTED": 0 } }
+    },
+    {
+      "name": "negative-second-amount",
+      "status": "derivable",
+      "input": { "amount1": 120, "amount2": -20 },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "TOTAL_COLLECTED": 100 } }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "messages"] }
+}

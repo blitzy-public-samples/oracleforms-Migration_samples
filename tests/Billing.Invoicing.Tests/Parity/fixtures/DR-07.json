@@ -1,0 +1,95 @@
+{
+  "id": "DR-07",
+  "class": "domain",
+  "source": [
+    { "construct": "T042 AMOUNT_1 WHEN-VALIDATE-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:81" },
+    { "construct": "T039 FINALDISC_PERC WHEN-VALIDATE-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:74" },
+    { "construct": "T041 FINALDISC WHEN-VALIDATE-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:78" },
+    { "construct": "T065 SERVICEID KEY-NEXT-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:388" },
+    { "construct": "PU20 ROUND_FOR_CASH", "locator": "05_Complex/Inv_Small_Cash.xml:979" },
+    { "construct": "D_INV.NET formula", "locator": "05_Complex/Inv_Small_Cash.xml:416" },
+    { "construct": "BIL_INVOICE_ENGINE.preview_invoice cash_collected", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:3058" }
+  ],
+  "cases": [
+    {
+      "name": "allocate-second-amount-remainder",
+      "status": "derivable",
+      "input": { "method": "AllocateSecondAmount", "amountDue": 150.75, "amount1": 100 },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "AMOUNT_2": 50.75 } }
+    },
+    {
+      "name": "allocate-second-amount-exact-decimals",
+      "status": "derivable",
+      "input": { "method": "AllocateSecondAmount", "amountDue": 99.99, "amount1": 33.33 },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "AMOUNT_2": 66.66 } }
+    },
+    {
+      "name": "allocate-second-amount-first-exceeds-due",
+      "status": "derivable",
+      "input": { "method": "AllocateSecondAmount", "amountDue": 100, "amount1": 120 },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "AMOUNT_2": -20 } }
+    },
+    {
+      "name": "allocate-second-amount-first-null",
+      "status": "derivable",
+      "input": { "method": "AllocateSecondAmount", "amountDue": 80, "amount1": null },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "AMOUNT_2": 80 } }
+    },
+    {
+      "name": "allocate-second-amount-due-null",
+      "status": "derivable",
+      "input": { "method": "AllocateSecondAmount", "amountDue": null, "amount1": 30 },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "AMOUNT_2": -30 } }
+    },
+    {
+      "name": "allocate-second-amount-sub-cent-unrounded",
+      "status": "derivable",
+      "input": { "method": "AllocateSecondAmount", "amountDue": 10.01, "amount1": 3.005 },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "AMOUNT_2": 7.005 } }
+    },
+    {
+      "name": "reset-after-discount-change",
+      "status": "derivable",
+      "input": { "method": "ResetAfterDiscountChange", "amountDue": 180.5 },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "AMOUNT_1": 180.5, "AMOUNT_2": 0 } }
+    },
+    {
+      "name": "reset-after-discount-change-rounds-half-away-from-zero",
+      "status": "derivable",
+      "input": { "method": "ResetAfterDiscountChange", "amountDue": 10.005 },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "AMOUNT_1": 10.01, "AMOUNT_2": 0 } },
+      "decision": "D-23"
+    },
+    {
+      "name": "default-first-amount",
+      "status": "derivable",
+      "input": { "method": "DefaultFirstAmount", "amountDue": 250 },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "AMOUNT_1": 250 } }
+    },
+    {
+      "name": "default-first-amount-null-due",
+      "status": "derivable",
+      "input": { "method": "DefaultFirstAmount", "amountDue": null },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "AMOUNT_1": null } }
+    },
+    {
+      "name": "default-first-amount-sub-cent-unrounded",
+      "status": "derivable",
+      "input": { "method": "DefaultFirstAmount", "amountDue": 3.005 },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "AMOUNT_1": 3.005 } }
+    },
+    {
+      "name": "default-first-amount-credit-null-patient-vat-uses-package-due",
+      "status": "derivable",
+      "input": {
+        "method": "DefaultFirstAmount",
+        "amountDue": 100,
+        "package": { "patPay": 100, "finaldisc": 0, "vatTotalPat": 0, "cashCollected": 100 },
+        "legacy": { "payType": 2, "sPay": 100, "vatTotalPat": null, "finaldisc": 0, "legacyPatPayx": 102, "legacyNet": 102 }
+      },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "AMOUNT_1": 100 } },
+      "decision": "D-40"
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "messages"] }
+}

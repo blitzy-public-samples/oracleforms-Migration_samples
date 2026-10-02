@@ -1,0 +1,127 @@
+{
+  "id": "PR-15",
+  "class": "package",
+  "source": [
+    { "construct": "BIL_INVOICE_ENGINE.assert_currency", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1390" },
+    { "construct": "BIL_INVOICE_ENGINE.assert_currency -20917", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1399" },
+    { "construct": "BIL_INVOICE_ENGINE.assert_currency -20918", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1411" },
+    { "construct": "BIL_INVOICE_ENGINE.calculate_lines assert_currency call", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:2427" },
+    { "construct": "BIL_INVOICE_ENGINE.append_calc_line curr_code", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:1761" },
+    { "construct": "PU10 SMALL_CALC", "locator": "05_Complex/Inv_Small_Cash.xml:969" }
+  ],
+  "cases": [
+    {
+      "name": "single-currency-passes",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [
+          { "serviceId": "1001", "qty": 1 },
+          { "serviceId": "1002", "qty": 1 }
+        ],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000015" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": {} },
+          { "table": "SERVICES", "key": { "SERVICEID": "1002" }, "columns": {} }
+        ],
+        "context": [
+          { "name": "bil_service_context.curr_code[1001]", "value": "SAR" },
+          { "name": "bil_price_rule.billing_price[1001]", "value": 100.00 },
+          { "name": "bil_service_context.curr_code[1002]", "value": "SAR" },
+          { "name": "bil_price_rule.billing_price[1002]", "value": 50.00 }
+        ]
+      },
+      "expected": {
+        "outcome": "Pass",
+        "values": { "lines": [{ "curr_code": "SAR" }, { "curr_code": "SAR" }] }
+      }
+    },
+    {
+      "name": "lower-case-currency-normalised",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [
+          { "serviceId": "11501", "qty": 1 },
+          { "serviceId": "1002", "qty": 1 }
+        ],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000015" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "11501" }, "columns": {} },
+          { "table": "SERVICES", "key": { "SERVICEID": "1002" }, "columns": {} }
+        ],
+        "context": [
+          { "name": "bil_service_context.curr_code[11501]", "value": "sar" },
+          { "name": "bil_price_rule.billing_price[11501]", "value": 100.00 },
+          { "name": "bil_service_context.curr_code[1002]", "value": "SAR" },
+          { "name": "bil_price_rule.billing_price[1002]", "value": 50.00 }
+        ]
+      },
+      "expected": {
+        "outcome": "Pass",
+        "values": { "lines": [{ "curr_code": "SAR" }, { "curr_code": "SAR" }] }
+      }
+    },
+    {
+      "name": "missing-currency-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [
+          { "serviceId": "1001", "qty": 1 },
+          { "serviceId": "11502", "qty": 1 }
+        ],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000015" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": {} },
+          { "table": "SERVICES", "key": { "SERVICEID": "11502" }, "columns": {} }
+        ],
+        "context": []
+      },
+      "expected": {
+        "error": { "package": "BIL_INVOICE_ENGINE", "number": -20917, "messagePrefix": "Invoice create failed: currency is missing from price list/service for line " }
+      }
+    },
+    {
+      "name": "mixed-currencies-rejected",
+      "status": "derivable",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0 },
+        "lines": [
+          { "serviceId": "1001", "qty": 1 },
+          { "serviceId": "11503", "qty": 1 }
+        ],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "00000000000000000000000000000015" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": {} },
+          { "table": "SERVICES", "key": { "SERVICEID": "11503" }, "columns": {} }
+        ],
+        "context": []
+      },
+      "expected": {
+        "error": { "package": "BIL_INVOICE_ENGINE", "number": -20918, "messagePrefix": "Invoice create failed: mixed currencies are not allowed. Expected SAR but line " }
+      }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome"] }
+}

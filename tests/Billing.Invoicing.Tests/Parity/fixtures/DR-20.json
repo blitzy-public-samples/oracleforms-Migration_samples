@@ -1,0 +1,171 @@
+{
+  "id": "DR-20",
+  "class": "domain",
+  "source": [
+    { "construct": "T015 T_INV WHEN-CREATE-RECORD", "locator": "05_Complex/Inv_Small_Cash.xml:367" },
+    { "construct": "T_INV.INVTYPEID item InitializeValue", "locator": "05_Complex/Inv_Small_Cash.xml:11" },
+    { "construct": "T022 INVTYPEID WHEN-VALIDATE-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:13" },
+    { "construct": "T003 FORM WHEN-NEW-FORM-INSTANCE", "locator": "05_Complex/Inv_Small_Cash.xml:1096" },
+    { "construct": "T023 PATIENTNO WHEN-VALIDATE-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:18" }
+  ],
+  "cases": [
+    {
+      "name": "home-care-sets-invoice-type-7",
+      "status": "derivable",
+      "input": {
+        "parameters": { "isHomeCare": "Y", "claimNo": "0" },
+        "databaseTime": "2026-09-28T10:00:00",
+        "claimPreload": null,
+        "visitDoctorId": null
+      },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "INVTYPEID": 7, "SUB_PAYTYPE": 1, "DRAFT_DATE": "2026-09-28T10:00:00", "INV_DATE": "2026-09-28T10:00:00", "CLAIM_FLAG": null } }
+    },
+    {
+      "name": "draft-date-kept-across-midnight",
+      "status": "derivable",
+      "input": {
+        "parameters": { "isHomeCare": "N", "claimNo": "0" },
+        "databaseTime": "2026-09-28T23:59:59",
+        "claimPreload": null,
+        "visitDoctorId": null
+      },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "INVTYPEID": 0, "DRAFT_DATE": "2026-09-28T23:59:59", "INV_DATE": "2026-09-28T23:59:59", "SUB_PAYTYPE": 1, "CLAIM_FLAG": null } },
+      "decision": "D-39"
+    },
+    {
+      "name": "claim-flag-copied-with-full-database-time",
+      "status": "derivable",
+      "input": {
+        "parameters": { "claimNo": "0", "claimFlag": "R" },
+        "databaseTime": "2026-09-28T14:37:52",
+        "claimPreload": null,
+        "visitDoctorId": null
+      },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "INVTYPEID": 0, "SUB_PAYTYPE": 1, "DRAFT_DATE": "2026-09-28T14:37:52", "INV_DATE": "2026-09-28T14:37:52", "CLAIM_FLAG": "R", "DOCIDX": null, "PATIENTNO": null } },
+      "decision": "D-39"
+    },
+    {
+      "name": "new-consult-uses-new-doctor",
+      "status": "derivable",
+      "input": {
+        "parameters": { "claimNo": "1", "newDoc": 10 },
+        "databaseTime": "2026-09-28T10:00:00",
+        "claimPreload": null,
+        "visitDoctorId": null
+      },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "INVTYPEID": 0, "INV_DATE": "2026-09-28T10:00:00", "DOCIDX": 10 } }
+    },
+    {
+      "name": "independent-claim-zero-no-preload",
+      "status": "derivable",
+      "input": {
+        "parameters": { "claimNo": "0" },
+        "databaseTime": "2026-09-28T10:00:00",
+        "claimPreload": null,
+        "visitDoctorId": null
+      },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "INVTYPEID": 0, "INV_DATE": "2026-09-28T10:00:00", "DOCIDX": null, "PATIENTNO": null } }
+    },
+    {
+      "name": "independent-service-claim-two-no-preload",
+      "status": "derivable",
+      "input": {
+        "parameters": { "claimNo": "2" },
+        "databaseTime": "2026-09-28T10:00:00",
+        "claimPreload": null,
+        "visitDoctorId": null
+      },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "INVTYPEID": 0, "INV_DATE": "2026-09-28T10:00:00", "PATIENTNO": null } }
+    },
+    {
+      "name": "new-consult-ignores-claim-preload",
+      "status": "derivable",
+      "input": {
+        "parameters": { "claimNo": "1", "newDoc": 10, "cashOrCredit": 2 },
+        "databaseTime": "2026-09-28T10:00:00",
+        "claimPreload": { "claimNo": "C-7788", "patientNo": "1001", "clinicId": 14, "docId": 33, "compCode": "205", "subCompCode": "305", "classCode": 4, "payType": 2, "insNumber": "INS-55", "cardEnd": "2027-01-31T00:00:00", "patPolicyNo": "POL-9" },
+        "visitDoctorId": null
+      },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "INVTYPEID": 0, "SUB_PAYTYPE": 1, "DRAFT_DATE": "2026-09-28T10:00:00", "INV_DATE": "2026-09-28T10:00:00", "DOCIDX": 10, "CLAIM_NO": null, "PATIENTNO": null, "CLINICID": null, "COMP_CODE": null, "SUB_COMP_CODE": null, "CLASS_CODE": null, "PAYTYPE": null, "INS_NUMBER": null, "CARD_END": null, "PAT_POLICY_NO": null } }
+    },
+    {
+      "name": "independent-service-claim-two-ignores-claim-preload",
+      "status": "derivable",
+      "input": {
+        "parameters": { "claimNo": "2", "cashOrCredit": 2 },
+        "databaseTime": "2026-09-28T10:00:00",
+        "claimPreload": { "claimNo": "C-7788", "patientNo": "1001", "clinicId": 14, "docId": 33, "compCode": "205", "subCompCode": "305", "classCode": 4, "payType": 2, "insNumber": "INS-55", "cardEnd": "2027-01-31T00:00:00", "patPolicyNo": "POL-9" },
+        "visitDoctorId": null
+      },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "INVTYPEID": 0, "SUB_PAYTYPE": 1, "DRAFT_DATE": "2026-09-28T10:00:00", "INV_DATE": "2026-09-28T10:00:00", "DOCIDX": null, "CLAIM_NO": null, "PATIENTNO": null, "CLINICID": null, "COMP_CODE": null, "SUB_COMP_CODE": null, "CLASS_CODE": null, "PAYTYPE": null, "INS_NUMBER": null, "CARD_END": null, "PAT_POLICY_NO": null } }
+    },
+    {
+      "name": "claim-preload-credit-copies-coverage",
+      "status": "derivable",
+      "input": {
+        "parameters": { "claimNo": "C-7788", "cashOrCredit": 0 },
+        "databaseTime": "2026-09-28T10:00:00",
+        "claimPreload": { "claimNo": "C-7788", "patientNo": "1001", "clinicId": 14, "docId": 33, "compCode": "205", "subCompCode": "305", "classCode": 4, "payType": 2, "insNumber": "INS-55", "cardEnd": "2027-01-31T00:00:00", "patPolicyNo": "POL-9" },
+        "visitDoctorId": null
+      },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "INVTYPEID": 0, "INV_DATE": "2026-09-28T10:00:00", "CLAIM_NO": "C-7788", "PATIENTNO": "1001", "CLINICID": 14, "COMP_CODE": "205", "SUB_COMP_CODE": "305", "CLASS_CODE": 4, "PAYTYPE": 2, "DOCIDX": null, "INS_NUMBER": "INS-55", "CARD_END": "2027-01-31T00:00:00", "PAT_POLICY_NO": "POL-9" } }
+    },
+    {
+      "name": "claim-preload-null-cash-or-credit-copies-card-fields",
+      "status": "derivable",
+      "input": {
+        "parameters": { "claimNo": "C-7788", "cashOrCredit": null },
+        "databaseTime": "2026-09-28T10:00:00",
+        "claimPreload": { "claimNo": "C-7788", "patientNo": "1001", "clinicId": 14, "docId": 33, "compCode": "205", "subCompCode": "305", "classCode": 4, "payType": 2, "insNumber": "INS-55", "cardEnd": "2027-01-31T00:00:00", "patPolicyNo": "POL-9" },
+        "visitDoctorId": null
+      },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "INVTYPEID": 0, "INV_DATE": "2026-09-28T10:00:00", "CLAIM_NO": "C-7788", "PATIENTNO": "1001", "CLINICID": 14, "COMP_CODE": "205", "SUB_COMP_CODE": "305", "CLASS_CODE": 4, "PAYTYPE": 2, "INS_NUMBER": "INS-55", "CARD_END": "2027-01-31T00:00:00", "PAT_POLICY_NO": "POL-9" } },
+      "decision": "D-87"
+    },
+    {
+      "name": "claim-preload-cash-or-credit-1-company-zero",
+      "status": "derivable",
+      "input": {
+        "parameters": { "claimNo": "C-7788", "cashOrCredit": 1 },
+        "databaseTime": "2026-09-28T10:00:00",
+        "claimPreload": { "claimNo": "C-7788", "patientNo": "1001", "clinicId": 14, "compCode": "0", "subCompCode": null, "classCode": null, "payType": 1, "insNumber": "INS-55", "cardEnd": "2027-01-31T00:00:00", "patPolicyNo": "POL-9" },
+        "visitDoctorId": null
+      },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "INVTYPEID": 0, "INV_DATE": "2026-09-28T10:00:00", "CLAIM_NO": "C-7788", "PATIENTNO": "1001", "CLINICID": 14, "COMP_CODE": "0", "SUB_COMP_CODE": null, "CLASS_CODE": null, "PAYTYPE": 1, "INS_NUMBER": null, "CARD_END": null, "PAT_POLICY_NO": null } }
+    },
+    {
+      "name": "claim-preload-cash-or-credit-1-direct-company",
+      "status": "derivable",
+      "input": {
+        "parameters": { "claimNo": "C-7788", "cashOrCredit": 1 },
+        "databaseTime": "2026-09-28T10:00:00",
+        "claimPreload": { "claimNo": "C-7788", "patientNo": "1001", "clinicId": 14, "compCode": "205", "subCompCode": null, "classCode": null, "payType": 2, "insNumber": "INS-55", "cardEnd": "2027-01-31T00:00:00", "patPolicyNo": "POL-9" },
+        "visitDoctorId": null
+      },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "INVTYPEID": 0, "INV_DATE": "2026-09-28T10:00:00", "CLAIM_NO": "C-7788", "PATIENTNO": "1001", "CLINICID": 14, "COMP_CODE": "205", "SUB_COMP_CODE": null, "CLASS_CODE": null, "PAYTYPE": 1, "INS_NUMBER": null, "CARD_END": null, "PAT_POLICY_NO": null } }
+    },
+    {
+      "name": "claim-preload-cash-or-credit-1-insured-becomes-cash",
+      "status": "derivable",
+      "input": {
+        "parameters": { "claimNo": "C-7788", "cashOrCredit": 1 },
+        "databaseTime": "2026-09-28T10:00:00",
+        "claimPreload": { "claimNo": "C-7788", "patientNo": "1001", "clinicId": 14, "compCode": "205", "subCompCode": "305", "classCode": 4, "payType": 2, "insNumber": "INS-55", "cardEnd": "2027-01-31T00:00:00", "patPolicyNo": "POL-9" },
+        "visitDoctorId": null
+      },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "INVTYPEID": 0, "INV_DATE": "2026-09-28T10:00:00", "CLAIM_NO": "C-7788", "PATIENTNO": "1001", "CLINICID": 14, "COMP_CODE": "0", "SUB_COMP_CODE": null, "CLASS_CODE": null, "PAYTYPE": 1, "INS_NUMBER": null, "CARD_END": null, "PAT_POLICY_NO": null } }
+    },
+    {
+      "name": "claim-preload-with-visit-doctor",
+      "status": "derivable",
+      "input": {
+        "parameters": { "claimNo": "C-7788", "cashOrCredit": 0, "visitUnique": "V-1" },
+        "databaseTime": "2026-09-28T10:00:00",
+        "claimPreload": { "claimNo": "C-7788", "patientNo": "1001", "clinicId": 14, "docId": 33, "compCode": "205", "subCompCode": "305", "classCode": 4, "payType": 2, "insNumber": "INS-55", "cardEnd": "2027-01-31T00:00:00", "patPolicyNo": "POL-9" },
+        "visitDoctorId": 12
+      },
+      "expected": { "outcome": "Pass", "messages": [], "values": { "INVTYPEID": 0, "INV_DATE": "2026-09-28T10:00:00", "DOCIDX": 12, "PATIENTNO": "1001", "CLINICID": 14, "PAYTYPE": 2, "INS_NUMBER": "INS-55", "CARD_END": "2027-01-31T00:00:00", "PAT_POLICY_NO": "POL-9" } }
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome", "messages", "INVTYPEID", "DRAFT_DATE", "INV_DATE"] }
+}

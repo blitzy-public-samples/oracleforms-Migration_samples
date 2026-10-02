@@ -1,0 +1,74 @@
+{
+  "id": "PR-24",
+  "class": "package",
+  "source": [
+    { "construct": "BIL_INVOICE_ENGINE.preview_invoice bil_patient_context.get_context", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:3004" },
+    { "construct": "BIL_INVOICE_ENGINE.get_default_paytype header paytype resolution", "locator": "05_Complex/APEX_Reference/backend/BIL_INVOICE_ENGINE.sql:478" },
+    { "construct": "T023 PATIENTNO WHEN-VALIDATE-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:18" },
+    { "construct": "T027 PAYTYPE WHEN-VALIDATE-ITEM", "locator": "05_Complex/Inv_Small_Cash.xml:36" },
+    { "construct": "PU16 MAKE_CASH", "locator": "05_Complex/Inv_Small_Cash.xml:975" }
+  ],
+  "cases": [
+    {
+      "name": "pending-oi-03-cash-payer-context",
+      "status": "pending-evidence",
+      "pendingOn": "OI-03",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 1, "discT": 0, "compCode": "0" },
+        "lines": [{ "serviceId": "1001", "qty": 1 }],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "7C9E6679742540DE944BE07FC1F90AE7" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "V_PAT_DATA", "key": { "PATIENTNO": "990000001" }, "columns": { "COMP_CODE": "205", "PAY_VAT": 1, "MAX_DEDUCTABLE": 0 } },
+          { "table": "COMPANYS", "key": { "COMP_CODE": "205" }, "columns": { "COMP_TYPE": 2, "DIRECT_COMP_SHARE": 0, "PAY_VAT": 1 } },
+          { "table": "COMPANYS", "key": { "COMP_CODE": "0" }, "columns": { "DIRECT_COMP_SHARE": 0, "PAY_VAT": 1 } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001" } }
+        ],
+        "context": [
+          { "name": "bil_patient_context.is_cash", "value": "Y" },
+          { "name": "bil_patient_context.coverage_type", "value": "CASH" },
+          { "name": "bil_patient_context.comp_code", "value": "0" },
+          { "name": "bil_patient_context.list_id", "value": 1 },
+          { "name": "bil_patient_context.pay_vat", "value": 1 },
+          { "name": "bil_patient_context.pay_vat_co", "value": 1 }
+        ]
+      },
+      "expected": {},
+      "decision": "D-47"
+    },
+    {
+      "name": "pending-oi-03-credit-payer-context",
+      "status": "pending-evidence",
+      "pendingOn": "OI-03",
+      "input": {
+        "operation": "BilInvoiceApiGateway.CalculatePreview",
+        "header": { "patientNo": "990000001", "draftDate": "2026-09-28T10:00:00", "payType": 2, "discT": 0, "compCode": "205" },
+        "lines": [{ "serviceId": "1001", "qty": 1 }],
+        "operatorContext": { "userNo": 1, "userName": "PARITY", "infoCenterId": "1", "machineName": "PARITY-PC", "sessionId": "7C9E6679742540DE944BE07FC1F90AE7" },
+        "amount1Auto": true
+      },
+      "requires": {
+        "rows": [
+          { "table": "PATIENT", "key": { "PATIENTNO": "990000001" }, "columns": { "PHONE_H": null } },
+          { "table": "V_PAT_DATA", "key": { "PATIENTNO": "990000001" }, "columns": { "COMP_CODE": "205", "PAY_VAT": 1, "MAX_DEDUCTABLE": 0 } },
+          { "table": "COMPANYS", "key": { "COMP_CODE": "205" }, "columns": { "COMP_TYPE": 2, "DIRECT_COMP_SHARE": 0, "PAY_VAT": 1 } },
+          { "table": "SERVICES", "key": { "SERVICEID": "1001" }, "columns": { "SERVICEID": "1001" } }
+        ],
+        "context": [
+          { "name": "bil_patient_context.is_cash", "value": "N" },
+          { "name": "bil_patient_context.comp_code", "value": "205" },
+          { "name": "bil_patient_context.list_id", "value": 2 },
+          { "name": "bil_patient_context.pay_vat", "value": 1 },
+          { "name": "bil_patient_context.pay_vat_co", "value": 1 },
+          { "name": "bil_patient_context.max_deductable", "value": 0 }
+        ]
+      },
+      "expected": {}
+    }
+  ],
+  "compare": { "moneyDecimals": 2, "exact": ["outcome"] }
+}
