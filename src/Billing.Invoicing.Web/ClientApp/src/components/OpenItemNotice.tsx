@@ -45,7 +45,7 @@ export default function OpenItemNotice({
   }
 
   return (
-    <ul className="open-item-notice" role="status">
+    <ul className="open-item-notice" aria-live="polite" aria-atomic="true">
       {uniqueIds.map((id) => {
         const title = ownText(OPEN_ITEM_TITLES, id) ?? ownText(serverMessages, id);
         const isRecent = recent !== undefined && recent.id === id;

@@ -138,6 +138,10 @@ public sealed class InvoiceWorkflowOrchestrationTests
         Converters = { new JsonStringEnumConverter() },
     };
 
+    private static readonly Action<JsonSerializerOptions, int> LimitLines = typeof(DraftDto)
+        .GetMethod(nameof(LimitLines), System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
+        .CreateDelegate<Action<JsonSerializerOptions, int>>();
+
     private static string NewRequestId() => Guid.NewGuid().ToString("N").ToUpperInvariant();
 
     private static InvoiceLineDraft Line(string serviceId, string clientId) => new()
@@ -356,6 +360,34 @@ public sealed class InvoiceWorkflowOrchestrationTests
         Assert.Empty(fakes.SessionFactory.Calls);
         Assert.Equal(new[] { CreateRequestEntry }, fakes.Journal);
     }
+
+    /// <summary>Binds the create request of <paramref name="draft"/> from its JSON under options that cap the draft's lines at <paramref name="maxLines"/>, asserting that its lines were left unbound.</summary>
+    private static CreateInvoiceRequest CappedRequest(DraftDto draft, int maxLines)
+    {
+        var options = new JsonSerializerOptions(Json);
+        LimitLines(options, maxLines);
+
+        var request = JsonSerializer.Deserialize<CreateInvoiceRequest>(JsonSerializer.Serialize(CreateRequest(draft), Json), options)!;
+
+        Assert.True(draft.Lines.Count > maxLines);
+        Assert.Empty(request.Draft.Lines);
+        Assert.Equal(draft.RequestId, request.Draft.RequestId);
+        Assert.Equal(draft.DraftSeal, request.Draft.DraftSeal);
+        Assert.Equal(draft.Header, request.Draft.Header);
+        return request;
+    }
+
+    /// <summary>Runs the draft operation named by <paramref name="operation"/> on <paramref name="draft"/>.</summary>
+    private static Task DraftOperation(InvoiceWorkflowService service, string operation, DraftDto draft) => operation switch
+    {
+        "validate" => service.Validate(new ValidateDraftRequest { Target = "PATIENTNO", Draft = draft }, Operator),
+        "preview" => service.Preview(draft, Operator),
+        "import-requests" => service.ImportRequests(new ImportRequestsRequest { Draft = draft }, Operator),
+        "import-visit-line" => service.ImportVisitLine(new VisitLineRequest { Draft = draft }, Operator),
+        "import-package" => service.ImportPackage(new PackageImportRequest { Draft = draft, PackageServiceId = PackageService }, Operator),
+        "import-bundled-offer" => service.ImportBundledOffer(new BundledOfferRequest { Draft = draft, OfferId = BundledOfferId }, Operator),
+        _ => throw new ArgumentOutOfRangeException(nameof(operation), operation, null),
+    };
 
     /// <summary>Create-request row recorded for <paramref name="invNo"/>; with no invoice the patient number stays set, while the invoice number, completion time, invoice date and company codes are null and the age-limit flag is false.</summary>
     private static (long? InvNo, string? PatientNo, DateTimeOffset? CompletedAt, DateTime? InvDate, string? CompCode, string? SubCompCode, bool ClinicHasAgeLimit) Recorded(
@@ -1844,6 +1876,102 @@ public sealed class InvoiceWorkflowOrchestrationTests
         Assert.DoesNotContain(response.Messages, IsBlocking);
         Assert.NotNull(response.InvNo);
         Assert.Equal(2, CreateCall(fakes).Arg<IReadOnlyList<InvoiceLineDraft>>().Count);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-54")]
+    [Trait("Decision", "D-68")]
+    [Trait("OpenItem", "OI-20")]
+    public async Task Create_RecordedRequestIdWhoseJsonLinesExceedTheCap_ReplaysAsTheBoundDraftDoes()
+    {
+        var cash = await CashDraft();
+        var draft = cash with { Lines = new[] { Line(OrdinaryService, "c1"), Line(OrdinaryService, "c2") } };
+        var bound = Arrange(draft);
+        bound.Invoices.CreateRequest = RecordedFor(draft, Recorded(9001L, CashCompany, null, false));
+        bound.InvoiceApi.CreateMessage = ReplayMessage;
+        var capped = Arrange(draft);
+        capped.Invoices.CreateRequest = RecordedFor(draft, Recorded(9001L, CashCompany, null, false));
+        capped.InvoiceApi.CreateMessage = ReplayMessage;
+
+        var expected = await bound.CreateService().Create(CreateRequest(draft), Operator);
+        var response = await capped.CreateService().Create(CappedRequest(draft, 1), Operator);
+
+        Assert.Empty(response.Messages);
+        Assert.Equal(9001L, response.InvNo);
+        Assert.Equal(ReplayMessage, response.Message);
+        Assert.Contains(OpenItemIds.OI20, response.OpenItems);
+        Assert.Equal(expected.InvNo, response.InvNo);
+        Assert.Equal(expected.Message, response.Message);
+        Assert.Equal(expected.OpenItems, response.OpenItems);
+        Assert.Equal(expected.Messages, response.Messages);
+        Assert.Equal(draft.RequestId, CreateCall(capped).Arg<string>());
+        Assert.Empty(CreateCall(capped).Arg<IReadOnlyList<InvoiceLineDraft>>());
+        Assert.Equal(new[] { CreateRequestEntry, SessionOpenEntry, CreateFullInvoiceEntry, SessionCommitEntry, SessionDisposeEntry }, capped.Journal);
+        Assert.Equal(bound.Journal, capped.Journal);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-68")]
+    [Trait("Weakness", "CWE-400")]
+    public async Task Create_UnrecordedRequestIdWhoseJsonLinesExceedTheCap_ReturnsBlockingLineBeforeAnyLookup()
+    {
+        var cash = await CashDraft();
+        var draft = cash with { Lines = new[] { Line(OrdinaryService, "c1"), Line(OrdinaryService, "c2") } };
+        var fakes = Arrange(draft);
+
+        var response = await fakes.CreateService().Create(CappedRequest(draft, 1), Operator);
+
+        AssertLinesRejected(response, fakes, "The draft has 2 lines; an invoice can be created with at most 1 lines.");
+    }
+
+    [Fact]
+    [Trait("Decision", "D-39")]
+    [Trait("Decision", "D-68")]
+    public async Task Create_UnsealedDraftWhoseJsonLinesExceedTheCap_ReturnsBlockingInvDateBeforeTheLineCap()
+    {
+        var cash = await CashDraft();
+        var draft = cash with { DraftSeal = null, Lines = new[] { Line(OrdinaryService, "c1"), Line(OrdinaryService, "c2") } };
+        var fakes = Arrange(draft);
+
+        var response = await fakes.CreateService().Create(CappedRequest(draft, 1), Operator);
+
+        AssertDraftDateRejected(response, fakes);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-68")]
+    [Trait("Weakness", "CWE-400")]
+    [InlineData("validate")]
+    [InlineData("preview")]
+    [InlineData("import-requests")]
+    [InlineData("import-visit-line")]
+    [InlineData("import-package")]
+    [InlineData("import-bundled-offer")]
+    public async Task DraftOperation_JsonLinesOverTheCap_RefusesLineBeforeAnyPortCall(string operation)
+    {
+        const string text = "The draft has 3 lines; an invoice can be created with at most 2 lines.";
+        var cash = await CashDraft();
+        var draft = CappedRequest(
+                cash with { Lines = new[] { Line(OrdinaryService, "c1"), null!, Line(OrdinaryService, "c3") } },
+                2)
+            .Draft;
+        var fakes = Arrange(draft);
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() => DraftOperation(fakes.CreateService(), operation, draft));
+
+        Assert.Equal("draft", error.ParamName);
+        var message = Assert.Single(Assert.IsAssignableFrom<IReadOnlyList<MessageDto>>(error.Data[ProblemDetailsWriter.MessagesDataKey]));
+        Assert.True(IsBlocking(message));
+        Assert.Equal(LineField, message.Field);
+        Assert.Equal(text, message.Text);
+        Assert.Null(message.Rule);
+        Assert.Empty(fakes.Journal);
+        var written = await ProblemDetailsWriterTests.WriteHandled(error);
+        Assert.Equal(422, written.Status);
+        Assert.Equal("field-validation", written.Body.GetProperty("type").GetString());
+        var writtenMessage = Assert.Single(written.Body.GetProperty("messages").EnumerateArray());
+        Assert.Equal(LineField, writtenMessage.GetProperty("field").GetString());
+        Assert.Equal(text, writtenMessage.GetProperty("text").GetString());
     }
 
     [Fact]

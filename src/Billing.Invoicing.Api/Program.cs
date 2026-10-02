@@ -4,6 +4,7 @@ using Billing.Invoicing.Api.Context;
 using Billing.Invoicing.Api.Contracts;
 using Billing.Invoicing.Api.Errors;
 using Billing.Invoicing.Api.Services;
+using Billing.Invoicing.Data.Oracle;
 using Billing.Invoicing.Domain.Model;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Net.Http.Headers;
@@ -40,6 +41,8 @@ builder.Services
     .ConfigureApiBehaviorOptions(o => o.SuppressMapClientErrors = true);
 
 builder.Services.AddInvoicingData(builder.Configuration);
+// Binds a draft with more lines than Invoicing:MaxOutputLines without reading its lines.
+builder.Services.AddOptions<JsonOptions>().Configure<InvoicingDataOptions>((json, data) => DraftDto.LimitLines(json.JsonSerializerOptions, data.MaxOutputLines));
 builder.Services.AddSingleton<ProblemDetailsWriter>();
 builder.Services.AddExceptionHandler<ProblemDetailsExceptionHandler>();
 builder.Services.AddScoped<InvoiceWorkflowService>();
@@ -55,7 +58,8 @@ builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
         "X-His-User-Name",
         "X-His-Info-Center-Id",
         "X-His-Machine",
-        "X-His-Session-Id")));
+        "X-His-Session-Id")
+    .SetPreflightMaxAge(TimeSpan.FromMinutes(10))));
 
 var app = builder.Build();
 

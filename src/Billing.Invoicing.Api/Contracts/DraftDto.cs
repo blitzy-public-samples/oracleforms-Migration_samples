@@ -1,8 +1,10 @@
-using System.Buffers;
 using System.ComponentModel.DataAnnotations;
 using System.Globalization;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using Billing.Invoicing.Domain.Model;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 
@@ -40,7 +42,7 @@ public sealed record DraftDto : IValidatableObject
     [JsonConverter(typeof(RequestHeaderContract))]
     public InvoiceHeaderDraft Header { get; init; } = new();
 
-    /// <summary>The <c>D_INV</c> lines in grid order; a line's zero-based position is its line index; their JSON omits <c>CATID</c> and the display-only <c>FIXPAY</c>, <c>PAYRATE</c>, lens and <c>INS_EMP</c> members.</summary>
+    /// <summary>The <c>D_INV</c> lines in grid order; a line's zero-based position is its line index; their JSON omits <c>CATID</c> and the display-only <c>FIXPAY</c>, <c>PAYRATE</c>, lens and <c>INS_EMP</c> members; under options given to <see cref="LimitLines"/>, an array over the cap binds as no line with <see cref="LinesRefusal"/> set.</summary>
     [JsonConverter(typeof(RequestLinesContract))]
     public IReadOnlyList<InvoiceLineDraft> Lines { get; init; } = [];
 
@@ -49,6 +51,9 @@ public sealed record DraftDto : IValidatableObject
 
     /// <summary>The operator's answer to the maximum-discount prompt; null when none was given.</summary>
     public Billing.Invoicing.Domain.Model.DiscountLimitChoice? DiscountLimitChoice { get; init; }
+
+    /// <summary>The refusal naming the line count and the cap when the JSON's lines exceeded the cap and were left unbound; otherwise null.</summary>
+    internal string? LinesRefusal => (Lines as RefusedLines)?.Text;
 
     /// <summary>Rejects an unsupported DISC_T or DiscountLimitChoice and an out-of-bound AMOUNT_1, AMOUNT_2 or CASH_PAYED, naming the legacy item.</summary>
     IEnumerable<ValidationResult> IValidatableObject.Validate(ValidationContext validationContext)
@@ -87,23 +92,70 @@ public sealed record DraftDto : IValidatableObject
         }
     }
 
-    /// <summary>JSON contract of <typeparamref name="T"/> that drops the named members on read and leaves them out on write.</summary>
-    /// <typeparam name="T">The header record, or the list of line records.</typeparam>
-    /// <param name="omittedMembers">CLR names of the members left out of every JSON object, or of every object in a JSON array.</param>
-    private abstract class OmittingContract<T>(params string[] omittedMembers) : JsonConverter<T>
+    /// <summary>Makes <paramref name="options"/> bind a draft whose JSON holds more than <paramref name="maxLines"/> lines without reading its lines, as <see cref="RefusedLines"/>.</summary>
+    /// <param name="options">Options whose type-info resolver gains the line limit.</param>
+    /// <param name="maxLines">Largest line count accepted; at least 1.</param>
+    internal static void LimitLines(JsonSerializerOptions options, int maxLines)
     {
-        /// <summary>Reads <typeparamref name="T"/> from the JSON value with the omitted members removed.</summary>
-        public override T? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxLines, 1);
+
+        options.TypeInfoResolver = (options.TypeInfoResolver ?? new DefaultJsonTypeInfoResolver()).WithAddedModifier(typeInfo =>
         {
-            using var document = JsonDocument.ParseValue(ref reader);
-            var buffer = new ArrayBufferWriter<byte>();
-            using (var writer = new Utf8JsonWriter(buffer))
+            if (typeInfo.Type != typeof(DraftDto))
             {
-                WriteValue(document.RootElement, writer, options);
+                return;
             }
 
-            return JsonSerializer.Deserialize<T>(buffer.WrittenSpan, options);
-        }
+            foreach (var property in typeInfo.Properties)
+            {
+                if (property.AttributeProvider is MemberInfo { Name: nameof(Lines) })
+                {
+                    property.CustomConverter = new RequestLinesContract(maxLines);
+                }
+            }
+        });
+    }
+
+    /// <summary>Lines of a draft whose JSON holds more lines than an invoice can be created with; holds no line.</summary>
+    /// <param name="lineCount">Number of lines in the draft's JSON.</param>
+    /// <param name="maxLines">Largest line count an invoice can be created with.</param>
+    internal sealed class RefusedLines(int lineCount, int maxLines) : IReadOnlyList<InvoiceLineDraft>
+    {
+        /// <summary>Number of lines in the draft's JSON, a null or malformed element included.</summary>
+        public int LineCount { get; } = lineCount;
+
+        /// <summary>Largest line count an invoice can be created with.</summary>
+        public int MaxLines { get; } = maxLines;
+
+        /// <summary>The refusal naming the line count and the cap.</summary>
+        public string Text { get; } = string.Create(
+            CultureInfo.InvariantCulture, $"The draft has {lineCount} lines; an invoice can be created with at most {maxLines} lines.");
+
+        /// <summary>Always 0.</summary>
+        public int Count => 0;
+
+        /// <summary>Throws <see cref="ArgumentOutOfRangeException"/> for every index.</summary>
+        public InvoiceLineDraft this[int index] => throw new ArgumentOutOfRangeException(nameof(index));
+
+        /// <summary>Enumerates no line.</summary>
+        public IEnumerator<InvoiceLineDraft> GetEnumerator() => Enumerable.Empty<InvoiceLineDraft>().GetEnumerator();
+
+        /// <summary>Enumerates no line.</summary>
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
+    /// <summary>JSON contract of <typeparamref name="T"/> that drops the named members on read and leaves them out on write.</summary>
+    /// <typeparam name="T">The header record, or the list of line records.</typeparam>
+    /// <param name="omittedType">The record type whose JSON objects carry the named members.</param>
+    /// <param name="omittedMembers">CLR names of the members left out of every JSON object, or of every object in a JSON array.</param>
+    private abstract class OmittingContract<T>(Type omittedType, params string[] omittedMembers) : JsonConverter<T>
+    {
+        private readonly ConditionalWeakTable<JsonSerializerOptions, JsonSerializerOptions> _omittingOptions = new();
+
+        /// <summary>Reads <typeparamref name="T"/> from the JSON value, skipping the omitted members as unmapped.</summary>
+        public override T? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+            JsonSerializer.Deserialize(ref reader, OmittingTypeInfo(options));
 
         /// <summary>Writes <paramref name="value"/> without the omitted members.</summary>
         public override void Write(Utf8JsonWriter writer, T value, JsonSerializerOptions options) =>
@@ -152,26 +204,120 @@ public sealed record DraftDto : IValidatableObject
         private bool IsOmitted(string name, JsonSerializerOptions options) =>
             omittedMembers.Any(member =>
                 string.Equals(name, options.PropertyNamingPolicy?.ConvertName(member) ?? member, StringComparison.OrdinalIgnoreCase));
+
+        /// <summary>Returns the contract of <typeparamref name="T"/> under the cached copy of <paramref name="options"/> that omits the members.</summary>
+        private JsonTypeInfo<T> OmittingTypeInfo(JsonSerializerOptions options) =>
+            (JsonTypeInfo<T>)_omittingOptions.GetValue(options, Omitting).GetTypeInfo(typeof(T));
+
+        /// <summary>Copies <paramref name="options"/> with a type-info resolver that removes the omitted members from the <paramref name="omittedType"/> contract.</summary>
+        private JsonSerializerOptions Omitting(JsonSerializerOptions options) => new(options)
+        {
+            TypeInfoResolver = (options.TypeInfoResolver ?? new DefaultJsonTypeInfoResolver()).WithAddedModifier(Omit),
+        };
+
+        /// <summary>Removes the omitted members from the <paramref name="omittedType"/> object contract; any other contract unchanged.</summary>
+        private void Omit(JsonTypeInfo typeInfo)
+        {
+            if (typeInfo.Type != omittedType || typeInfo.Kind != JsonTypeInfoKind.Object)
+            {
+                return;
+            }
+
+            for (var i = typeInfo.Properties.Count - 1; i >= 0; i--)
+            {
+                if (typeInfo.Properties[i].AttributeProvider is MemberInfo member && omittedMembers.Contains(member.Name, StringComparer.Ordinal))
+                {
+                    typeInfo.Properties.RemoveAt(i);
+                }
+            }
+        }
     }
 
     /// <summary>JSON contract of the header that omits the pre-authorisation and the display-only <c>OFERID</c>, <c>DOCID1</c> and <c>SEQ_NO</c>.</summary>
     private sealed class RequestHeaderContract() : OmittingContract<InvoiceHeaderDraft>(
+        typeof(InvoiceHeaderDraft),
         nameof(InvoiceHeaderDraft.PreAuthorization),
         nameof(InvoiceHeaderDraft.OferId),
         nameof(InvoiceHeaderDraft.DocId1),
         nameof(InvoiceHeaderDraft.SeqNo));
 
-    /// <summary>JSON contract of the lines that omits <c>CATID</c> and the display-only <c>FIXPAY</c>, <c>PAYRATE</c>, lens and <c>INS_EMP</c> members.</summary>
-    private sealed class RequestLinesContract() : OmittingContract<IReadOnlyList<InvoiceLineDraft>>(
-        nameof(InvoiceLineDraft.CatId),
-        nameof(InvoiceLineDraft.FixPay),
-        nameof(InvoiceLineDraft.PayRate),
-        nameof(InvoiceLineDraft.RegularLensesType),
-        nameof(InvoiceLineDraft.LensSpecifications),
-        nameof(InvoiceLineDraft.ContactLensesType),
-        nameof(InvoiceLineDraft.FLIndicator),
-        nameof(InvoiceLineDraft.NumberOfPairs),
-        nameof(InvoiceLineDraft.InsEmp));
+    /// <summary>JSON contract of the lines that omits <c>CATID</c> and the display-only <c>FIXPAY</c>, <c>PAYRATE</c>, lens and <c>INS_EMP</c> members and leaves more than a maximum line count unread.</summary>
+    private sealed class RequestLinesContract : OmittingContract<IReadOnlyList<InvoiceLineDraft>>
+    {
+        private readonly int _maxLines;
+
+        /// <summary>Creates the contract without a line limit.</summary>
+        public RequestLinesContract()
+            : this(int.MaxValue)
+        {
+        }
+
+        /// <summary>Creates the contract that reads at most <paramref name="maxLines"/> lines.</summary>
+        /// <param name="maxLines">Largest line count accepted; at least 1.</param>
+        public RequestLinesContract(int maxLines)
+            : base(
+                typeof(InvoiceLineDraft),
+                nameof(InvoiceLineDraft.CatId),
+                nameof(InvoiceLineDraft.FixPay),
+                nameof(InvoiceLineDraft.PayRate),
+                nameof(InvoiceLineDraft.RegularLensesType),
+                nameof(InvoiceLineDraft.LensSpecifications),
+                nameof(InvoiceLineDraft.ContactLensesType),
+                nameof(InvoiceLineDraft.FLIndicator),
+                nameof(InvoiceLineDraft.NumberOfPairs),
+                nameof(InvoiceLineDraft.InsEmp))
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(maxLines, 1);
+            _maxLines = maxLines;
+        }
+
+        /// <summary>Reads the lines; an array of more than the maximum line count is skipped without reading any line and returned as <see cref="RefusedLines"/>.</summary>
+        public override IReadOnlyList<InvoiceLineDraft>? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            if (_maxLines < int.MaxValue && reader.TokenType == JsonTokenType.StartArray)
+            {
+                var lines = CountElements(reader);
+                if (lines > _maxLines)
+                {
+                    if (!reader.TrySkip())
+                    {
+                        throw new JsonException();
+                    }
+
+                    return new RefusedLines(lines, _maxLines);
+                }
+            }
+
+            return base.Read(ref reader, typeToConvert, options);
+        }
+
+        /// <summary>Counts the elements of the array starting at <paramref name="reader"/>, skipping each one; the caller's reader is not advanced.</summary>
+        /// <param name="reader">Copy of the reader positioned on the array's start token.</param>
+        /// <returns>The number of elements, a null element included.</returns>
+        private static int CountElements(Utf8JsonReader reader)
+        {
+            var count = 0;
+            while (true)
+            {
+                if (!reader.Read())
+                {
+                    throw new JsonException();
+                }
+
+                if (reader.TokenType == JsonTokenType.EndArray)
+                {
+                    return count;
+                }
+
+                if (!reader.TrySkip())
+                {
+                    throw new JsonException();
+                }
+
+                count++;
+            }
+        }
+    }
 
     /// <summary>JSON contract of the draft date that reads ISO 8601 text without a time-zone designator as its wall clock and writes the date unchanged.</summary>
     private sealed class DraftDateContract : JsonConverter<DateTime>

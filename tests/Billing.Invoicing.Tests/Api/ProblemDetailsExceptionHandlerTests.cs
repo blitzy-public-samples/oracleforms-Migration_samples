@@ -269,14 +269,15 @@ public sealed class ProblemDetailsExceptionHandlerTests
     }
 
     [Fact]
-    public void ShippedLogging_DefaultTraceOverride_CapsTheActionInvokerAtDebug()
+    public void ShippedLogging_DefaultTraceOverride_CapsTheActionInvokerAtInformation()
     {
         using var logs = new CapturingLoggerProvider();
         using ServiceProvider provider = ShippedLogging(logs, LogLevel.Trace);
         ILogger logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger(ActionInvokerCategory);
 
         Assert.False(logger.IsEnabled(LogLevel.Trace));
-        Assert.True(logger.IsEnabled(LogLevel.Debug));
+        Assert.False(logger.IsEnabled(LogLevel.Debug));
+        Assert.True(logger.IsEnabled(LogLevel.Information));
     }
 
     [Fact]
@@ -300,6 +301,18 @@ public sealed class ProblemDetailsExceptionHandlerTests
         Assert.False(hosting.IsEnabled(LogLevel.Information));
         Assert.True(hosting.IsEnabled(LogLevel.Warning));
         Assert.True(factory.CreateLogger(ActionInvokerCategory).IsEnabled(LogLevel.Information));
+    }
+
+    [Fact]
+    public void ShippedLogging_WithoutOverride_WritesNoActionInvokerDebugEntries()
+    {
+        using var logs = new CapturingLoggerProvider();
+        using ServiceProvider provider = ShippedLogging(logs, defaultLevel: null);
+        ILogger logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger(ActionInvokerCategory);
+
+        Assert.False(logger.IsEnabled(LogLevel.Trace));
+        Assert.False(logger.IsEnabled(LogLevel.Debug));
+        Assert.True(logger.IsEnabled(LogLevel.Information));
     }
 
     [Fact]

@@ -18,6 +18,7 @@ public sealed class InvoiceWorkflowRequestValidationTests
 {
     private const string PatientRequiredText = "Select Patient No is required ";
     private const string DocumentKindText = "Document kind must be invoice, patient-card, barcode-sms or iqama-check.";
+    private const string UnknownTargetText = "Unknown validation target.";
 
     private static readonly OperatorContext Operator = new()
     {
@@ -49,7 +50,20 @@ public sealed class InvoiceWorkflowRequestValidationTests
 
         var response = await Service(ports).Validate(new ValidateDraftRequest { Target = target }, Operator);
 
-        AssertBlocking(response.Messages, "TARGET", $"Unknown validation target '{target}'.");
+        AssertBlocking(response.Messages, "TARGET", UnknownTargetText);
+        Assert.Empty(response.Adjusted);
+        Assert.Empty(response.OpenItems);
+        Assert.Empty(ports.Calls);
+    }
+
+    [Fact]
+    public async Task Validate_LongUnknownTarget_ReturnsTheFixedTargetMessage()
+    {
+        var ports = new FakePorts();
+
+        var response = await Service(ports).Validate(new ValidateDraftRequest { Target = new string('X', 100_000) }, Operator);
+
+        AssertBlocking(response.Messages, "TARGET", UnknownTargetText);
         Assert.Empty(response.Adjusted);
         Assert.Empty(response.OpenItems);
         Assert.Empty(ports.Calls);

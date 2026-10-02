@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.Reflection;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Billing.Invoicing.Api.Contracts;
@@ -21,6 +22,16 @@ public sealed class DraftDtoValidationTests
     private const string WellFormedRequestId = "0123456789ABCDEF0123456789ABCDEF";
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { Converters = { new JsonStringEnumConverter() } };
+
+    private static readonly Action<JsonSerializerOptions, int> LimitLines = typeof(DraftDto)
+        .GetMethod(nameof(LimitLines), BindingFlags.NonPublic | BindingFlags.Static)!
+        .CreateDelegate<Action<JsonSerializerOptions, int>>();
+
+    private static readonly Type RefusedLines =
+        typeof(DraftDto).GetNestedType(nameof(RefusedLines), BindingFlags.NonPublic)!;
+
+    private static readonly PropertyInfo LinesRefusal =
+        typeof(DraftDto).GetProperty(nameof(LinesRefusal), BindingFlags.NonPublic | BindingFlags.Instance)!;
 
     private static readonly OperatorContext Operator = new()
     {
@@ -293,6 +304,206 @@ public sealed class DraftDtoValidationTests
     {
         Assert.ThrowsAny<JsonException>(() => JsonSerializer.Deserialize<DraftDto>(json, Json));
         Assert.ThrowsAny<JsonException>(() => JsonSerializer.Deserialize<CreateInvoiceRequest>($$"""{"draft":{{json}}}""", Json));
+    }
+
+    [Fact]
+    public async Task LimitedLines_UpToTheLimit_BindWithoutTheOmittedMembers()
+    {
+        const string draftJson = """
+            {"header":{"patientNo":"1001","preAuthorization":"PA-1","OFERID":{"x":1}},
+              "lines":[{"serviceId":"S1","catId":"x","fixPay":"bad"},null,{"serviceId":"S3","insEmp":{"x":1}}]}
+            """;
+        var options = LimitedJson(3);
+        var expectedLines = new[] { new InvoiceLineDraft { ServiceId = "S1" }, null!, new InvoiceLineDraft { ServiceId = "S3" } };
+
+        foreach (var draft in new[]
+        {
+            JsonSerializer.Deserialize<DraftDto>(draftJson, options),
+            JsonSerializer.Deserialize<CreateInvoiceRequest>($$"""{"draft":{{draftJson}}}""", options)?.Draft,
+            await DeserializeAsync<DraftDto>(draftJson, options),
+            (await DeserializeAsync<CreateInvoiceRequest>($$"""{"draft":{{draftJson}}}""", options))?.Draft,
+        })
+        {
+            Assert.NotNull(draft);
+            Assert.Equal(new InvoiceHeaderDraft { PatientNo = "1001" }, draft.Header);
+            Assert.Equal(expectedLines, draft.Lines);
+            Assert.IsNotType(RefusedLines, draft.Lines);
+            Assert.Null(LinesRefusal.GetValue(draft));
+        }
+    }
+
+    [Theory]
+    [InlineData("""[{"serviceId":"S1"},{"serviceId":"S2"},{"serviceId":"S3"},{"serviceId":"S4"}]""", 4)]
+    [InlineData("""[null,null,null,null]""", 4)]
+    [InlineData("""[{"serviceId":"S1"},null,{"serviceId":"S3"},5]""", 4)]
+    [InlineData("""[{"serviceId":"S1"},{"serviceId":"S2"},{"serviceId":"S3"},5,"x",[1],{"qty":"abc"}]""", 7)]
+    [InlineData("""[5,{"serviceId":1},{"qty":"abc"},{"serviceId":"\uDC00"}]""", 4)]
+    public async Task LimitedLines_BeyondTheLimit_BindAsRefusedLinesWithTheLineCountAndTheRestOfTheDraft(string lines, int count)
+    {
+        var options = LimitedJson(3);
+        var draftJson = $$$"""
+            {"requestId":"{{{WellFormedRequestId}}}","header":{"patientNo":"1001","preAuthorization":"PA-1"},"lines":{{{lines}}},
+              "parameters":{"visitUnique":"V1"},"discountLimitChoice":"Cancel"}
+            """;
+        var requestJson = $$"""{"draft":{{draftJson}}}""";
+
+        foreach (var draft in new[]
+        {
+            JsonSerializer.Deserialize<DraftDto>(draftJson, options),
+            JsonSerializer.Deserialize<CreateInvoiceRequest>(requestJson, options)?.Draft,
+            await DeserializeAsync<DraftDto>(draftJson, options),
+            (await DeserializeAsync<CreateInvoiceRequest>(requestJson, options))?.Draft,
+        })
+        {
+            AssertRefusedLines(draft, count, 3);
+            Assert.Equal(WellFormedRequestId, draft!.RequestId);
+            Assert.Equal(new InvoiceHeaderDraft { PatientNo = "1001" }, draft.Header);
+            Assert.Equal(new InvoiceEntryParameters { VisitUnique = "V1" }, draft.Parameters);
+            Assert.Equal(DiscountLimitChoice.Cancel, draft.DiscountLimitChoice);
+        }
+    }
+
+    [Fact]
+    public void LimitedLines_AtALimitOfOne_KeepEmptyAndNullLinesAndBindTwoAsRefusedLines()
+    {
+        var options = LimitedJson(1);
+
+        Assert.Empty(JsonSerializer.Deserialize<DraftDto>("""{"lines":[]}""", options)!.Lines);
+        Assert.Null(JsonSerializer.Deserialize<DraftDto>("""{"lines":null}""", options)!.Lines);
+        Assert.Equal(new[] { new InvoiceLineDraft { ServiceId = "S1" } }, JsonSerializer.Deserialize<DraftDto>("""{"lines":[{"serviceId":"S1"}]}""", options)!.Lines);
+        Assert.Null(LinesRefusal.GetValue(JsonSerializer.Deserialize<DraftDto>("""{"lines":[null]}""", options)));
+        AssertRefusedLines(JsonSerializer.Deserialize<DraftDto>("""{"lines":[null,null]}""", options), 2, 1);
+    }
+
+    [Theory]
+    [InlineData("""{"lines":[null,null],"header":{"patientNo":1001}}""", "$.patientNo", "$.patientNo")]
+    [InlineData("""{"lines":[1,2],"parameters":{"visitUnique":5}}""", "$.parameters.visitUnique", "$.draft.parameters.visitUnique")]
+    [InlineData("""{"lines":[{"serviceId":"S1"},{"serviceId":"S2"}],"draftDate":"2026-09-29T10:00:00Z"}""", "$.draftDate", "$.draft.draftDate")]
+    public void LimitedLines_BeyondTheLimit_LeaveTheFollowingMembersFailingAtTheirOwnPath(string json, string draftPath, string requestPath)
+    {
+        var options = LimitedJson(1);
+
+        Assert.Equal(draftPath, Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<DraftDto>(json, options)).Path);
+        Assert.Equal(
+            requestPath,
+            Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<CreateInvoiceRequest>($$"""{"draft":{{json}}}""", options)).Path);
+    }
+
+    [Fact]
+    public void RefusedLines_AreWrittenAsAnEmptyArray()
+    {
+        var refused = JsonSerializer.Deserialize<DraftDto>("""{"requestId":"0123456789ABCDEF0123456789ABCDEF","lines":[null,null]}""", LimitedJson(1));
+        AssertRefusedLines(refused, 2, 1);
+
+        foreach (var options in new[] { Json, LimitedJson(1) })
+        {
+            var written = JsonSerializer.Serialize(refused, options);
+
+            using var document = JsonDocument.Parse(written);
+            Assert.Equal(JsonValueKind.Array, document.RootElement.GetProperty("lines").ValueKind);
+            Assert.Equal(0, document.RootElement.GetProperty("lines").GetArrayLength());
+            var back = JsonSerializer.Deserialize<DraftDto>(written, options);
+            Assert.NotNull(back);
+            Assert.Empty(back.Lines);
+            Assert.Null(LinesRefusal.GetValue(back));
+        }
+    }
+
+    [Theory]
+    [InlineData("""{"lines":[{"serviceId":5}]}""", "$[0].serviceId")]
+    [InlineData("""{"lines":[{"serviceId":"S1"},{"priceOverride":"abc"}]}""", "$[1].priceOverride")]
+    [InlineData("""{"lines":[null,5]}""", "$[1]")]
+    [InlineData("""{"lines":{"serviceId":"S1"}}""", "$")]
+    [InlineData("""{"header":{"patientNo":1001}}""", "$.patientNo")]
+    public void MalformedHeaderOrLinesWithinTheLimit_FailAsJsonAtTheirOwnPath(string json, string path)
+    {
+        foreach (var options in new[] { Json, LimitedJson(3) })
+        {
+            Assert.Equal(path, Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<DraftDto>(json, options)).Path);
+            Assert.Equal(path, Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<CreateInvoiceRequest>($$"""{"draft":{{json}}}""", options)).Path);
+        }
+    }
+
+    [Fact]
+    public void UnlimitedLines_BindEveryLine()
+    {
+        var lines = string.Join(',', Enumerable.Range(0, 5000).Select(i => $$"""{"clientId":"L{{i}}","serviceId":"1001","qty":1,"catId":"x"}"""));
+
+        foreach (var options in new[] { Json, LimitedJson(5000) })
+        {
+            var draft = JsonSerializer.Deserialize<DraftDto>($$"""{"lines":[{{lines}}]}""", options);
+            var request = JsonSerializer.Deserialize<CreateInvoiceRequest>($$$"""{"draft":{"lines":[{{{lines}}}]}}""", options);
+
+            Assert.NotNull(draft);
+            Assert.Equal(5000, draft.Lines.Count);
+            Assert.Equal(new InvoiceLineDraft { ClientId = "L4999", ServiceId = "1001", Qty = 1m }, draft.Lines[^1]);
+            Assert.NotNull(request);
+            Assert.Equal(draft.Lines, request.Draft.Lines);
+        }
+    }
+
+    [Fact]
+    public void LimitedLines_AreWrittenInFull()
+    {
+        var draft = new DraftDto
+        {
+            Lines = Enumerable.Range(0, 5).Select(i => new InvoiceLineDraft { ClientId = "L" + i, CatId = 3, InsEmp = 44 }).ToArray(),
+        };
+
+        var written = JsonSerializer.Serialize(draft, LimitedJson(3));
+
+        Assert.Equal(JsonSerializer.Serialize(draft, Json), written);
+        using var document = JsonDocument.Parse(written);
+        var lines = document.RootElement.GetProperty("lines");
+        Assert.Equal(5, lines.GetArrayLength());
+        Assert.All(lines.EnumerateArray(), line =>
+        {
+            Assert.False(line.TryGetProperty("catId", out _));
+            Assert.False(line.TryGetProperty("insEmp", out _));
+        });
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(int.MinValue)]
+    public void LimitLines_RefusesNoOptionsOrALimitBelowOne(int maxLines)
+    {
+        var options = new JsonSerializerOptions(Json);
+
+        Assert.Equal("maxLines", Assert.Throws<ArgumentOutOfRangeException>(() => LimitLines(options, maxLines)).ParamName);
+        Assert.Equal("options", Assert.Throws<ArgumentNullException>(() => LimitLines(null!, 1)).ParamName);
+    }
+
+    /// <summary>Copy of the test options with the draft lines limited to <paramref name="maxLines"/>.</summary>
+    private static JsonSerializerOptions LimitedJson(int maxLines)
+    {
+        var options = new JsonSerializerOptions(Json);
+        LimitLines(options, maxLines);
+        return options;
+    }
+
+    /// <summary>Deserializes <paramref name="json"/> from a stream read one byte per buffer fill.</summary>
+    private static async Task<T?> DeserializeAsync<T>(string json, JsonSerializerOptions options)
+    {
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        return await JsonSerializer.DeserializeAsync<T>(stream, new JsonSerializerOptions(options) { DefaultBufferSize = 1 });
+    }
+
+    /// <summary>Asserts that <paramref name="draft"/> bound its lines as refused lines holding no line, carrying the line count, the cap and their refusal text.</summary>
+    private static void AssertRefusedLines(DraftDto? draft, int count, int maxLines)
+    {
+        Assert.NotNull(draft);
+        var lines = draft.Lines;
+        Assert.IsType(RefusedLines, lines);
+        Assert.Empty(lines);
+        Assert.Equal(0, RefusedLines.GetProperty(nameof(lines.Count))!.GetValue(lines));
+        Assert.Throws<ArgumentOutOfRangeException>(() => lines[0]);
+        var text = $"The draft has {count} lines; an invoice can be created with at most {maxLines} lines.";
+        Assert.Equal(count, RefusedLines.GetProperty("LineCount")!.GetValue(lines));
+        Assert.Equal(maxLines, RefusedLines.GetProperty("MaxLines")!.GetValue(lines));
+        Assert.Equal(text, RefusedLines.GetProperty("Text")!.GetValue(lines));
+        Assert.Equal(text, LinesRefusal.GetValue(draft));
     }
 
     public static TheoryData<string, DateTime> WallClockDraftDates => new()

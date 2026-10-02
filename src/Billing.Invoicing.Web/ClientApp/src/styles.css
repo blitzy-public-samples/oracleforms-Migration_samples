@@ -680,6 +680,12 @@ html:has(.connectivity-banner) {
   white-space: normal;
 }
 
+/* Spacer cell holding the size of the lines not rendered (D-181). */
+.lines-grid .lines-spacer > td {
+  padding: 0;
+  border: 0;
+}
+
 .grid-note {
   display: flex;
   flex-wrap: wrap;

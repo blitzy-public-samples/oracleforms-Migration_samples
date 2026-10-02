@@ -652,6 +652,7 @@ public sealed class OracleSessionDeadlineTests
     public async Task OpenThroughGate_ConcurrentOpenFailsWithAnOutage_ReleasesTheWaitingOpenOnceItsResourcesAreReleased()
     {
         string key = GateKey();
+        await PrimeHealthy(key);
         var failing = new FakeOpen();
         var waiting = new FakeOpen();
         var failingReleased = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -685,6 +686,7 @@ public sealed class OracleSessionDeadlineTests
     public async Task OpenThroughGate_ReleaseOfAFailedOpenThrows_AttachesThatFailureAndStillReleasesTheWaitingOpen()
     {
         string key = GateKey();
+        await PrimeHealthy(key);
         var failing = new FakeOpen();
         var waiting = new FakeOpen();
         var releaseFailure = new InvalidOperationException("dispose failed");
@@ -700,6 +702,68 @@ public sealed class OracleSessionDeadlineTests
         Assert.Same(outage, thrown);
         Assert.Same(releaseFailure, Assert.Single(Assert.IsType<List<Exception>>(outage.Data[OracleSession.SecondaryFailuresKey])));
         Assert.Same(outage, released.InnerException);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-161")]
+    public async Task OpenThroughGate_ColdGateBurstProbeFailsWithAnOutage_ReleasesTheJoinedOpensWithoutTheirOwnOpen()
+    {
+        string key = GateKey();
+        var probe = new FakeOpen();
+        FakeOpen[] joiners = [.. Enumerable.Range(0, 19).Select(_ => new FakeOpen())];
+        ReleaseRecorder[] releases = [.. joiners.Select(_ => new ReleaseRecorder())];
+        OracleException probeFailure = ConnectionRequestTimeout();
+
+        Task probing = Gate(key, probe.Open);
+        Task[] joined = [.. joiners.Select((joiner, index) => Gate(key, joiner.Open, releases[index].Release))];
+        await Task.Delay(ShortDeadline);
+
+        Assert.Equal(1, probe.Calls);
+        Assert.All(joiners, joiner => Assert.Equal(0, joiner.Calls));
+        Assert.All(joined, task => Assert.False(task.IsCompleted));
+
+        probe.Fail(probeFailure);
+        Assert.Same(probeFailure, await Assert.ThrowsAsync<OracleException>(() => probing.WaitAsync(Prompt)));
+        Assert.True(probeFailure.Data[OracleErrorParser.DuringOpenKey] is true);
+        for (int index = 0; index < joined.Length; index++)
+        {
+            Task task = joined[index];
+            OracleOpenReleasedException released = await Assert.ThrowsAsync<OracleOpenReleasedException>(() => task.WaitAsync(Prompt));
+            Assert.Same(probeFailure, released.InnerException);
+            Assert.True(released.Data[OracleErrorParser.DuringOpenKey] is true);
+            Assert.Null(releases[index].Abandoned);
+            Assert.Same(released, releases[index].Failure);
+        }
+
+        Assert.All(joiners, joiner => Assert.Equal(0, joiner.Calls));
+    }
+
+    [Fact]
+    [Trait("Decision", "D-161")]
+    public async Task OpenThroughGate_ColdGateProbeSucceeds_JoinedOpensOpenThemselvesAndLaterOpensOpenAtOnce()
+    {
+        string key = GateKey();
+        var probe = new FakeOpen();
+        var joiners = new[] { new FakeOpen(), new FakeOpen() };
+
+        Task probing = Gate(key, probe.Open);
+        Task[] joined = [.. joiners.Select(joiner => Gate(key, joiner.Open))];
+        Assert.Equal(1, probe.Calls);
+        Assert.All(joiners, joiner => Assert.Equal(0, joiner.Calls));
+
+        probe.Succeed();
+        await probing.WaitAsync(Prompt);
+        await Task.WhenAll(joiners.Select(joiner => joiner.Called)).WaitAsync(Prompt);
+
+        var next = new[] { new FakeOpen(), new FakeOpen() };
+        Task[] opens = [.. next.Select(open => Gate(key, open.Open))];
+
+        Assert.All(next, open => Assert.Equal(1, open.Calls));
+        Assert.All(joined, task => Assert.False(task.IsCompleted));
+        Assert.All(joiners, joiner => joiner.Succeed());
+        Assert.All(next, open => open.Succeed());
+        await Task.WhenAll(joined.Concat(opens)).WaitAsync(Prompt);
+        Assert.All(joiners, joiner => Assert.Equal(1, joiner.Calls));
     }
 
     [Fact]
@@ -768,6 +832,7 @@ public sealed class OracleSessionDeadlineTests
     public async Task OpenThroughGate_CallerCancelledOpen_IsNotPublished()
     {
         string key = GateKey();
+        await PrimeHealthy(key);
         var cancelled = new FakeOpen();
         var driverCancelled = new FakeOpen(failWhenCancelled: new SocketException((int)SocketError.OperationAborted));
         var waiting = new FakeOpen();
@@ -828,6 +893,7 @@ public sealed class OracleSessionDeadlineTests
     public async Task OpenThroughGate_NonOutageFailure_IsNotPublished()
     {
         string key = GateKey();
+        await PrimeHealthy(key);
         var failing = new FakeOpen();
         var waiting = new FakeOpen();
         var notAnOutage = new InvalidOperationException("connection already open");
@@ -869,6 +935,7 @@ public sealed class OracleSessionDeadlineTests
     public async Task OpenThroughGate_ReleasedOpenFaultingLaterWithAnOutage_ReleasesTheOpensWaitingThen()
     {
         string key = GateKey();
+        await PrimeHealthy(key);
         var failing = new FakeOpen();
         var abandoned = new FakeOpen();
         var probe = new FakeOpen();
@@ -976,6 +1043,7 @@ public sealed class OracleSessionDeadlineTests
         foreach (Func<OracleException> outage in new Func<OracleException>[] { RefusedConnect, ConnectionRequestTimeout })
         {
             string key = GateKey();
+            await PrimeHealthy(key);
             var failing = new FakeOpen();
             var waiting = new FakeOpen();
             OracleException failure = outage();
@@ -1048,10 +1116,14 @@ public sealed class OracleSessionDeadlineTests
         CancellationToken cancellationToken = default) =>
         OracleSessionFactory.OpenThroughGate(key, deadline ?? LongDeadline, open, release ?? NoRelease, cancellationToken);
 
-    /// <summary>Puts the gate of <paramref name="key"/> into failing mode with one open that fails with a socket failure.</summary>
+    /// <summary>Makes the gate of <paramref name="key"/> unhealthy with one open that fails with a socket failure.</summary>
     /// <param name="key">The gate key.</param>
     private static async Task PrimeFailing(string key) =>
         await Assert.ThrowsAsync<SocketException>(() => Gate(key, _ => Task.FromException(new SocketException((int)SocketError.ConnectionRefused))));
+
+    /// <summary>Makes the gate of <paramref name="key"/> healthy with one open that succeeds.</summary>
+    /// <param name="key">The gate key.</param>
+    private static Task PrimeHealthy(string key) => Gate(key, _ => Task.CompletedTask);
 
     /// <summary>Releases nothing.</summary>
     private static ValueTask NoRelease(Task? abandoned, Exception failure) => ValueTask.CompletedTask;

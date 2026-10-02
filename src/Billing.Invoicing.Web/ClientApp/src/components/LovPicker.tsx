@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { InputHTMLAttributes, UIEvent } from 'react';
+import { flushSync } from 'react-dom';
 import { ApiError, getLov } from '../api/client';
 import type { LovBinds as ApiLovBinds, LovResponse, MessageDto } from '../api/types';
 import FieldMessage, { fieldMessageRefs } from './FieldMessage';
@@ -61,11 +62,11 @@ type ColumnLevels = { hard: number[]; soft: number[]; natural: number[] };
 /** Column widths in pixels, and the table width when the minimums overflow the scroller. */
 type ColumnLayout = { widths: number[]; tableWidth: number | null };
 
-/** One rendered body row, or a gap standing in for unrendered rows. */
-type WindowPart = { kind: 'row'; position: number } | { kind: 'gap'; rows: number; ordinal: number };
+/** One rendered body row, or a gap standing in for unrendered rows, with the position of the row it precedes (null at the end). */
+type WindowPart = { kind: 'row'; position: number } | { kind: 'gap'; rows: number; before: number | null };
 
-/** Rows rendered above and below the scroll viewport. */
-const OVERSCAN = 6;
+/** Fewest rows rendered above and below the scroll viewport. */
+const MIN_OVERSCAN = 12;
 
 /** Rows rendered before the scroll viewport is measured. */
 const INITIAL_ROW_COUNT = 25;
@@ -375,17 +376,15 @@ function windowParts(total: number, start: number, end: number, pinned: number |
   }
   const parts: WindowPart[] = [];
   let next = 0;
-  let gaps = 0;
   for (const position of positions) {
     if (position > next) {
-      parts.push({ kind: 'gap', rows: position - next, ordinal: gaps });
-      gaps += 1;
+      parts.push({ kind: 'gap', rows: position - next, before: position });
     }
     parts.push({ kind: 'row', position });
     next = position + 1;
   }
   if (total > next) {
-    parts.push({ kind: 'gap', rows: total - next, ordinal: gaps });
+    parts.push({ kind: 'gap', rows: total - next, before: null });
   }
   return parts;
 }
@@ -502,10 +501,12 @@ export default function LovPicker({ name, binds = {}, onPick, onClose }: LovPick
   const selectable = response !== null && !response.viewOnly;
   const total = filtered.length;
   const currentIndex = Math.max(0, Math.min(activeIndex, total - 1));
-  const start = Math.min(total, Math.max(0, firstVisible - OVERSCAN));
+  // Rows rendered on each side of the viewport: one viewport height, at least MIN_OVERSCAN.
+  const overscan = Math.max(MIN_OVERSCAN, Math.ceil(viewportHeight / rowHeight));
+  const start = Math.min(total, Math.max(0, firstVisible - overscan));
   const end =
     viewportHeight > 0
-      ? Math.min(total, firstVisible + Math.ceil(viewportHeight / rowHeight) + 1 + OVERSCAN)
+      ? Math.min(total, firstVisible + Math.ceil(viewportHeight / rowHeight) + 1 + overscan)
       : Math.min(total, start + INITIAL_ROW_COUNT);
   const pinned = selectable && total > 0 && (currentIndex < start || currentIndex >= end) ? currentIndex : null;
   const pageSize = Math.max(1, Math.floor((viewportHeight - headerHeight) / rowHeight));
@@ -616,8 +617,10 @@ export default function LovPicker({ name, binds = {}, onPick, onClose }: LovPick
     }
   };
 
+  // Renders the window for the new scroll offset synchronously within the scroll event.
   const onScroll = (event: UIEvent<HTMLDivElement>) => {
-    setFirstVisible(Math.floor(event.currentTarget.scrollTop / rowHeight));
+    const first = Math.floor(event.currentTarget.scrollTop / rowHeight);
+    flushSync(() => setFirstVisible(first));
   };
 
   const tableId = `${listId}-grid`;
@@ -733,7 +736,11 @@ export default function LovPicker({ name, binds = {}, onPick, onClose }: LovPick
             part.kind === 'row' ? (
               renderRow(part.position)
             ) : (
-              <tr key={`gap-${part.ordinal}`} className="lov-spacer" aria-hidden="true">
+              <tr
+                key={part.before === null ? 'gap-end' : `gap-before-${part.before}`}
+                className="lov-spacer"
+                aria-hidden="true"
+              >
                 <td colSpan={columns.length} style={{ blockSize: `${part.rows * rowHeight}px` }} />
               </tr>
             ),

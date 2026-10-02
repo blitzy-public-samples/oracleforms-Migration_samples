@@ -79,6 +79,7 @@ public sealed class InvoiceWorkflowService
     private const string KindField = "KIND";
     private const string LocalDocTypeItem = "LOCAL_DOC_TYPE";
 
+    private const string UnknownTargetText = "Unknown validation target.";
     private const string LineIndexText = "LineIndex must address a line of the draft.";
     private const string NullLineText = "Draft lines must not contain null entries.";
     private const string PackageServiceRequiredText = "Package service id is required.";
@@ -255,7 +256,7 @@ public sealed class InvoiceWorkflowService
             "SUB_PAYTYPE" or "RECORD" => await ValidateRecord(draft, cancellationToken),
             "LINE" or "SERVICEID" or "QTY" or "LDISCT" or "APPROV_REF_NO" or "PRICE" or "DISC" or "MY_DISC" =>
                 await ValidateLine(draft, request.LineIndex, operatorContext, cancellationToken),
-            _ => RejectedInput(TargetField, $"Unknown validation target '{request.Target}'."),
+            _ => RejectedInput(TargetField, UnknownTargetText),
         };
     }
 
@@ -428,6 +429,11 @@ public sealed class InvoiceWorkflowService
         if (!HasIssuedDraftDate(request.Draft))
         {
             return DraftDateRejected();
+        }
+
+        if (request.Draft.LinesRefusal is { } linesRefusal)
+        {
+            return LinesRefused(linesRefusal);
         }
 
         var engineLines = EngineLineCount(request.Draft.Lines ?? Array.Empty<InvoiceLineDraft>());
@@ -2884,10 +2890,17 @@ public sealed class InvoiceWorkflowService
         Trimmed(serviceId) is { } id
         && requestedServices.Contains(id);
 
-    /// <summary>Returns the draft with the operator identity and the server-owned fields reset; refuses a null line, or a PATIENTNO, CLAIM_NO, VISIT_UNIQUE, COMP_CODE, CURR_CODE, CLAIM_FLAG, NOTE_NO or line SERVICEID, LDISCT, TEETH_NO, TOOTH_SURFACE, TEETH_NO2 or APPROV_REF_NO wider than its item, before any read.</summary>
+    /// <summary>Returns the draft with the operator identity and the server-owned fields reset; refuses lines left unbound over the line cap, a null line, or a PATIENTNO, CLAIM_NO, VISIT_UNIQUE, COMP_CODE, CURR_CODE, CLAIM_FLAG, NOTE_NO or line SERVICEID, LDISCT, TEETH_NO, TOOTH_SURFACE, TEETH_NO2 or APPROV_REF_NO wider than its item, before any read.</summary>
     private static DraftDto Sanitize(DraftDto draft, OperatorContext operatorContext)
     {
         ArgumentNullException.ThrowIfNull(draft);
+
+        if (draft.LinesRefusal is { } linesRefusal)
+        {
+            var refused = new ArgumentException(linesRefusal, nameof(draft));
+            refused.Data[ProblemDetailsWriter.MessagesDataKey] = new[] { Blocking(LineField, linesRefusal) };
+            throw refused;
+        }
 
         var lines = draft.Lines ?? Array.Empty<InvoiceLineDraft>();
         if (lines.Any(line => line is null))
@@ -3395,6 +3408,13 @@ public sealed class InvoiceWorkflowService
                     CultureInfo.InvariantCulture,
                     $"The draft expands to {engineLines} invoice lines; an invoice can be created with at most {maxLines} lines.")),
         },
+        OpenItems = Array.Empty<string>(),
+    };
+
+    /// <summary>Returns the outcome of a draft whose lines were left unbound over the line cap, carrying the refusal on LINE.</summary>
+    private static CreateInvoiceOutcome LinesRefused(string refusal) => new()
+    {
+        Messages = new[] { Blocking(LineField, refusal) },
         OpenItems = Array.Empty<string>(),
     };
 

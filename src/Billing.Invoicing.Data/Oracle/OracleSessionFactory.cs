@@ -94,7 +94,7 @@ public sealed class OracleSessionFactory : IOracleSessionFactory
         return connection;
     }
 
-    /// <summary>Opens through the gate of one connection string: while its opens fail, one open probes and the others await its outcome, and an outage failure releases every open waiting at that moment (D-161).</summary>
+    /// <summary>Opens through the gate of one connection string: until an open succeeds, and again after an outage, one open probes and the others await its outcome; an outage failure releases every open waiting at that moment (D-161).</summary>
     /// <param name="key">The connection string that names the gate.</param>
     /// <param name="deadline">Time the whole open may take, waits for a probing open included.</param>
     /// <param name="open">Starts the open with a token that is cancelled at the deadline or by the caller; called at most once.</param>
@@ -130,7 +130,7 @@ public sealed class OracleSessionFactory : IOracleSessionFactory
             lock (gate.Sync)
             {
                 cohort = gate.Cohort;
-                if (gate.Failing)
+                if (!gate.Healthy)
                 {
                     if (gate.Probe is { } current)
                     {
@@ -193,7 +193,7 @@ public sealed class OracleSessionFactory : IOracleSessionFactory
 
             lock (gate.Sync)
             {
-                gate.Failing = false;
+                gate.Healthy = true;
                 ClearProbe(gate, probe);
             }
 
@@ -271,7 +271,7 @@ public sealed class OracleSessionFactory : IOracleSessionFactory
         probe?.TrySetResult(null);
     }
 
-    /// <summary>Marks the gate failing and releases every open waiting on it with the outage failure.</summary>
+    /// <summary>Marks the gate unhealthy and releases every open waiting on it with the outage failure.</summary>
     /// <param name="gate">The gate of the failed open's connection string.</param>
     /// <param name="probe">The outcome of the failed open when it is the probing open, else null.</param>
     /// <param name="failure">The outage failure.</param>
@@ -280,7 +280,7 @@ public sealed class OracleSessionFactory : IOracleSessionFactory
         TaskCompletionSource<Exception> released;
         lock (gate.Sync)
         {
-            gate.Failing = true;
+            gate.Healthy = false;
             released = gate.Cohort;
             gate.Cohort = NewCohort();
             ClearProbe(gate, probe);
@@ -353,7 +353,7 @@ public sealed class OracleSessionFactory : IOracleSessionFactory
         }
     }
 
-    /// <summary>Open state shared by the opens of one connection string (D-161).</summary>
+    /// <summary>Open state shared by the opens of one connection string; it probes until an open succeeds and again after an outage (D-161).</summary>
     private sealed class OpenGate
     {
         /// <summary>Guards the other members.</summary>
@@ -362,10 +362,10 @@ public sealed class OracleSessionFactory : IOracleSessionFactory
         /// <summary>Completed with the next published outage failure, releasing the opens that captured it.</summary>
         public TaskCompletionSource<Exception> Cohort { get; set; } = NewCohort();
 
-        /// <summary>Whether the last published open outcome is an outage.</summary>
-        public bool Failing { get; set; }
+        /// <summary>Whether an open of the connection string has succeeded since the gate was created or since its last published outage; while false, one open probes and the others await its outcome.</summary>
+        public bool Healthy { get; set; }
 
-        /// <summary>Outcome of the open probing a failing gate: null on success or when it gave up, else its failure; null when no open is probing.</summary>
+        /// <summary>Outcome of the probing open: null on success or when it gave up, else its failure; null when no open is probing.</summary>
         public TaskCompletionSource<Exception?>? Probe { get; set; }
     }
 }
