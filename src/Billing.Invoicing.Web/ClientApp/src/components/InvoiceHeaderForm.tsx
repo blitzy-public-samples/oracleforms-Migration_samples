@@ -457,6 +457,14 @@ export default function InvoiceHeaderForm({
   const clinicMessages = targetMessages(state, 'CLINICID');
   const deptWiseMessages = targetMessages(state, 'DEPT_WISE');
   const callMessages = targetMessages(state, 'CALL');
+  // Mapped Oracle error of OFERID only; its field-validation messages stay form level (D-173).
+  const offerError = fieldErrorFor(state, 'OFERID');
+  const offerMessages: TargetMessages = {
+    messages: [],
+    refs: [],
+    fieldError: offerError === null ? null : { text: offerError.text, oracleErrorNumber: offerError.oracleErrorNumber },
+    invalid: offerError !== null,
+  };
 
   const validating = (target: HeaderTarget): boolean => busyTargets.has(target);
   const inputClass = (invalid = false, busy = false): string | undefined =>
@@ -848,6 +856,8 @@ export default function InvoiceHeaderForm({
                 disabled={notSavedDisabled}
                 tabIndex={-1}
                 className={notSavedClass}
+                aria-invalid={offerMessages.invalid || undefined}
+                {...messageAria(offerMessages, `${id}-oferid-msg`)}
                 title={titleOf(shown(header?.oferId))}
                 value={shown(header?.oferId)}
               />
@@ -862,6 +872,7 @@ export default function InvoiceHeaderForm({
                 {...readOnlyTextProps(nameOf('OFFER_NAME'))}
               />
             </div>
+            {renderMessages(offerMessages, `${id}-oferid-msg`)}
             <OpenItemNotice ids={NOT_SAVED_IDS} />
           </div>
         </div>

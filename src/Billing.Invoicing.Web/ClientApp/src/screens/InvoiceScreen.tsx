@@ -544,6 +544,8 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
   const savedStatusRef = useRef<HTMLDivElement>(null);
   const conflictRef = useRef<HTMLDivElement>(null);
   const outcomeRef = useRef<HTMLDivElement>(null);
+  /** Arrival number of the action outcome the operator dismissed, or null. */
+  const [dismissedOutcome, setDismissedOutcome] = useState<number | null>(null);
   const focusedCreate = useRef<object | null>(null);
   const focusHeaderOnLoad = useRef(false);
   const conflictCount = useRepeatCount(state.idempotencyConflict, outcomeKey);
@@ -1245,7 +1247,9 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
   ];
   const outcome = useActionOutcome(state, shownImport, importLabel.current);
   const outcomeItems = outcome === null || !outcome.withItems ? [] : outcomeOpenItems(state.openItems, outcome.source);
-  const hasOutcome = savedInvNo !== null || state.idempotencyConflict !== null || state.formError !== null || outcome !== null;
+  // A dismissed outcome stays hidden until an outcome with a new arrival number replaces it (D-174).
+  const shownOutcome = outcome !== null && outcome.seq !== dismissedOutcome ? outcome : null;
+  const hasOutcome = savedInvNo !== null || state.idempotencyConflict !== null || state.formError !== null || shownOutcome !== null;
   const outcomeSeq = outcome?.seq ?? null;
 
   // Focuses each arriving action outcome when focus was lost.
@@ -1371,6 +1375,25 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
     }, 0);
   };
 
+  /** Hides the action outcome with arrival number `seq` and, when focus falls to the body, focuses the first control after it that is still enabled. */
+  const dismissOutcome = (seq: number): void => {
+    const block = outcomeRef.current;
+    const following =
+      block === null || formRef.current === null
+        ? []
+        : Array.from(formRef.current.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+            (element) =>
+              !block.contains(element) && (block.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+          );
+    setDismissedOutcome(seq);
+    window.setTimeout(() => {
+      const active = document.activeElement;
+      if (active === null || active === document.body) {
+        following.find((element) => element.isConnected && element.matches(FOCUSABLE))?.focus();
+      }
+    }, 0);
+  };
+
   /** Saves on form submission without navigating. */
   const onSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
@@ -1460,12 +1483,20 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
             </div>
           )}
 
-          {outcome !== null && (
+          {shownOutcome !== null && (
             <div ref={outcomeRef} className="outcome-notice" role="status" tabIndex={-1}>
-              <span key={outcome.seq} className={outcome.count > 1 ? 'outcome-flash' : undefined}>
-                {outcomeText(outcome, state.messages, state.openItems, shownImport)}
-                {outcome.count > 1 && ` ${repeatNote(outcome.count, 'repeated')}`}
+              <span key={shownOutcome.seq} className={shownOutcome.count > 1 ? 'outcome-flash' : undefined}>
+                {outcomeText(shownOutcome, state.messages, state.openItems, shownImport)}
+                {shownOutcome.count > 1 && ` ${repeatNote(shownOutcome.count, 'repeated')}`}
               </span>
+              <button
+                type="button"
+                className="msg-dismiss"
+                aria-label="Dismiss outcome"
+                onClick={() => dismissOutcome(shownOutcome.seq)}
+              >
+                ×
+              </button>
             </div>
           )}
         </div>

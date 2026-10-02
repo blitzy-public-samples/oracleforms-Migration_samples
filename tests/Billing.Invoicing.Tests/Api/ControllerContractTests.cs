@@ -892,6 +892,44 @@ public sealed class ControllerContractTests
         Assert.Equal(0, context.Response.Body.Length);
     }
 
+    [Theory]
+    [InlineData("/api/drafts/validate", 413, "content-too-large", "Content too large", "The request body is larger than the Api accepts.")]
+    [InlineData("/api/invoices/preview", 413, "content-too-large", "Content too large", "The request body is larger than the Api accepts.")]
+    [InlineData("/api/invoices", 413, "content-too-large", "Content too large", "The request body is larger than the Api accepts.")]
+    [InlineData("/api/imports/requests", 413, "content-too-large", "Content too large", "The request body is larger than the Api accepts.")]
+    [InlineData("/api/imports/visit-line", 413, "content-too-large", "Content too large", "The request body is larger than the Api accepts.")]
+    [InlineData("/api/imports/package", 413, "content-too-large", "Content too large", "The request body is larger than the Api accepts.")]
+    [InlineData("/api/imports/bundled-offer", 413, "content-too-large", "Content too large", "The request body is larger than the Api accepts.")]
+    [InlineData("/api/drafts/validate", 400, "bad-request", "Bad request", "The request body could not be read.")]
+    [InlineData("/api/invoices/preview", 400, "bad-request", "Bad request", "The request body could not be read.")]
+    [InlineData("/api/invoices", 400, "bad-request", "Bad request", "The request body could not be read.")]
+    [InlineData("/api/imports/requests", 400, "bad-request", "Bad request", "The request body could not be read.")]
+    [InlineData("/api/imports/visit-line", 400, "bad-request", "Bad request", "The request body could not be read.")]
+    [InlineData("/api/imports/package", 400, "bad-request", "Bad request", "The request body could not be read.")]
+    [InlineData("/api/imports/bundled-offer", 400, "bad-request", "Bad request", "The request body could not be read.")]
+    public async Task Pipeline_RefusedRequestBodyRead_WritesItsClientErrorWithoutCallingAPort(
+        string path,
+        int status,
+        string type,
+        string title,
+        string message)
+    {
+        var fakes = new FakeDataPorts();
+
+        var context = await SendForContextAsync(fakes, "POST", path, null, JsonContentType, new RefusedReadStream(status));
+
+        Assert.Equal(status, context.Response.StatusCode);
+        Assert.Equal(ProblemJson, context.Response.ContentType);
+        var body = await Body(context);
+        Assert.Equal(new[] { "type", "title", "status", "message" }, Members(body));
+        Assert.Equal(type, body.GetProperty("type").GetString());
+        Assert.Equal(title, body.GetProperty("title").GetString());
+        Assert.Equal(status, body.GetProperty("status").GetInt32());
+        Assert.Equal(message, body.GetProperty("message").GetString());
+        Assert.DoesNotContain(RefusedReadStream.Marker, body.GetRawText(), StringComparison.Ordinal);
+        Assert.Empty(fakes.Journal);
+    }
+
     /// <summary>Sends one request with the operator headers and an optional JSON body through the controllers, the exception handler and the operator-context middleware, in-process.</summary>
     private static async Task<(int Status, string? ContentType, JsonElement Body)> SendAsync(FakeDataPorts fakes, string method, string path, string? json = null)
     {
@@ -906,8 +944,15 @@ public sealed class ControllerContractTests
     /// <param name="path">Request path with an optional query string.</param>
     /// <param name="requestBody">Request body text; none when null.</param>
     /// <param name="contentType">Request content type; none when null.</param>
+    /// <param name="requestStream">Request body stream, used in place of <paramref name="requestBody"/>; none when null.</param>
     /// <returns>The request after the pipeline has answered it.</returns>
-    private static async Task<HttpContext> SendForContextAsync(FakeDataPorts fakes, string method, string path, string? requestBody, string? contentType)
+    private static async Task<HttpContext> SendForContextAsync(
+        FakeDataPorts fakes,
+        string method,
+        string path,
+        string? requestBody,
+        string? contentType,
+        Stream? requestStream = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -947,7 +992,11 @@ public sealed class ControllerContractTests
             context.Request.ContentType = contentType;
         }
 
-        if (requestBody is not null)
+        if (requestStream is not null)
+        {
+            context.Request.Body = requestStream;
+        }
+        else if (requestBody is not null)
         {
             context.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(requestBody));
         }
@@ -974,5 +1023,34 @@ public sealed class ControllerContractTests
         Assert.Equal("REQUEST_ID", message.GetProperty("field").GetString());
         Assert.Equal(RequestIdText, message.GetProperty("text").GetString());
         Assert.Empty(fakes.Journal);
+    }
+
+    /// <summary>Request body whose every read throws a <see cref="BadHttpRequestException"/> with the given status, as the server does for an oversized or misframed body.</summary>
+    /// <param name="status">Status the refusal carries.</param>
+    private sealed class RefusedReadStream(int status) : MemoryStream
+    {
+        /// <summary>Text carried in the refusal message.</summary>
+        public const string Marker = "SECRET-BODY-TEXT";
+
+        /// <inheritdoc/>
+        public override int Read(byte[] buffer, int offset, int count) => throw Refusal();
+
+        /// <inheritdoc/>
+        public override int Read(Span<byte> buffer) => throw Refusal();
+
+        /// <inheritdoc/>
+        public override int ReadByte() => throw Refusal();
+
+        /// <inheritdoc/>
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            Task.FromException<int>(Refusal());
+
+        /// <inheritdoc/>
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            ValueTask.FromException<int>(Refusal());
+
+        /// <summary>Builds the refusal the server raises for the body.</summary>
+        /// <returns>The refusal.</returns>
+        private BadHttpRequestException Refusal() => new($"Request body refused. {Marker}", status);
     }
 }

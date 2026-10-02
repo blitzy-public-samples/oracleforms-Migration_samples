@@ -25,6 +25,8 @@ public sealed class ProblemDetailsWriter
     private const string NotFoundType = "not-found";
     private const string MethodNotAllowedType = "method-not-allowed";
     private const string UnsupportedMediaTypeType = "unsupported-media-type";
+    private const string ContentTooLargeType = "content-too-large";
+    private const string BadRequestType = "bad-request";
     private const string AboutBlankType = "about:blank";
     private const string ApiPathPrefix = "/api";
 
@@ -37,11 +39,15 @@ public sealed class ProblemDetailsWriter
     private const string NotFoundTitle = "Not found";
     private const string MethodNotAllowedTitle = "Method not allowed";
     private const string UnsupportedMediaTypeTitle = "Unsupported media type";
+    private const string ContentTooLargeTitle = "Content too large";
+    private const string BadRequestTitle = "Bad request";
     private const string InternalServerErrorTitle = "Internal Server Error";
 
     private const string RouteNotFoundMessage = "No resource matches the request path.";
     private const string MethodNotAllowedMessage = "The request method is not allowed for this resource.";
     private const string UnsupportedMediaTypeMessage = "The request body must be sent as application/json.";
+    private const string ContentTooLargeMessage = "The request body is larger than the Api accepts.";
+    private const string BadRequestMessage = "The request body could not be read.";
 
     /// <summary>Web-default serializer options with string enums, relaxed escaping and dictionary keys written as given.</summary>
     private static readonly JsonSerializerOptions Options = CreateOptions();
@@ -56,7 +62,7 @@ public sealed class ProblemDetailsWriter
         _translator = translator;
     }
 
-    /// <summary>Writes the exception held by the request's <see cref="IExceptionHandlerFeature"/> as its error-contract body: a 422 <c>field-validation</c> for an <see cref="ArgumentException"/> carrying blocking messages, a bare 500 for any other untranslated exception.</summary>
+    /// <summary>Writes the exception held by the request's <see cref="IExceptionHandlerFeature"/> as its error-contract body: a 422 <c>field-validation</c> for an <see cref="ArgumentException"/> carrying blocking messages, a 413 <c>content-too-large</c> or 4xx <c>bad-request</c> for a refused request-body read, a bare 500 for any other untranslated exception.</summary>
     /// <param name="context">The failed request.</param>
     /// <returns>A task that completes when the body is written, or at once when the response has started.</returns>
     public Task WriteAsync(HttpContext context)
@@ -77,6 +83,12 @@ public sealed class ProblemDetailsWriter
         DataFailure? failure = _translator.Translate(error);
         if (failure is null)
         {
+            // A request body the server refused to read is answered with a fixed message, never the exception text.
+            if (error is BadHttpRequestException refusal)
+            {
+                return WriteBodyReadRefusalAsync(context, refusal.StatusCode);
+            }
+
             return TryReadRequestValidation(error, out IReadOnlyList<MessageDto>? messages, out IReadOnlyList<string> openItems)
                 ? WriteAsync(context, messages, openItems)
                 : WriteBareServerErrorAsync(context);
@@ -462,6 +474,25 @@ public sealed class ProblemDetailsWriter
         context,
         StatusCodes.Status500InternalServerError,
         Problem(AboutBlankType, InternalServerErrorTitle, StatusCodes.Status500InternalServerError));
+
+    /// <summary>Writes a 413 <c>content-too-large</c> body, or a <c>bad-request</c> body with the refusal's 4xx status (else 400), each with a fixed message.</summary>
+    /// <param name="context">The request to answer.</param>
+    /// <param name="refusalStatus">Status carried by the request-body refusal.</param>
+    /// <returns>A task that completes when the body is written.</returns>
+    private static Task WriteBodyReadRefusalAsync(HttpContext context, int refusalStatus)
+    {
+        (string Type, string Title, int Status, string Message) refusal = refusalStatus switch
+        {
+            StatusCodes.Status413PayloadTooLarge => (ContentTooLargeType, ContentTooLargeTitle, refusalStatus, ContentTooLargeMessage),
+            >= StatusCodes.Status400BadRequest and < StatusCodes.Status500InternalServerError => (BadRequestType, BadRequestTitle, refusalStatus, BadRequestMessage),
+            _ => (BadRequestType, BadRequestTitle, StatusCodes.Status400BadRequest, BadRequestMessage),
+        };
+
+        Dictionary<string, object?> body = Problem(refusal.Type, refusal.Title, refusal.Status);
+        body["message"] = refusal.Message;
+
+        return WriteBodyAsync(context, refusal.Status, body);
+    }
 
     /// <summary>Sets the status and problem-json content type, then serializes the body to the response.</summary>
     /// <param name="context">The request to answer.</param>

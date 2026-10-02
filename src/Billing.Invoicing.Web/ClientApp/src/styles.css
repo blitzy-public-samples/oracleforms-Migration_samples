@@ -703,6 +703,11 @@ html:has(.connectivity-banner) {
   justify-content: space-between;
 }
 
+/* Payment Status caption keeps its width; the status beside it wraps (D-174). */
+.totals-panel .summary-status > :first-child {
+  flex: none;
+}
+
 /* Waiting List, Totals and Payment panels from their basis sizes, wrapping when narrow (D-124, D-168). */
 .lower-band {
   display: flex;
@@ -1017,17 +1022,19 @@ html:has(.connectivity-banner) {
   margin-block-start: var(--space-1);
 }
 
+/* Payment status pill; its text wraps inside the Totals row or the action bar, and a one-line pill keeps fully rounded ends (D-150, D-174). */
 .payment-status {
   display: inline-block;
+  max-inline-size: 100%;
   padding-block: var(--space-1);
   padding-inline: var(--space-4);
   border: var(--border-width) solid var(--color-status-border);
-  border-radius: 999px;
+  border-radius: calc(0.5lh + var(--space-1) + var(--border-width));
   background-color: var(--color-status-bg);
   color: var(--color-grid-header-text);
   font-size: var(--font-size-small);
   font-weight: 700;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .payment-status:empty {
@@ -1043,6 +1050,7 @@ html:has(.connectivity-banner) {
 }
 
 /* Outcomes */
+/* Sticky strip at most 40% of the viewport tall, scrolling its own content beyond that (D-143, D-174). */
 .outcome-strip {
   position: sticky;
   inset-block-start: var(--outcome-strip-offset, 0px);
@@ -1050,6 +1058,8 @@ html:has(.connectivity-banner) {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  max-block-size: 40vh;
+  overflow-y: auto;
   margin-inline: calc(-1 * var(--screen-padding, var(--space-5)));
   padding-block: var(--space-3);
   padding-inline: var(--screen-padding, var(--space-5));
@@ -1079,7 +1089,11 @@ html:has(.connectivity-banner) {
   font-weight: 600;
 }
 
+/* Outcome text, then its dismiss button at the end (D-174). */
 .outcome-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
   padding-block: var(--space-3);
   padding-inline: var(--space-5);
   border: var(--border-width) solid var(--color-notice-border);

@@ -32,6 +32,7 @@ public sealed class ProblemDetailsExceptionHandlerTests
     private const string MiddlewareCategory = "Microsoft.AspNetCore.Diagnostics.ExceptionHandlerMiddleware";
     private const string ActionInvokerCategory = "Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker";
     private const string HostingCategory = "Microsoft.AspNetCore.Hosting.Diagnostics";
+    private const string MatcherCategory = "Microsoft.AspNetCore.Routing.Matching.DfaMatcher";
     private const string HandledExceptionEvent = "Microsoft.AspNetCore.Diagnostics.HandledException";
 
     private const string IdempotencyText = "Invoice request " + RequestId + " refers to unavailable invoice " + InvoiceNo + ".";
@@ -145,6 +146,30 @@ public sealed class ProblemDetailsExceptionHandlerTests
         Assert.Equal(StatusCodes.Status503ServiceUnavailable, Value(record, "StatusCode"));
         Assert.Equal(DataFailure.OracleUnavailableType, Value(record, "FailureType"));
         Assert.Equal(12541, Value(record, "OracleErrorNumber"));
+    }
+
+    [Fact]
+    public async Task OversizedBodyRefusal_Writes413AndLogsAtInformationWithoutTextOrPath()
+    {
+        var run = await SendAsync(new BadHttpRequestException(
+            $"Request body too large for patient {PatientNo}: {Secret}.",
+            StatusCodes.Status413PayloadTooLarge));
+
+        Assert.Equal(StatusCodes.Status413PayloadTooLarge, run.Status);
+        Assert.Equal(ProblemJson, run.ContentType);
+        JsonElement body = Assert.NotNull(run.Body);
+        Assert.Equal("content-too-large", body.GetProperty("type").GetString());
+        Assert.Equal(413, body.GetProperty("status").GetInt32());
+
+        AssertNoFrameworkDiagnostics(run);
+        AssertRedacted(run.Logs, Secret, PatientNo, CoveragePath);
+        LogRecord record = Assert.Single(run.Logs, candidate => candidate.Category == HandlerCategory);
+        Assert.Equal(LogLevel.Information, record.Level);
+        Assert.Null(record.Exception);
+        Assert.Equal(CoverageRoute, Value(record, "RouteTemplate"));
+        Assert.Equal(StatusCodes.Status413PayloadTooLarge, Value(record, "StatusCode"));
+        Assert.Null(Value(record, "FailureType"));
+        Assert.Equal(typeof(BadHttpRequestException).FullName, Value(record, "ExceptionTypes"));
     }
 
     [Fact]
@@ -265,14 +290,41 @@ public sealed class ProblemDetailsExceptionHandlerTests
     }
 
     [Fact]
-    public void ShippedLogging_WithoutOverride_KeepsFrameworkRequestLinesAtInformation()
+    public void ShippedLogging_WithoutOverride_CapsTheHostingRequestLinesAtWarning()
     {
         using var logs = new CapturingLoggerProvider();
         using ServiceProvider provider = ShippedLogging(logs, defaultLevel: null);
         ILoggerFactory factory = provider.GetRequiredService<ILoggerFactory>();
+        ILogger hosting = factory.CreateLogger(HostingCategory);
 
-        Assert.True(factory.CreateLogger(HostingCategory).IsEnabled(LogLevel.Information));
+        Assert.False(hosting.IsEnabled(LogLevel.Information));
+        Assert.True(hosting.IsEnabled(LogLevel.Warning));
         Assert.True(factory.CreateLogger(ActionInvokerCategory).IsEnabled(LogLevel.Information));
+    }
+
+    [Fact]
+    public void ShippedLogging_DefaultTraceOverride_CapsTheHostingRequestLinesAtWarning()
+    {
+        using var logs = new CapturingLoggerProvider();
+        using ServiceProvider provider = ShippedLogging(logs, LogLevel.Trace);
+        ILogger logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger(HostingCategory);
+
+        Assert.False(logger.IsEnabled(LogLevel.Trace));
+        Assert.False(logger.IsEnabled(LogLevel.Debug));
+        Assert.False(logger.IsEnabled(LogLevel.Information));
+        Assert.True(logger.IsEnabled(LogLevel.Warning));
+    }
+
+    [Fact]
+    public void ShippedLogging_DefaultTraceOverride_CapsTheRouteMatcherAtInformation()
+    {
+        using var logs = new CapturingLoggerProvider();
+        using ServiceProvider provider = ShippedLogging(logs, LogLevel.Trace);
+        ILogger logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger(MatcherCategory);
+
+        Assert.False(logger.IsEnabled(LogLevel.Trace));
+        Assert.False(logger.IsEnabled(LogLevel.Debug));
+        Assert.True(logger.IsEnabled(LogLevel.Information));
     }
 
     /// <summary>Sends a GET that throws the exception through routing, the Api's exception-handler delegate and, when registered, the handler, in-process.</summary>

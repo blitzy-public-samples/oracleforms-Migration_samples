@@ -336,7 +336,7 @@ public sealed class InvoiceWorkflowService
             return new PreviewResponse { Messages = clientIdMessages };
         }
 
-        var profileReads = new ProfileReads(_lookups);
+        var profileReads = new ProfileReads(_lookups, _invoices, sanitized.Parameters.VisitUnique);
         var parameters = sanitized.Parameters;
         var context = await ReadServerContext(sanitized, patientCompanyFirst: false, cancellationToken);
         var header = context.Header;
@@ -357,7 +357,7 @@ public sealed class InvoiceWorkflowService
         var findings = new Findings();
         var isDirect = profileReads.CompanyIsDirect(header, cancellationToken);
         await AddPriceOverrideRules(
-            findings, header, sanitized.Lines, profiles.ByLine, preview, isDirect, cancellationToken);
+            findings, header, sanitized.Lines, profiles.ByLine, preview, profileReads, cancellationToken);
         var priceEditableClientIds = new List<string>();
         for (var index = 0; index < sanitized.Lines.Count; index++)
         {
@@ -488,7 +488,7 @@ public sealed class InvoiceWorkflowService
             header, Array.Empty<ServiceProfile>(), gate.CardId, gate.MaxDeductable, gate.UseAdvanced, parameters);
         var previewAllowed = !headerGate.Contains(OpenItemIds.OI23, StringComparer.Ordinal) && clientIdMessages.Count == 0;
 
-        var profileReads = new ProfileReads(_lookups);
+        var profileReads = new ProfileReads(_lookups, _invoices, parameters.VisitUnique);
         var succeeded = new List<PreviewResult>();
         LineContext lineContext;
         IReadOnlyDictionary<decimal, IReadOnlySet<string>> requested;
@@ -541,7 +541,7 @@ public sealed class InvoiceWorkflowService
         }
 
         await AddPriceOverrideRules(
-            findings, header, lines, profiles.ByLine, lineContext.Preview, profileReads.CompanyIsDirect(header, cancellationToken), cancellationToken);
+            findings, header, lines, profiles.ByLine, lineContext.Preview, profileReads, cancellationToken);
 
         var gateIds = new SortedSet<string>(
             OpenItemGate.Evaluate(header, profiles.TopLevel, gate.CardId, gate.MaxDeductable, gate.UseAdvanced, parameters),
@@ -970,7 +970,7 @@ public sealed class InvoiceWorkflowService
             return new ImportResponse { Messages = clientIdMessages };
         }
 
-        var profileReads = new ProfileReads(_lookups);
+        var profileReads = new ProfileReads(_lookups, _invoices, draft.Parameters.VisitUnique);
         var (_, preview) = await ContextPreview(
             draft.Lines,
             LocallyRejectedLines(draft.Lines),
@@ -1277,8 +1277,9 @@ public sealed class InvoiceWorkflowService
             {
                 result = await _invoiceApi.CreateFullInvoice(
                     session, header, lines, operatorContext, requestId, cancellationToken);
+                var replayed = await AnsweredByReplay(requestId, RequireInvoiceNumber(result), cancellationToken);
 
-                if (ReceptionTransferRule.ShouldClear(isReplay: false, hasNewInvDocId: true)
+                if (ReceptionTransferRule.ShouldClear(isReplay: replayed, hasNewInvDocId: true)
                     && !await ClearReceptionTransfer(session, header.PatientNo, cancellationToken))
                 {
                     findings.Add(new MessageDto
@@ -1290,13 +1291,21 @@ public sealed class InvoiceWorkflowService
                     });
                 }
 
-                try
-                {
-                    await _legacy.ValidateTotalInvoice(session, RequireInvoiceNumber(result), cancellationToken);
-                }
-                catch (NotImplementedException failure) when (IsOpenItem(failure, OpenItemIds.OI20))
+                // A package replay skips the total check and lists OI-20.
+                if (replayed)
                 {
                     openItems.Add(OpenItemIds.OI20);
+                }
+                else
+                {
+                    try
+                    {
+                        await _legacy.ValidateTotalInvoice(session, RequireInvoiceNumber(result), cancellationToken);
+                    }
+                    catch (NotImplementedException failure) when (IsOpenItem(failure, OpenItemIds.OI20))
+                    {
+                        openItems.Add(OpenItemIds.OI20);
+                    }
                 }
             }
             catch (Exception)
@@ -1322,6 +1331,26 @@ public sealed class InvoiceWorkflowService
             Messages = findings.Warnings,
             OpenItems = openItems.ToArray(),
         };
+    }
+
+    /// <summary>Returns whether the package answered the create with its replay, read as a request row already committed for the returned invoice.</summary>
+    /// <exception cref="InvalidOperationException">The committed request row names another invoice than the one returned.</exception>
+    private async Task<bool> AnsweredByReplay(string requestId, long invNo, CancellationToken cancellationToken)
+    {
+        if (await _invoices.GetCreateRequest(requestId, cancellationToken) is not { } committed)
+        {
+            return false;
+        }
+
+        if (committed.InvNo != invNo)
+        {
+            throw new InvalidOperationException(
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"The package returned invoice {invNo}, which is not the invoice recorded for request {requestId}."));
+        }
+
+        return true;
     }
 
     private async Task<bool> ClearReceptionTransfer(IOracleSession session, string? patientNo, CancellationToken cancellationToken)
@@ -1425,7 +1454,7 @@ public sealed class InvoiceWorkflowService
         OperatorContext operatorContext,
         CancellationToken cancellationToken)
     {
-        var profileReads = new ProfileReads(_lookups);
+        var profileReads = new ProfileReads(_lookups, _invoices, draft.Parameters.VisitUnique);
         var parameters = draft.Parameters;
         var findings = new Findings();
         var header = ApplyDoctor(draft.Header, findings.Add(DoctorSelectionRules.Validate(draft.Header, parameters)));
@@ -1499,7 +1528,7 @@ public sealed class InvoiceWorkflowService
         OperatorContext operatorContext,
         CancellationToken cancellationToken)
     {
-        var profileReads = new ProfileReads(_lookups);
+        var profileReads = new ProfileReads(_lookups, _invoices, draft.Parameters.VisitUnique);
         var context = await ReadServerContext(draft, patientCompanyFirst: false, cancellationToken);
         var header = context.Header;
         await GuardDeductible(header, draft.Parameters, context, cancellationToken);
@@ -1534,7 +1563,7 @@ public sealed class InvoiceWorkflowService
         OperatorContext operatorContext,
         CancellationToken cancellationToken)
     {
-        var profileReads = new ProfileReads(_lookups);
+        var profileReads = new ProfileReads(_lookups, _invoices, draft.Parameters.VisitUnique);
         var context = await ReadServerContext(draft, patientCompanyFirst: false, cancellationToken);
         var header = context.Header;
         await GuardDeductible(header, draft.Parameters, context, cancellationToken);
@@ -1584,7 +1613,7 @@ public sealed class InvoiceWorkflowService
             return RejectedInput(LineField, LineIndexText);
         }
 
-        var profileReads = new ProfileReads(_lookups);
+        var profileReads = new ProfileReads(_lookups, _invoices, draft.Parameters.VisitUnique);
         var parameters = draft.Parameters;
         var context = await ReadServerContext(draft, patientCompanyFirst: false, cancellationToken);
         var header = context.Header with { ClaimNo = ClaimNumberRule.Build(context.Header, parameters) };
@@ -1632,7 +1661,7 @@ public sealed class InvoiceWorkflowService
         AddLineRules(findings, header, line, profile, lineContext.Preview, x422, RequestedFor(requested, profiles.Lists, index));
         var isDirect = profileReads.CompanyIsDirect(header, cancellationToken);
         await AddPriceOverrideRules(
-            findings, header, new[] { line }, new[] { profile }, lineContext.Preview, isDirect, cancellationToken);
+            findings, header, new[] { line }, new[] { profile }, lineContext.Preview, profileReads, cancellationToken);
         var priceEditable = await PriceEditable(header, line, profile, lineContext.Preview, isDirect);
         if (lineContext.Resolved)
         {
@@ -1724,7 +1753,7 @@ public sealed class InvoiceWorkflowService
             known.Select(index => lines[index]).ToArray(),
             known.Select(index => profiles[index]).ToArray(),
             null,
-            profileReads.CompanyIsDirect(header, cancellationToken),
+            profileReads,
             cancellationToken);
         return scratch.IsBlocking;
     }
@@ -1811,13 +1840,14 @@ public sealed class InvoiceWorkflowService
         IReadOnlyList<InvoiceLineDraft> lines,
         IReadOnlyList<ServiceProfile?> profiles,
         PreviewResult? preview,
-        Lazy<Task<int?>> isDirect,
+        ProfileReads profileReads,
         CancellationToken cancellationToken)
     {
+        var isDirect = profileReads.CompanyIsDirect(header, cancellationToken);
         for (var index = 0; index < lines.Count; index++)
         {
             var line = lines[index];
-            if (!IsManualPriceOverride(line))
+            if (!await IsManualPriceOverride(header, line, profileReads, cancellationToken))
             {
                 continue;
             }
@@ -1836,12 +1866,23 @@ public sealed class InvoiceWorkflowService
         }
     }
 
-    private static bool IsManualPriceOverride(InvoiceLineDraft line) =>
-        line.PriceOverride is not null && AcceptsManualPrice(line);
+    /// <summary>Returns true when the line's bound price override is the operator's: every override on a line that binds one, except on a selected request row of the line's service.</summary>
+    private static async Task<bool> IsManualPriceOverride(
+        InvoiceHeaderDraft header,
+        InvoiceLineDraft line,
+        ProfileReads profileReads,
+        CancellationToken cancellationToken) =>
+        line.PriceOverride is not null
+        && BindsPriceOverride(line)
+        && (line.PatServReqRowId is null || !await profileReads.IsSelectedRequestRow(header, line, cancellationToken));
 
     private static bool AcceptsManualPrice(InvoiceLineDraft line) =>
         line.PatServReqRowId is null
-        && !HasRole(line, ComponentRole)
+        && BindsPriceOverride(line);
+
+    /// <summary>Returns true when the line is neither a package component nor an offer line.</summary>
+    private static bool BindsPriceOverride(InvoiceLineDraft line) =>
+        !HasRole(line, ComponentRole)
         && line.OfferId is null
         && IsBlank(line.OfferLineRole);
 
@@ -2219,7 +2260,15 @@ public sealed class InvoiceWorkflowService
         ProfileReads profileReads,
         CancellationToken cancellationToken)
     {
-        var manual = lines.Where(IsManualPriceOverride).ToHashSet();
+        var manual = new HashSet<InvoiceLineDraft>();
+        foreach (var line in lines)
+        {
+            if (await IsManualPriceOverride(header, line, profileReads, cancellationToken))
+            {
+                manual.Add(line);
+            }
+        }
+
         var probe = await CalculatePreviewLines(header, WithoutPriceOverrides(lines, manual), operatorContext, cancellationToken);
         if (manual.Count == 0)
         {
@@ -2647,71 +2696,23 @@ public sealed class InvoiceWorkflowService
         }
 
         var own = Enumerable.Range(0, lines.Count).Select(Own).ToArray();
+        var listedComponents = await ReadPackageComponents(lines, lists, own, cancellationToken);
         var byLine = new ServiceProfile?[lines.Count];
         var nested = new bool[lines.Count];
+        var nestedByParent = NestComponents(lines, own, listedComponents, nested);
 
-        var componentsByInstance = new Dictionary<string, List<int>>(StringComparer.Ordinal);
         for (var index = 0; index < lines.Count; index++)
         {
-            if (!HasRole(lines[index], ComponentRole) || Trimmed(lines[index].PackageInstanceId) is not { } componentInstanceId)
+            if (own[index] is { } package && listedComponents[index] is { } packageRows)
             {
-                continue;
-            }
-
-            if (!componentsByInstance.TryGetValue(componentInstanceId, out var instanceComponents))
-            {
-                instanceComponents = new List<int>();
-                componentsByInstance[componentInstanceId] = instanceComponents;
-            }
-
-            instanceComponents.Add(index);
-        }
-
-        for (var parent = 0; parent < lines.Count; parent++)
-        {
-            if (!HasRole(lines[parent], ParentRole))
-            {
-                continue;
-            }
-
-            var components = new List<ServiceProfile>();
-            if (Trimmed(lines[parent].PackageInstanceId) is { } instanceId
-                && componentsByInstance.TryGetValue(instanceId, out var componentIndexes))
-            {
-                foreach (var component in componentIndexes)
+                byLine[index] = package with
                 {
-                    nested[component] = true;
-                    if (own[component] is { } componentProfile)
-                    {
-                        components.Add(componentProfile);
-                    }
-                }
+                    Components = PackageComponents(lines, own, nestedByParent[index], packageRows),
+                };
             }
-
-            var parentProfile = own[parent] ?? new ServiceProfile { ServiceId = Trimmed(lines[parent].ServiceId) };
-            byLine[parent] = parentProfile with { Components = components.ToArray() };
-        }
-
-        var packageComponents = new Dictionary<(decimal ListId, string PackageId), IReadOnlyList<ServiceProfile>>();
-        for (var index = 0; index < lines.Count; index++)
-        {
-            if (HasRole(lines[index], ParentRole))
+            else if (own[index] is null && HasRole(lines[index], ParentRole))
             {
-                continue;
-            }
-
-            if (own[index] is { IsPackage: 1 } package
-                && IsBlank(lines[index].PackageLineRole)
-                && Trimmed(package.ServiceId) is { } packageId
-                && lists[index] is { } packageListId)
-            {
-                if (!packageComponents.TryGetValue((packageListId, packageId), out var components))
-                {
-                    components = await _lookups.GetPackageComponentFlags(packageId, packageListId, cancellationToken);
-                    packageComponents[(packageListId, packageId)] = components;
-                }
-
-                byLine[index] = package with { Components = components };
+                byLine[index] = new ServiceProfile { ServiceId = Trimmed(lines[index].ServiceId) };
             }
             else
             {
@@ -2730,6 +2731,121 @@ public sealed class InvoiceWorkflowService
 
         return new ProfileSet(topLevel.ToArray(), byLine, lists.ToArray());
     }
+
+    /// <summary>Returns the PACKAGE_DTL component profiles of each line whose own profile is a package (IS_PACKAGE = 1), read once per list and package; null for every other line.</summary>
+    private async Task<IReadOnlyList<ServiceProfile>?[]> ReadPackageComponents(
+        IReadOnlyList<InvoiceLineDraft> lines,
+        IReadOnlyList<decimal?> lists,
+        IReadOnlyList<ServiceProfile?> own,
+        CancellationToken cancellationToken)
+    {
+        var read = new Dictionary<(decimal ListId, string PackageId), IReadOnlyList<ServiceProfile>>();
+        var listed = new IReadOnlyList<ServiceProfile>?[lines.Count];
+        for (var index = 0; index < lines.Count; index++)
+        {
+            if (own[index] is not { IsPackage: 1 } package
+                || lists[index] is not { } listId
+                || (Trimmed(package.ServiceId) ?? Trimmed(lines[index].ServiceId)) is not { } packageId)
+            {
+                continue;
+            }
+
+            if (!read.TryGetValue((listId, packageId), out var components))
+            {
+                components = await _lookups.GetPackageComponentFlags(packageId, listId, cancellationToken);
+                read[(listId, packageId)] = components;
+            }
+
+            listed[index] = components;
+        }
+
+        return listed;
+    }
+
+    /// <summary>Marks and returns, per package parent line, the COMPONENT lines nested under it: same trimmed instance id, a PARENT line whose PACKAGE_DTL lists the component's service, and a component that is not itself a package.</summary>
+    private static List<int>?[] NestComponents(
+        IReadOnlyList<InvoiceLineDraft> lines,
+        IReadOnlyList<ServiceProfile?> own,
+        IReadOnlyList<IReadOnlyList<ServiceProfile>?> listedComponents,
+        bool[] nested)
+    {
+        var parentsByInstance = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+        for (var parent = 0; parent < lines.Count; parent++)
+        {
+            if (!HasRole(lines[parent], ParentRole)
+                || listedComponents[parent] is null
+                || Trimmed(lines[parent].PackageInstanceId) is not { } instanceId)
+            {
+                continue;
+            }
+
+            if (!parentsByInstance.TryGetValue(instanceId, out var instanceParents))
+            {
+                instanceParents = new List<int>();
+                parentsByInstance[instanceId] = instanceParents;
+            }
+
+            instanceParents.Add(parent);
+        }
+
+        var nestedByParent = new List<int>?[lines.Count];
+        for (var component = 0; component < lines.Count; component++)
+        {
+            if (!HasRole(lines[component], ComponentRole)
+                || own[component] is { IsPackage: 1 }
+                || Trimmed(lines[component].PackageInstanceId) is not { } instanceId
+                || Trimmed(lines[component].ServiceId) is not { } serviceId
+                || !parentsByInstance.TryGetValue(instanceId, out var instanceParents))
+            {
+                continue;
+            }
+
+            foreach (var parent in instanceParents)
+            {
+                if (ListsService(listedComponents[parent]!, serviceId))
+                {
+                    (nestedByParent[parent] ??= new List<int>()).Add(component);
+                    nested[component] = true;
+                }
+            }
+        }
+
+        return nestedByParent;
+    }
+
+    /// <summary>Returns a package line's components: the own profiles of its nested lines, then each PACKAGE_DTL profile whose service no nested line with a profile represents.</summary>
+    private static ServiceProfile[] PackageComponents(
+        IReadOnlyList<InvoiceLineDraft> lines,
+        IReadOnlyList<ServiceProfile?> own,
+        IReadOnlyList<int>? nestedComponents,
+        IReadOnlyList<ServiceProfile> listed)
+    {
+        var components = new List<ServiceProfile>();
+        var represented = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var component in nestedComponents ?? Array.Empty<int>())
+        {
+            if (own[component] is { } profile && Trimmed(lines[component].ServiceId) is { } serviceId)
+            {
+                components.Add(profile);
+                represented.Add(serviceId);
+            }
+        }
+
+        foreach (var profile in listed)
+        {
+            if (profile is not null && (Trimmed(profile.ServiceId) is not { } serviceId || !represented.Contains(serviceId)))
+            {
+                components.Add(profile);
+            }
+        }
+
+        return components.ToArray();
+    }
+
+    /// <summary>Returns true when a PACKAGE_DTL profile carries the service id, trimmed and ignoring case.</summary>
+    private static bool ListsService(IReadOnlyList<ServiceProfile> components, string serviceId) =>
+        components.Any(component =>
+            component is not null && string.Equals(Trimmed(component.ServiceId), serviceId, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>Returns the claim's trimmed requested service ids, compared ignoring case, read once per distinct line list; empty when the claim number is blank.</summary>
     private async Task<IReadOnlyDictionary<decimal, IReadOnlySet<string>>> ReadRequestedServices(
@@ -3377,16 +3493,26 @@ public sealed class InvoiceWorkflowService
         };
     }
 
-    /// <summary>Caches service profiles and company-direct flags for one workflow call.</summary>
+    /// <summary>Caches service profiles, company-direct flags and selected request rows for one workflow call.</summary>
     private sealed class ProfileReads
     {
         private readonly ILookupQueries _lookups;
+        private readonly IInvoiceQueries _invoices;
+        private readonly string? _visitUnique;
         private readonly Dictionary<(decimal ListId, string ServiceId), ServiceProfile?> _read = new();
         private readonly Dictionary<string, Lazy<Task<int?>>> _isDirect = new(StringComparer.Ordinal);
+        private readonly Dictionary<(string PatientNo, int PayType), Task<IReadOnlyList<(long PatServReqRowId, string? ServiceId)>>> _selectedRows = new();
 
-        /// <summary>Creates an empty set of reads over the lookups.</summary>
+        /// <summary>Creates an empty set of reads over the lookups and the invoice queries of the call's visit.</summary>
         /// <param name="lookups">Lookups the profiles are read through.</param>
-        public ProfileReads(ILookupQueries lookups) => _lookups = lookups;
+        /// <param name="invoices">Invoice queries the selected request rows are read through.</param>
+        /// <param name="visitUnique">Visit of the call's entry parameters; blank verifies no request row.</param>
+        public ProfileReads(ILookupQueries lookups, IInvoiceQueries invoices, string? visitUnique)
+        {
+            _lookups = lookups;
+            _invoices = invoices;
+            _visitUnique = visitUnique;
+        }
 
         /// <summary>Reads the profiles of the keys with a list and a service that are not read yet, once per list; a service not on its list, or a blank one, reads as null.</summary>
         public async Task Load(IEnumerable<(decimal? ListId, string? ServiceId)> keys, CancellationToken cancellationToken)
@@ -3456,6 +3582,52 @@ public sealed class InvoiceWorkflowService
             }
 
             return isDirect;
+        }
+
+        /// <summary>Returns true when the line's request row is one of the rows selected for the header's patient and pay type on the visit, with the line's service; the rows are read once per patient and pay type.</summary>
+        /// <param name="header">Server-decided header supplying the patient and the pay type.</param>
+        /// <param name="line">Draft line carrying the request row id and the service id.</param>
+        /// <param name="cancellationToken">Cancels the read.</param>
+        /// <returns>False without a read when the line has no row id or service, or the patient, visit or pay type is missing.</returns>
+        public async Task<bool> IsSelectedRequestRow(InvoiceHeaderDraft header, InvoiceLineDraft line, CancellationToken cancellationToken)
+        {
+            if (line.PatServReqRowId is not { } rowId
+                || Trimmed(line.ServiceId) is not { } serviceId
+                || IsBlank(header.PatientNo)
+                || IsBlank(_visitUnique)
+                || header.PayType is not { } payType)
+            {
+                return false;
+            }
+
+            var key = (header.PatientNo!, payType);
+            if (!_selectedRows.TryGetValue(key, out var rows))
+            {
+                rows = ReadSelectedRows(header.PatientNo!, _visitUnique!, payType, cancellationToken);
+                _selectedRows[key] = rows;
+            }
+
+            return (await rows).Any(row =>
+                row.PatServReqRowId == rowId
+                && string.Equals(Trimmed(row.ServiceId), serviceId, StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>Reads the selected request rows' ids and services; an unreadable row reads as no row.</summary>
+        private async Task<IReadOnlyList<(long PatServReqRowId, string? ServiceId)>> ReadSelectedRows(
+            string patientNo,
+            string visitUnique,
+            int payType,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                var rows = await _invoices.GetSelectedRequestRows(patientNo, visitUnique, payType, cancellationToken);
+                return rows.Select(row => (row.PatServReqRowId, (string?)row.ServiceId)).ToArray();
+            }
+            catch (Exception failure) when (failure is InvalidCastException or OverflowException)
+            {
+                return Array.Empty<(long PatServReqRowId, string? ServiceId)>();
+            }
         }
     }
 }

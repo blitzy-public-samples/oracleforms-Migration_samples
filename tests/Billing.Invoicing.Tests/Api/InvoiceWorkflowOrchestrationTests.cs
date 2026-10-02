@@ -1924,6 +1924,7 @@ public sealed class InvoiceWorkflowOrchestrationTests
             new[]
             {
                 CreateFullInvoiceEntry,
+                CreateRequestEntry,
                 ReceptionTransferSaveEntry,
                 ReceptionTransferClearEntry,
                 TotalCheckEntry,
@@ -1959,6 +1960,7 @@ public sealed class InvoiceWorkflowOrchestrationTests
             new[]
             {
                 CreateFullInvoiceEntry,
+                CreateRequestEntry,
                 ReceptionTransferSaveEntry,
                 ReceptionTransferClearEntry,
                 ReceptionTransferRollbackEntry,
@@ -3045,6 +3047,13 @@ public sealed class InvoiceWorkflowOrchestrationTests
             SecondPackageService => Profile(serviceId) with { IsPackage = 1 },
             _ => Profile(serviceId),
         };
+        // PACKAGE_DTL of each package lists its own component.
+        fakes.Lookups.PackageComponentFlags = packageServiceId => packageServiceId switch
+        {
+            PackageService => new[] { Profile(FirstComponent) },
+            SecondPackageService => new[] { Profile(SecondComponent) },
+            _ => Array.Empty<ServiceProfile>(),
+        };
         fakes.Lookups.ServiceQueueFlags = serviceIds => serviceIds.ToDictionary(
             serviceId => serviceId,
             serviceId => string.Equals(serviceId, queuedComponent, StringComparison.Ordinal) ? 1 : 0,
@@ -3438,8 +3447,9 @@ public sealed class InvoiceWorkflowOrchestrationTests
         var open = fakes.Journal.LastIndexOf(SessionOpenEntry, create);
         Assert.True(open >= 0);
         Assert.Equal(open + 1, create);
+        Assert.Equal(CreateRequestEntry, fakes.Journal[create + 1]);
         Assert.DoesNotContain(
-            fakes.Journal.Skip(open),
+            fakes.Journal.Skip(create + 2),
             entry => entry.StartsWith($"{nameof(ILookupQueries)}.", StringComparison.Ordinal)
                 || entry.StartsWith($"{nameof(IInvoiceQueries)}.", StringComparison.Ordinal));
         foreach (var read in new[]
@@ -3472,7 +3482,7 @@ public sealed class InvoiceWorkflowOrchestrationTests
         await Assert.ThrowsAsync<TimeoutException>(() => fakes.CreateService().Create(CreateRequest(draft), Operator));
 
         Assert.Equal(
-            new[] { CreateFullInvoiceEntry, ReceptionTransferSaveEntry, wholeRollbackEntry, SessionDisposeEntry },
+            new[] { CreateFullInvoiceEntry, CreateRequestEntry, ReceptionTransferSaveEntry, wholeRollbackEntry, SessionDisposeEntry },
             JournalFromTheSave(fakes));
         Assert.Empty(fakes.PatientTransfer.Calls);
         Assert.False(Called(fakes.Legacy.Calls, nameof(ILegacyExternalCalls.ValidateTotalInvoice)));
@@ -3498,6 +3508,7 @@ public sealed class InvoiceWorkflowOrchestrationTests
             new[]
             {
                 CreateFullInvoiceEntry,
+                CreateRequestEntry,
                 ReceptionTransferSaveEntry,
                 ReceptionTransferClearEntry,
                 ReceptionTransferRollbackEntry,

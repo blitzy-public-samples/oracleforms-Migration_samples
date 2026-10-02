@@ -15,6 +15,7 @@ namespace Billing.Invoicing.Tests.Api;
 public sealed class ProblemDetailsWriterTests
 {
     private const string ProblemJson = "application/problem+json";
+    private const string BodyReadMarker = "SECRET-BODY-TEXT";
 
     private static readonly MessageDto KindMessage = new()
     {
@@ -143,6 +144,45 @@ public sealed class ProblemDetailsWriterTests
         error.Data[ProblemDetailsWriter.MessagesDataKey] = new[] { KindMessage };
 
         AssertBareServerError(await WriteHandled(error));
+    }
+
+    [Fact]
+    public async Task BadHttpRequestExceptionTooLarge_Writes413ContentTooLargeWithoutTheExceptionText()
+    {
+        var written = await WriteHandled(new BadHttpRequestException(
+            $"Request body too large. {BodyReadMarker}",
+            StatusCodes.Status413PayloadTooLarge));
+
+        Assert.Equal(StatusCodes.Status413PayloadTooLarge, written.Status);
+        Assert.Equal(ProblemJson, written.ContentType);
+        Assert.Equal(new[] { "type", "title", "status", "message" }, Members(written.Body));
+        Assert.Equal("content-too-large", written.Body.GetProperty("type").GetString());
+        Assert.Equal("Content too large", written.Body.GetProperty("title").GetString());
+        Assert.Equal(413, written.Body.GetProperty("status").GetInt32());
+        Assert.Equal("The request body is larger than the Api accepts.", written.Body.GetProperty("message").GetString());
+        Assert.DoesNotContain(BodyReadMarker, written.Body.GetRawText(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(400, 400)]
+    [InlineData(408, 408)]
+    [InlineData(431, 431)]
+    [InlineData(499, 499)]
+    [InlineData(399, 400)]
+    [InlineData(500, 400)]
+    [InlineData(503, 400)]
+    public async Task BadHttpRequestExceptionOtherStatus_WritesBadRequestWithItsClientErrorStatus(int refusalStatus, int expected)
+    {
+        var written = await WriteHandled(new BadHttpRequestException($"Bad chunk size data. {BodyReadMarker}", refusalStatus));
+
+        Assert.Equal(expected, written.Status);
+        Assert.Equal(ProblemJson, written.ContentType);
+        Assert.Equal(new[] { "type", "title", "status", "message" }, Members(written.Body));
+        Assert.Equal("bad-request", written.Body.GetProperty("type").GetString());
+        Assert.Equal("Bad request", written.Body.GetProperty("title").GetString());
+        Assert.Equal(expected, written.Body.GetProperty("status").GetInt32());
+        Assert.Equal("The request body could not be read.", written.Body.GetProperty("message").GetString());
+        Assert.DoesNotContain(BodyReadMarker, written.Body.GetRawText(), StringComparison.Ordinal);
     }
 
     [Theory]

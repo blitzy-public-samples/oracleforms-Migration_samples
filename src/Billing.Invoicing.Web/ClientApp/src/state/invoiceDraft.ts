@@ -241,6 +241,26 @@ const LINE_ITEMS: ReadonlySet<string> = new Set([
   'PAYRATE',
 ]);
 
+/** T_INV item names whose mapped Oracle error InvoiceHeaderForm or PaymentPanel renders beside the field (D-173). */
+const RENDERED_HEADER_ITEMS: ReadonlySet<string> = new Set([
+  'PATIENTNO',
+  'COMP_CODE',
+  'DOCIDX',
+  'CLINICID',
+  'DEPT_WISE',
+  'CALL',
+  'OFERID',
+  'DISC_T',
+  'FINALDISC_PERC',
+  'FINALDISC',
+  'SUB_PAYTYPE',
+  'AMOUNT_1',
+  'SUB_PAYTYPE2',
+  'AMOUNT_2',
+  'CASH_PAYED',
+  'REUND',
+]);
+
 /** Validation targets whose verdict covers the whole line. */
 const LINE_VERDICT_TARGETS: ReadonlySet<string> = new Set(['LINE', 'SERVICEID', 'QTY', 'LDISCT', 'APPROV_REF_NO', 'PRICE', 'DISC', 'MY_DISC']);
 
@@ -610,7 +630,7 @@ function withoutLineKeys<T>(record: Record<string, T>): Record<string, T> {
   return next;
 }
 
-/** For a `LINE:<i>:<TARGET>` source of a whole-line target, the state without line i's messages and open items on every such target and, given `lineClientId`, its field errors on them; otherwise the state. */
+/** For a `LINE:<i>:<TARGET>` source of a whole-line target, the state without line i's messages and open items on every such target and, given `lineClientId`, its field errors on them and the non-stale-kind errors those targets raised; otherwise the state. */
 function withoutLineVerdicts(state: InvoiceDraftState, source: string, lineClientId: string | null = null): InvoiceDraftState {
   const line = LINE_KEY.exec(source);
   if (line === null || !LINE_VERDICT_TARGETS.has(line[2])) {
@@ -627,7 +647,13 @@ function withoutLineVerdicts(state: InvoiceDraftState, source: string, lineClien
       delete fieldErrors[errorKey(target, lineClientId)];
     }
   }
-  return { ...state, messages, openItems, fieldErrors };
+  const next = { ...state, messages, openItems, fieldErrors };
+  if (lineClientId === null) {
+    return next;
+  }
+  // The form error and field errors any whole-line target of this line raised are dropped with its verdicts (D-174).
+  const verdictSources = new Set([...LINE_VERDICT_TARGETS].map((target) => errorKey(target, lineClientId)));
+  return withoutErrors(next, (error) => !isStaleKind(error.kind) && verdictSources.has(error.source));
 }
 
 /** True when `a` and `b` hold the same value, a missing one as null, in every member outside `omitted`. */
@@ -906,7 +932,10 @@ function applyError(current: InvoiceDraftState, source: string, error: ApiError,
       const field = error.field.toUpperCase();
       const entry = { text: error.legacyText ?? message, oracleErrorNumber, kind, source: sourceId };
       if (!LINE_ITEMS.has(field)) {
-        return { ...state, fieldErrors: { ...fieldErrors, [field]: entry } };
+        // A non-line item no component renders takes the form-level slot (D-173).
+        return RENDERED_HEADER_ITEMS.has(field)
+          ? { ...state, fieldErrors: { ...fieldErrors, [field]: entry } }
+          : { ...state, fieldErrors, formError: { text: entry.text, oracleErrorNumber, package: pkg, kind, source: sourceId } };
       }
       const line = LINE_KEY.exec(source);
       const clientId = line !== null && line[2] === field ? lineClientId : null;
@@ -1071,13 +1100,22 @@ function reduceInvoiceDraft(state: InvoiceDraftState, action: InvoiceDraftAction
       }
       const kept = (clientId: string) => clientId !== removedClientId;
       const shifted = state.currentLineIndex > action.index ? state.currentLineIndex - 1 : state.currentLineIndex;
+      // A removal also drops the Blocking line-item messages of non-line sources and the errors the removed line's answers raised (D-174).
+      const messages = withoutMessages(
+        shiftLineKeys(state.messages, action.index),
+        (source, message) => !LINE_KEY.test(source) && message.severity === 'Blocking' && LINE_ITEMS.has(messageField(message) ?? ''),
+      );
+      const released =
+        removedClientId == null || removedClientId === ''
+          ? state
+          : withoutErrors(state, (error) => CLIENT_KEY.exec(error.source)?.[1] === removedClientId);
       return withoutPreview({
-        ...state,
+        ...released,
         draft: { ...draft, lines },
-        messages: shiftLineKeys(state.messages, action.index),
+        messages,
         openItems: shiftLineKeys(state.openItems, action.index),
         lineDisplay,
-        fieldErrors: keepClientKeys(state.fieldErrors, kept),
+        fieldErrors: keepClientKeys(released.fieldErrors, kept),
         entryErrors: keepClientKeys(state.entryErrors, kept),
         currentLineIndex: clampIndex(shifted, lines.length),
       });
@@ -1179,7 +1217,7 @@ function reduceInvoiceDraft(state: InvoiceDraftState, action: InvoiceDraftAction
         delete fieldErrors[errorKey(action.target, lineClientId)];
       }
       let next: InvoiceDraftState = {
-        ...state,
+        ...cleared,
         connectivityDown: false,
         messages: replaceSource(released, key, response.messages),
         openItems: replaceSource(cleared.openItems, key, response.openItems),
