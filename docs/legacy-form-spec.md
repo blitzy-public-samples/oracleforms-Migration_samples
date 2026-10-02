@@ -1059,6 +1059,7 @@ The matrix lives only in this section (D-20). Its reverse half is generated from
 | Billing.Invoicing.Api.Controllers.PatientsController.Coverage | T023, T026 (DR-03, DR-24) |
 | Billing.Invoicing.Api.Errors.ModelStateFieldMap | PU08 `MESSAG` / `FORM_TRIGGER_FAILURE`: field of a malformed request value in the error contract |
 | Billing.Invoicing.Api.Errors.ModelStateFieldMap.FieldOf | PU08 `MESSAG`: model-state key → the `T_INV` / `D_INV` item or module parameter named by a 422 `field-validation` message |
+| Billing.Invoicing.Api.Errors.ModelStateFieldMap.MessagesOf | PU08 `MESSAG`: model state of a rejected request → the 422 `field-validation` messages, without the body parameter's companion 'required' error when a deeper binding error exists (D-184) |
 | Billing.Invoicing.Api.Errors.ProblemDetailsExceptionHandler | PU08 `MESSAG` / `FORM_TRIGGER_FAILURE`, alert `ERR_ALERT`: exceptions answered with the error contract, logged as redacted metadata only (D-102) |
 | Billing.Invoicing.Api.Errors.ProblemDetailsExceptionHandler.TryHandleAsync | PU08 `MESSAG` / `FORM_TRIGGER_FAILURE`: exception → `ProblemDetailsWriter` body; logs status, type, Oracle number, package, kind, open item, exception types and route template, never message text (D-102) |
 | Billing.Invoicing.Api.Errors.ProblemDetailsWriter | PU08 `MESSAG` / `FORM_TRIGGER_FAILURE`, alert `ERR_ALERT` (error contract) |

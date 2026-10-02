@@ -122,6 +122,7 @@
   --panel-padding: var(--space-4);
   --panel-inset: calc(var(--panel-padding) + var(--border-width));
   --gap-actions: var(--space-3);
+  --action-status-basis: 25%;
   --transition-fast: 150ms ease-out;
 }
 
@@ -522,7 +523,8 @@ html:has(.connectivity-banner) {
   container-type: inline-size;
   max-block-size: calc(var(--grid-row-size) * 5 + var(--grid-header-size) + 2 * var(--border-width));
   overflow-x: auto;
-  overflow-y: auto;
+  /* Vertical scrollbar always shown (D-142). */
+  overflow-y: scroll;
   scroll-padding-block-start: var(--grid-header-size);
   border: var(--border-width) solid var(--color-panel-border);
   background-color: var(--color-input-bg);
@@ -658,6 +660,21 @@ html:has(.connectivity-banner) {
   inline-size: calc(100cqi - 3px - 2 * var(--space-2));
 }
 
+/* Line message captions above their messages in a narrow lines scroller (D-142). */
+@container (max-width: 30rem) {
+  .line-messages > .field {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .line-messages > .field > .field-caption:first-child {
+    text-align: start;
+  }
+
+  .line-messages > .field > :nth-child(n + 2) {
+    grid-column: 1;
+  }
+}
+
 .lines-grid tr.current-line > td {
   background-color: var(--color-current-row-bg);
 }
@@ -784,6 +801,11 @@ html:has(.connectivity-banner) {
   flex: 1 1 var(--method-fill-size);
 }
 
+/* Payment inputs, editable ones included, end an overflowing value with an ellipsis. */
+.payment-panel :where(input) {
+  text-overflow: ellipsis;
+}
+
 .panel-title {
   padding-block-end: var(--space-2);
   border-block-end: var(--border-width) solid var(--color-separator);
@@ -818,6 +840,12 @@ html:has(.connectivity-banner) {
   flex: none;
   inline-size: 4.5rem;
   min-block-size: var(--action-target-size);
+}
+
+/* Action-bar payment status: from --action-status-basis of the bar, growing into the room left on its row up to its one-line width (D-174). */
+.action-bar > .payment-status {
+  flex: 1 1 var(--action-status-basis);
+  max-inline-size: max-content;
 }
 
 /* More details layout */
@@ -1109,6 +1137,12 @@ html:has(.connectivity-banner) {
   color: var(--color-notice-text);
   font-weight: 600;
   overflow-wrap: anywhere;
+}
+
+/* In-flow import result, at most 40% of the viewport tall, scrolling its own content beyond that (D-191). */
+.import-result {
+  max-block-size: 40vh;
+  overflow-y: auto;
 }
 
 @keyframes outcome-flash {

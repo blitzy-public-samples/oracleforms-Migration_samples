@@ -11,8 +11,9 @@ import {
   requestOrigin,
   sameDraftInputs,
 } from '../state/invoiceDraft';
-import type { InvoiceDraftAction, InvoiceDraftState } from '../state/invoiceDraft';
+import type { InvoiceDraftAction, InvoiceDraftState, PlacedMessage, RequestOrigin } from '../state/invoiceDraft';
 import FieldMessage, { fieldMessageRefs, SeverityLabel } from '../components/FieldMessage';
+import { FIELD_CAPTIONS } from '../components/InvoiceLinesGrid';
 import { readOnlyTextProps } from '../components/LovPicker';
 import OpenItemNotice from '../components/OpenItemNotice';
 
@@ -41,6 +42,14 @@ interface EntrySnapshot {
   start: number;
   end: number;
   direction: 'forward' | 'backward' | 'none';
+}
+
+/** One field's messages in the Current Line section: element id, caption (null for messages naming no field), messages and field error. */
+interface LineMessageGroup {
+  id: string;
+  caption: string | null;
+  messages: PlacedMessage[];
+  fieldError: { text: string; oracleErrorNumber: number | null } | null;
 }
 
 /** State of the saved-details load of the selected invoice. */
@@ -196,6 +205,58 @@ function itemAt<T>(items: readonly T[] | undefined, index: number): T | undefine
 /** Reducer source key of a line validation target. */
 function lineKey(lineIndex: number, target: string): string {
   return `LINE:${lineIndex}:${target}`;
+}
+
+/** Message groups of line `lineIndex` on fields MORE does not show: each named field in first-seen order with the field error of the line with `clientId`, then the messages naming no field. */
+function otherLineMessageGroups(
+  state: InvoiceDraftState,
+  lineIndex: number,
+  clientId: string | null,
+  baseId: string,
+): LineMessageGroup[] {
+  const shown: ReadonlySet<string> = new Set(EDITABLE_FIELDS.map((field) => field.item));
+  const named = new Map<string, LineMessageGroup>();
+  const unnamed: PlacedMessage[] = [];
+  const groupOf = (field: string): LineMessageGroup => {
+    const existing = named.get(field);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const group: LineMessageGroup = {
+      id: `${baseId}-line-messages-${encodeURIComponent(field)}`,
+      caption: Object.hasOwn(FIELD_CAPTIONS, field) ? FIELD_CAPTIONS[field] : field,
+      messages: [],
+      fieldError: null,
+    };
+    named.set(field, group);
+    return group;
+  };
+  for (const entry of lineMessages(state, lineIndex)) {
+    const field = messageField(entry.message);
+    if (field === null) {
+      unnamed.push(entry);
+    } else if (!shown.has(field)) {
+      groupOf(field).messages.push(entry);
+    }
+  }
+  if (clientId !== null && clientId !== '') {
+    const prefix = `CLIENT:${clientId}:`;
+    for (const key of new Set([...Object.keys(state.entryErrors), ...Object.keys(state.fieldErrors)])) {
+      const field = key.startsWith(prefix) ? key.slice(prefix.length) : '';
+      if (field === '' || field.includes(':') || shown.has(field)) {
+        continue;
+      }
+      const error = fieldErrorFor(state, field, clientId);
+      if (error !== null) {
+        groupOf(field).fieldError = { text: error.text, oracleErrorNumber: error.oracleErrorNumber };
+      }
+    }
+  }
+  const groups = [...named.values()];
+  if (unnamed.length > 0) {
+    groups.push({ id: `${baseId}-line-messages`, caption: null, messages: unnamed, fieldError: null });
+  }
+  return groups;
 }
 
 /** Distinct open-item ids across every message source, plus `extra`. */
@@ -361,12 +422,12 @@ export default function MoreDetailsScreen({
       return latest.current.saved?.invNo === forInvNo;
     };
 
-    /** Records the failed attempt and reports its error. */
+    /** Records the failed attempt and reports its error, as automatic unless the attempt is deliberate. */
     const fail = (error: ApiError) => {
       failedInvNo.current = forInvNo;
       failedLoadText.current = error.message;
       setFailedInvNoShown(forInvNo);
-      dispatch({ type: 'errorReceived', source: 'SAVED', error });
+      dispatch({ type: 'errorReceived', source: 'SAVED', error, automatic: !deliberate });
     };
 
     getMoreDetails(forInvNo, window.location.search).then(
@@ -430,6 +491,7 @@ export default function MoreDetailsScreen({
   const savedLine = isSaved ? itemAt(details?.lines, index) : undefined;
   const lineEditable = editable && draftLine !== undefined;
   const serviceId = displayText(isSaved ? savedLine?.SERVICEID : draftLine?.serviceId);
+  const lineGroups = otherLineMessageGroups(state, index, draftLine?.clientId ?? null, baseId);
   const transfers = details?.transMRowIds ?? [];
 
   const titleId = `${baseId}-title`;
@@ -557,7 +619,8 @@ export default function MoreDetailsScreen({
     if (draft === null || draft.lines.length === 0 || current.saved !== null || current.readOnly) {
       return;
     }
-    const origin = requestOrigin(draft);
+    // The preview and its failure are bound to the patient change count at send time (D-186).
+    const origin: RequestOrigin = { ...requestOrigin(draft), patientContextCount: current.patientContextCount };
     previewInvoice(draft).then(
       (response) => {
         const now = latest.current.draft;
@@ -596,6 +659,13 @@ export default function MoreDetailsScreen({
         actionsRef.current?.querySelector<HTMLElement>('button:not(:disabled)')?.focus();
       }
     }, 0);
+  }
+
+  /** Dismisses every stored copy of a current-line message group's message. */
+  function dismissLineMessage(group: LineMessageGroup, messageIndex: number) {
+    for (const ref of dismissalOrder(group.messages[messageIndex]?.refs ?? [])) {
+      dispatch({ type: 'messageDismissed', source: ref.source, index: ref.index });
+    }
   }
 
   /** One editable line item with its messages. */
@@ -714,6 +784,32 @@ export default function MoreDetailsScreen({
           <div className="panel-title" role="heading" aria-level={2} id={lineTitleId}>
             {serviceId === '' ? 'Current Line' : `Current Line · Service ${serviceId}`}
           </div>
+          {lineGroups.length > 0 && (
+            // The current line's messages on fields MORE does not show, one captioned group per field.
+            <div role="group" aria-label="Current line messages">
+              {lineGroups.map((group) =>
+                group.caption === null ? (
+                  <FieldMessage
+                    key={group.id}
+                    id={`${group.id}-msg`}
+                    messages={group.messages.map((entry) => entry.message)}
+                    fieldError={group.fieldError}
+                    onDismiss={(messageIndex) => dismissLineMessage(group, messageIndex)}
+                  />
+                ) : (
+                  <div key={group.id} id={group.id} className="field">
+                    <span className="field-caption">{group.caption}</span>
+                    <FieldMessage
+                      id={`${group.id}-msg`}
+                      messages={group.messages.map((entry) => entry.message)}
+                      fieldError={group.fieldError}
+                      onDismiss={(messageIndex) => dismissLineMessage(group, messageIndex)}
+                    />
+                  </div>
+                ),
+              )}
+            </div>
+          )}
           {EDITABLE_FIELDS.map(renderEditable)}
           {STATUS_FIELDS.map((field) => (
             <ReadOnlyField
@@ -790,7 +886,7 @@ export default function MoreDetailsScreen({
         </div>
       )}
 
-      <div ref={actionsRef} className="action-bar">
+      <div ref={actionsRef} className="action-bar" role="group" aria-label="More details actions">
         {isSaved && (
           <button type="button" onClick={addStoreTrans}>
             Add Store Trans

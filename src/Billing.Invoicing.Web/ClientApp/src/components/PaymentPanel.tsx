@@ -140,7 +140,7 @@ type NumberInputProps = {
   onChangedBlur?: () => void;
 };
 
-// Decimal text input that keeps the operator's text while focused or rejected, keeps a non-decimal entry out of the record, rejects it on blur, reports a changed value and is marked while its validation is pending.
+// Decimal text input that keeps the operator's text while focused or rejected, keeps a non-decimal entry out of the record, rejects it on blur, reports leaving it with a changed value or while invalid, and is marked while its validation is pending.
 function NumberInput({
   id,
   ariaLabel,
@@ -191,7 +191,7 @@ function NumberInput({
       className={classes(sizeClass ?? false, locked && 'read-only', invalid && 'invalid', pending && 'is-pending')}
       readOnly={locked}
       tabIndex={locked ? -1 : undefined}
-      title={locked && shown !== '' ? shown : undefined}
+      title={shown !== '' ? shown : undefined}
       value={shown}
       onFocus={() => {
         focusValue.current = value;
@@ -234,7 +234,7 @@ function NumberInput({
         if (rejected) {
           onAccepted();
         }
-        if (onChangedBlur !== undefined && (!Object.is(focusValue.current, value) || rejected)) {
+        if (onChangedBlur !== undefined && (!Object.is(focusValue.current, value) || rejected || invalid)) {
           onChangedBlur();
         }
       }}

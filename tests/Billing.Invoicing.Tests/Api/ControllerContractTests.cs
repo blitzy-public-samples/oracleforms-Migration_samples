@@ -16,6 +16,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ApiExplorer;
 using Microsoft.AspNetCore.Mvc.Formatters;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Billing.Invoicing.Tests.Api;
@@ -868,6 +869,48 @@ public sealed class ControllerContractTests
         Assert.Empty(fakes.Journal);
     }
 
+    [Theory]
+    [InlineData("/api/invoices", "multipart/form-data; boundary=x")]
+    [InlineData("/api/invoices", "multipart/form-data")]
+    [InlineData("/api/drafts/validate", "multipart/form-data; boundary=x")]
+    [InlineData("/api/drafts/validate", "multipart/form-data")]
+    public async Task Pipeline_JsonBodyUnderAMalformedMultipartType_Writes415UnsupportedMediaTypeWithoutTheFormReaderText(string path, string contentType)
+    {
+        var fakes = new FakeDataPorts();
+        var json = path == "/api/invoices"
+            ? JsonSerializer.Serialize(new CreateInvoiceRequest { Draft = CashDraft() }, WebJson)
+            : JsonSerializer.Serialize(new ValidateDraftRequest { Draft = CashDraft(), Target = "PATIENTNO" }, WebJson);
+
+        var context = await SendForContextAsync(fakes, "POST", path, json, contentType);
+
+        Assert.Equal(StatusCodes.Status415UnsupportedMediaType, context.Response.StatusCode);
+        Assert.Equal(ProblemJson, context.Response.ContentType);
+        var body = await Body(context);
+        Assert.Equal(new[] { "type", "title", "status", "message" }, Members(body));
+        Assert.Equal("unsupported-media-type", body.GetProperty("type").GetString());
+        Assert.Equal("Unsupported media type", body.GetProperty("title").GetString());
+        Assert.Equal(415, body.GetProperty("status").GetInt32());
+        Assert.Equal(UnsupportedMediaTypeText, body.GetProperty("message").GetString());
+        Assert.DoesNotContain("Failed to read the request form", body.GetRawText(), StringComparison.Ordinal);
+        Assert.Empty(fakes.Journal);
+    }
+
+    [Theory]
+    [InlineData("multipart/form-data; boundary=x")]
+    [InlineData("multipart/form-data")]
+    public async Task Pipeline_BodilessActionUnderAMalformedMultipartType_ReachesItsOpenItem(string contentType)
+    {
+        var fakes = new FakeDataPorts();
+
+        var context = await SendForContextAsync(fakes, "POST", "/api/invoices/9001/sms", "{}", contentType);
+
+        Assert.Equal(StatusCodes.Status501NotImplemented, context.Response.StatusCode);
+        Assert.Equal(ProblemJson, context.Response.ContentType);
+        var body = await Body(context);
+        Assert.Equal("open-item", body.GetProperty("type").GetString());
+        Assert.DoesNotContain("Failed to read the request form", body.GetRawText(), StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Pipeline_UnknownLov_KeepsItsOwnNotFoundMessage()
     {
@@ -959,7 +1002,12 @@ public sealed class ControllerContractTests
         services.AddMetrics();
         services.AddSingleton(new DiagnosticListener(nameof(ControllerContractTests)));
         services.AddSingleton<DiagnosticSource>(provider => provider.GetRequiredService<DiagnosticListener>());
-        services.AddControllers()
+        services.AddControllers(o =>
+            {
+                o.ValueProviderFactories.RemoveType<FormValueProviderFactory>();
+                o.ValueProviderFactories.RemoveType<JQueryFormValueProviderFactory>();
+                o.ValueProviderFactories.RemoveType<FormFileValueProviderFactory>();
+            })
             .ConfigureApiBehaviorOptions(o => o.SuppressMapClientErrors = true)
             .AddApplicationPart(typeof(InvoicesController).Assembly);
         services.AddSingleton(new ProblemDetailsWriter(new OracleFailureTranslator()));

@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type UIEvent } from 'react';
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type FocusEvent, type KeyboardEvent, type UIEvent } from 'react';
 import { flushSync } from 'react-dom';
 import { decimalText } from '../api/client';
 import type { EditablePreviewLine, InvoiceLineDraft, MessageDto, PreviewResponse, ValidateTarget } from '../api/types';
@@ -108,7 +108,7 @@ const LINE_SOURCE_PREFIX = 'LINE:';
 const NO_MESSAGES: readonly PlacedMessage[] = [];
 
 /** Captions of the line fields a message group names: the grid column labels, Catid and the MORE labels. */
-const FIELD_CAPTIONS: Readonly<Record<string, string>> = {
+export const FIELD_CAPTIONS: Readonly<Record<string, string>> = {
   SERVICEID: 'Serviceid',
   QTY: 'Qty',
   PRICE: 'Price',
@@ -416,6 +416,41 @@ function revealMessageRows(scroller: HTMLElement, rows: readonly MessageRows[]):
   }
 }
 
+/** Whole-pixel scroll change that brings the span from `start` to `end` inside the range from `rangeStart` to `rangeEnd`, aligning its start when it does not fit. */
+function revealShift(start: number, end: number, rangeStart: number, rangeEnd: number): number {
+  if (start < rangeStart || end - start > rangeEnd - rangeStart) {
+    return Math.floor(start - rangeStart);
+  }
+  return end > rangeEnd ? Math.ceil(end - rangeEnd) : 0;
+}
+
+/** Scrolls only the grid, the least needed to show a focused control's border box inside its view and below the sticky header. */
+function revealFocusedControl(scroller: HTMLElement, control: HTMLElement): void {
+  const view = scroller.getBoundingClientRect();
+  const clientLeft = view.left + scroller.clientLeft;
+  const clientTop = view.top + scroller.clientTop;
+  const visibleTop = clientTop + (scroller.querySelector('thead')?.getBoundingClientRect().height ?? 0);
+  const box = control.getBoundingClientRect();
+  const inlineShift = revealShift(box.left, box.right, clientLeft, clientLeft + scroller.clientWidth);
+  const blockShift = revealShift(box.top, box.bottom, visibleTop, clientTop + scroller.clientHeight);
+  if (inlineShift !== 0) {
+    scroller.scrollLeft += inlineShift;
+  }
+  if (blockShift !== 0) {
+    scroller.scrollTop += blockShift;
+  }
+}
+
+/** True when `target` handles Home and End itself: a text entry, list or editable element. */
+function handlesHomeEnd(target: EventTarget): boolean {
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLSelectElement ||
+    target instanceof HTMLTextAreaElement ||
+    (target instanceof HTMLElement && target.isContentEditable)
+  );
+}
+
 type EditableCellProps = {
   name: string;
   label: string;
@@ -521,19 +556,21 @@ type ReadOnlyCellProps = {
   label: string;
   value: unknown;
   freeText?: boolean;
+  disabled?: boolean;
 };
 
-/** Read-only display cell showing a value exactly as returned; a free-text cell is a tab stop. */
-function ReadOnlyCell({ name, label, value, freeText = false }: ReadOnlyCellProps) {
+/** Read-only display cell showing a value exactly as returned; a free-text cell is a tab stop, a disabled cell has the disabled look. */
+function ReadOnlyCell({ name, label, value, freeText = false, disabled = false }: ReadOnlyCellProps) {
   const text = displayText(value);
   return (
     <td>
       <input
         type="text"
         name={name}
-        className="read-only"
+        className={disabled ? undefined : 'read-only'}
         aria-label={label}
         readOnly
+        disabled={disabled}
         value={text}
         {...(freeText ? readOnlyTextProps(text) : { tabIndex: -1, title: text === '' ? undefined : text })}
       />
@@ -845,8 +882,19 @@ function LineRow({
           onAccepted={acceptEntry('MY_DISC')}
         />
         <ReadOnlyCell name={name('MY_NET')} label={label('Net')} value={packageValue('MY_NET', previewLine?.myNet)} />
-        <ReadOnlyCell name={name('FIXPAY')} label={label('Fixpay')} value={line.fixPay} />
-        <ReadOnlyCell name={name('PAYRATE')} label={label('Rate')} value={line.payRate} />
+        {/* OI-33 cells: empty and disabled until a saved view is loaded, then read-only with the persisted values. */}
+        <ReadOnlyCell
+          name={name('FIXPAY')}
+          label={label('Fixpay')}
+          value={fromSavedView ? line.fixPay : null}
+          disabled={!fromSavedView}
+        />
+        <ReadOnlyCell
+          name={name('PAYRATE')}
+          label={label('Rate')}
+          value={fromSavedView ? line.payRate : null}
+          disabled={!fromSavedView}
+        />
         <ReadOnlyCell name={name('THE_PAY')} label={label('The Pay')} value={packageValue('THE_PAY', previewLine?.thePay)} />
         <ReadOnlyCell name={name('THE_COMP')} label={label('The Comp')} value={packageValue('THE_COMP', previewLine?.theComp)} />
         <ReadOnlyCell
@@ -928,6 +976,7 @@ export default function InvoiceLinesGrid({ state, dispatch, onValidateLine, onRe
   const observer = useRef<ResizeObserver | null>(null);
   const revealQueue = useRef<MessageRows[]>([]);
   const committedKeys = useRef<{ keys: readonly string[]; known: Set<string> | null }>({ keys: [], known: null });
+  const pointerPressed = useRef(false);
 
   const placedByLine = useMemo(() => placedMessagesByLine(state), [state.messages]);
   const layout = useMemo(
@@ -1033,6 +1082,57 @@ export default function InvoiceLinesGrid({ state, dispatch, onValidateLine, onRe
     flushSync(() => setScrollTop(top));
   };
 
+  // Ends a pointer press that started in the grid (D-137).
+  useEffect(() => {
+    const release = () => {
+      pointerPressed.current = false;
+    };
+    window.addEventListener('pointerup', release, true);
+    window.addEventListener('pointercancel', release, true);
+    window.addEventListener('blur', release);
+    return () => {
+      window.removeEventListener('pointerup', release, true);
+      window.removeEventListener('pointercancel', release, true);
+      window.removeEventListener('blur', release);
+    };
+  }, []);
+
+  /** Shows a keyboard-focused grid control fully inside the scroller; pointer focus does not scroll (D-137). */
+  const onFocus = (event: FocusEvent<HTMLDivElement>) => {
+    const target = event.target;
+    if (target instanceof HTMLElement && target !== event.currentTarget && !pointerPressed.current && target.matches(':focus-visible')) {
+      revealFocusedControl(event.currentTarget, target);
+    }
+  };
+
+  /** Jumps to the first or last line on Home or End and renders that window before the new position is painted (D-181). */
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (
+      (event.key !== 'Home' && event.key !== 'End') ||
+      event.altKey ||
+      event.shiftKey ||
+      event.metaKey ||
+      event.defaultPrevented ||
+      handlesHomeEnd(event.target)
+    ) {
+      return;
+    }
+    event.preventDefault();
+    const element = event.currentTarget;
+    const toEnd = event.key === 'End';
+    element.scrollTop = toEnd ? element.scrollHeight - element.clientHeight : 0;
+    const top = element.scrollTop;
+    flushSync(() => setScrollTop(top));
+    if (toEnd) {
+      // Re-clamps to the end once the rendered lines are laid out.
+      element.scrollTop = element.scrollHeight - element.clientHeight;
+      const settled = element.scrollTop;
+      if (settled !== top) {
+        flushSync(() => setScrollTop(settled));
+      }
+    }
+  };
+
   // Returns the scroller to its start when the grid has no lines, including a new draft without lines (D-137).
   useEffect(() => {
     if (lines.length === 0 && scroller.current !== null) {
@@ -1101,6 +1201,11 @@ export default function InvoiceLinesGrid({ state, dispatch, onValidateLine, onRe
         aria-label="Scrollable invoice lines"
         tabIndex={0}
         onScroll={onScroll}
+        onFocus={onFocus}
+        onKeyDown={onKeyDown}
+        onPointerDown={() => {
+          pointerPressed.current = true;
+        }}
       >
         <table className="lines-grid" aria-label="Invoice lines" aria-rowcount={lineCount === 0 ? 2 : layout.rowCount}>
           <colgroup>

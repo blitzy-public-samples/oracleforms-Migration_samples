@@ -1,12 +1,17 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using Billing.Invoicing.Api.Contracts;
+using Billing.Invoicing.Domain.Model;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 
 namespace Billing.Invoicing.Api.Errors;
 
-/// <summary>Maps known model-state members to legacy items and formats other members as upper-snake field names.</summary>
+/// <summary>Maps known model-state members to legacy items, formats other members as upper-snake field names, and builds the messages of rejected model state.</summary>
 public static class ModelStateFieldMap
 {
     private const string LineItem = "LINE";
+    private const string InvalidInputText = "The input was not valid.";
 
     private static readonly Regex PathToken = new(
         @"\['(?<quoted>(?:[^'\\]|\\.)*)'\]|\[""(?<quoted>(?:[^""\\]|\\.)*)""\]|\[(?<index>[^\]]*)\]|(?<member>[^.\[\]]+)",
@@ -104,6 +109,34 @@ public static class ModelStateFieldMap
 
         var items = parentIndexed ? LineItems : RecordItems;
         return items.TryGetValue(member, out var item) ? item : UpperSnake(member);
+    }
+
+    /// <summary>Builds one blocking message per model-state error, leaving out the body parameter's own errors when any other key holds one.</summary>
+    /// <param name="context">Context of the rejected action.</param>
+    /// <returns>The messages in model-state order, each naming its field through <see cref="FieldOf"/>.</returns>
+    public static MessageDto[] MessagesOf(ActionContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        var bodyKeys = context.ActionDescriptor.Parameters
+            .Where(parameter => parameter.BindingInfo?.BindingSource == BindingSource.Body)
+            .Select(parameter => parameter.BindingInfo!.BinderModelName ?? parameter.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var errors = context.ModelState
+            .Where(entry => entry.Value is { Errors.Count: > 0 })
+            .SelectMany(entry => entry.Value!.Errors.Select(error => (entry.Key, error.ErrorMessage)))
+            .ToList();
+        var deeperError = errors.Exists(error => !bodyKeys.Contains(error.Key));
+
+        return errors
+            .Where(error => !deeperError || !bodyKeys.Contains(error.Key))
+            .Select(error => new MessageDto
+            {
+                Field = FieldOf(error.Key),
+                Text = string.IsNullOrEmpty(error.ErrorMessage) ? InvalidInputText : error.ErrorMessage,
+                Severity = ValidationMessage.Blocking,
+            })
+            .ToArray();
     }
 
     /// <summary>Whether a member name is non-empty and holds only ASCII letters, digits and underscores.</summary>

@@ -80,7 +80,7 @@ export default function App() {
         }
         dispatch({ type: 'draftLoaded', response });
       } catch (error) {
-        dispatch({ type: 'errorReceived', source: 'NEW', error: toApiError(error) });
+        dispatch({ type: 'errorReceived', source: 'NEW', error: toApiError(error), automatic: true });
       } finally {
         setInitialLoading(false);
       }

@@ -5,14 +5,20 @@ using Billing.Invoicing.Api.Contracts;
 using Billing.Invoicing.Api.Errors;
 using Billing.Invoicing.Api.Services;
 using Billing.Invoicing.Data.Oracle;
-using Billing.Invoicing.Domain.Model;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.Net.Http.Headers;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services
-    .AddControllers()
+    .AddControllers(o =>
+    {
+        // Reads no request form; a form or multipart body reaches only the JSON body binder.
+        o.ValueProviderFactories.RemoveType<FormValueProviderFactory>();
+        o.ValueProviderFactories.RemoveType<JQueryFormValueProviderFactory>();
+        o.ValueProviderFactories.RemoveType<FormFileValueProviderFactory>();
+    })
     .AddJsonOptions(o =>
     {
         o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
@@ -23,15 +29,7 @@ builder.Services
         type = "field-validation",
         title = "Validation failed",
         status = StatusCodes.Status422UnprocessableEntity,
-        messages = context.ModelState
-            .Where(entry => entry.Value is { Errors.Count: > 0 })
-            .SelectMany(entry => entry.Value!.Errors.Select(error => new MessageDto
-            {
-                Field = ModelStateFieldMap.FieldOf(entry.Key),
-                Text = string.IsNullOrEmpty(error.ErrorMessage) ? "The input was not valid." : error.ErrorMessage,
-                Severity = ValidationMessage.Blocking,
-            }))
-            .ToArray(),
+        messages = ModelStateFieldMap.MessagesOf(context),
         openItems = Array.Empty<string>(),
     })
     {

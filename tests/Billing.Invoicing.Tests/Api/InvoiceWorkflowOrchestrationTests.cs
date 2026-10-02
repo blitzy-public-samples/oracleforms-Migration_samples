@@ -117,6 +117,10 @@ public sealed class InvoiceWorkflowOrchestrationTests
     private const string DocNameItem = "DOC_NAME";
     private const string ClaimNoItem = "CLAIM_NO";
     private const string AddToListItem = "ADD_TO_LIST";
+    private const string FinalDiscPercItem = "FINALDISC_PERC";
+    private const string FinalDiscItem = "FINALDISC";
+    private const string Amount1Item = "AMOUNT_1";
+    private const string Amount2Item = "AMOUNT_2";
 
     private static readonly OperatorContext Operator = new()
     {
@@ -724,6 +728,42 @@ public sealed class InvoiceWorkflowOrchestrationTests
         Assert.Equal((int?)1, CreateCall(fakes).Arg<InvoiceHeaderDraft>().SubPayType);
     }
 
+    [Theory]
+    [Trait("Decision", "D-187")]
+    [InlineData(PatientNo, 3)]
+    [InlineData(null, 3)]
+    [InlineData(PatientNo, null)]
+    public async Task ValidateSubPayType_DoctorMissing_RunsNeitherTheRecordCheckNorThePaymentTypeDefault(string? patientNo, int? subPayType)
+    {
+        var draft = WithHeader(
+            await CashDraft(),
+            header => header with { PatientNo = patientNo, DocId = null, Amount1 = 10m, SubPayType = subPayType, SubPayType2 = null });
+        var fakes = Arrange(draft);
+
+        var response = await fakes.CreateService().Validate(new ValidateDraftRequest { Draft = draft, Target = SubPayTypeItem }, Operator);
+
+        AssertNothingChecked(response, fakes);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-187")]
+    public async Task ValidateRecord_DoctorMissingWithoutPaymentType_BlocksDr01AndDefaultsThePaymentType()
+    {
+        var draft = WithHeader(await CashDraft(), header => header with { DocId = null, Amount1 = 10m, SubPayType = null, SubPayType2 = null });
+        var fakes = Arrange(draft);
+
+        var response = await fakes.CreateService().Validate(new ValidateDraftRequest { Draft = draft, Target = "RECORD" }, Operator);
+
+        Assert.Equal(
+            new[]
+            {
+                BlockingMessage(DocIdItem, "Doctor No is required ", "DR-01"),
+                WarningMessage(SubPayTypeItem, "Payment type is empty", "DR-22"),
+            },
+            response.Messages);
+        Assert.Equal(1, response.Adjusted[SubPayTypeItem]);
+    }
+
     [Fact]
     [Trait("Decision", "D-55")]
     [Trait("OpenItem", "OI-56")]
@@ -838,6 +878,119 @@ public sealed class InvoiceWorkflowOrchestrationTests
 
         Assert.True(HasBlocking(response.Messages, "DR-06"));
         Assert.Equal(0, CreateCalls(fakes));
+    }
+
+    /// <summary>Preview echoing each line on the default list with the package's patient share and amount due.</summary>
+    private static Func<InvoiceHeaderDraft, IReadOnlyList<InvoiceLineDraft>, (IReadOnlyList<EditablePreviewLine> Lines, PreviewTotalsRow Totals)> PreviewWithShare(
+        decimal patPay, decimal amountDue) =>
+        (_, lines) => (
+            lines.Select((line, index) => new EditablePreviewLine
+            {
+                ClientId = line.ClientId,
+                LineNo = index + 1,
+                ServiceId = line.ServiceId,
+                ListId = DefaultListId,
+                Qty = line.Qty,
+            }).ToArray(),
+            new PreviewTotalsRow { LineCount = lines.Count, PatPay = patPay, CashCollected = amountDue });
+
+    /// <summary>Cash draft in discount mode <paramref name="discT"/> with the given final discount, a percent of 15 and an operator split of 120 / 80.</summary>
+    private static async Task<DraftDto> FinalDiscountDraft(int? discT, decimal? finalDisc, decimal? finalDiscPerc = 15m) => WithHeader(
+        await CashDraft(),
+        header => header with { DiscT = discT, FinalDisc = finalDisc, FinalDiscPerc = finalDiscPerc, Amount1 = 120m, Amount2 = 80m });
+
+    /// <summary>Validates <paramref name="target"/> of <paramref name="draft"/> with a maximum discount of 10, a patient share of 200 and an amount due of 190.</summary>
+    private static async Task<(ValidateDraftResponse Response, FakeDataPorts Fakes)> ValidateDiscount(DraftDto draft, string target)
+    {
+        var fakes = Arrange(draft);
+        fakes.Lookups.UserMaxDiscount = 10m;
+        fakes.InvoiceApi.Preview = PreviewWithShare(200m, 190m);
+        var response = await fakes.CreateService().Validate(new ValidateDraftRequest { Draft = draft, Target = target }, Operator);
+        return (response, fakes);
+    }
+
+    /// <summary>Asserts an empty validate answer given without any port call.</summary>
+    private static void AssertNothingChecked(ValidateDraftResponse response, FakeDataPorts fakes)
+    {
+        Assert.Empty(response.Messages);
+        Assert.Empty(response.Adjusted);
+        Assert.Empty(response.OpenItems);
+        Assert.Null(response.VisitLine);
+        Assert.Empty(fakes.Journal);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-187")]
+    [InlineData(null)]
+    [InlineData(0)]
+    public async Task ValidateFinalDiscPerc_ValueMode_ChecksNothingAndKeepsThePercentAndTheSplit(int? discT)
+    {
+        var (response, fakes) = await ValidateDiscount(await FinalDiscountDraft(discT, finalDisc: null), FinalDiscPercItem);
+
+        AssertNothingChecked(response, fakes);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-187")]
+    public async Task ValidateFinalDisc_RateMode_ChecksNothingAndKeepsTheAmountAndTheSplit()
+    {
+        var (response, fakes) = await ValidateDiscount(await FinalDiscountDraft(1, finalDisc: 150m), FinalDiscItem);
+
+        AssertNothingChecked(response, fakes);
+    }
+
+    [Theory]
+    [Trait("Decision", "D-187")]
+    [InlineData(null, null)]
+    [InlineData(null, 0)]
+    [InlineData(0, null)]
+    [InlineData(0, 0)]
+    public async Task ValidateFinalDisc_ValueModeWithoutAnAmount_ClearsOnlyThePercent(int? discT, int? finalDisc)
+    {
+        var (response, fakes) = await ValidateDiscount(await FinalDiscountDraft(discT, finalDisc), FinalDiscItem);
+
+        Assert.Empty(response.Messages);
+        Assert.Equal(FinalDiscPercItem, Assert.Single(response.Adjusted).Key);
+        Assert.Equal(0m, response.Adjusted[FinalDiscPercItem]);
+        Assert.Empty(response.OpenItems);
+        Assert.Empty(fakes.Journal);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-187")]
+    public async Task ValidateFinalDisc_ValueModeWithAnAmount_DerivesThePercentAndResetsTheSplit()
+    {
+        var (response, fakes) = await ValidateDiscount(await FinalDiscountDraft(0, finalDisc: 10m), FinalDiscItem);
+
+        Assert.Empty(response.Messages);
+        Assert.Equal(new[] { Amount1Item, Amount2Item, FinalDiscPercItem }, response.Adjusted.Keys.Order(StringComparer.Ordinal));
+        Assert.Equal(5m, response.Adjusted[FinalDiscPercItem]);
+        Assert.Equal(190m, response.Adjusted[Amount1Item]);
+        Assert.Equal(0m, response.Adjusted[Amount2Item]);
+        Assert.Equal(new object?[] { Operator.UserNo }, SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetUserMaxDiscount)).Args);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-187")]
+    public async Task ValidateFinalDiscPerc_RateModeOverTheLimit_RaisesTheDiscountAlertWithoutResettingTheSplit()
+    {
+        var (response, fakes) = await ValidateDiscount(await FinalDiscountDraft(1, finalDisc: null), FinalDiscPercItem);
+
+        Assert.Equal(new[] { BlockingMessage(FinalDiscPercItem, "Maximum discount allawed is10", "DR-06") }, response.Messages);
+        Assert.Empty(response.Adjusted);
+        Assert.Equal(new object?[] { Operator.UserNo }, SingleCall(fakes.Lookups.Calls, nameof(ILookupQueries.GetUserMaxDiscount)).Args);
+    }
+
+    [Fact]
+    [Trait("Decision", "D-187")]
+    public async Task ValidateFinalDiscPerc_RateModeWithinTheLimit_ResetsTheSplitToTheAmountDue()
+    {
+        var (response, _) = await ValidateDiscount(await FinalDiscountDraft(1, finalDisc: null, finalDiscPerc: 5m), FinalDiscPercItem);
+
+        Assert.Empty(response.Messages);
+        Assert.Equal(new[] { Amount1Item, Amount2Item }, response.Adjusted.Keys.Order(StringComparer.Ordinal));
+        Assert.Equal(190m, response.Adjusted[Amount1Item]);
+        Assert.Equal(0m, response.Adjusted[Amount2Item]);
     }
 
     [Fact]
@@ -3965,6 +4118,31 @@ public sealed class InvoiceWorkflowOrchestrationTests
 
         Assert.Equal(new[] { WarningMessage(DocIdItem, "You Must Select Doctor", "DR-11") }, response.Messages);
         Assert.Equal(new[] { AddToListItem }, response.Adjusted.Keys);
+        Assert.False(Called(fakes.Lookups.Calls, nameof(ILookupQueries.GetDoctorClinic)));
+    }
+
+    [Theory]
+    [Trait("Decision", "D-187")]
+    [InlineData(NewConsultationClaim, "N", CashCompany, PickedDoctorClinic)]
+    [InlineData("2", "N", CashCompany, PickedDoctorClinic)]
+    [InlineData("0", "Y", CashCompany, PickedDoctorClinic)]
+    [InlineData(NewConsultationClaim, "N", FixedServiceCompany, LockedDoctorClinic)]
+    public async Task ValidateDoctor_NoDoctor_ChoosesNoVisitLineBesideTheDr11Warning(string claimNo, string doReview, string compCode, int clinicId)
+    {
+        var draft = WithHeader(
+            await PickedDoctorDraft(theDoc: null),
+            header => header with { DocId = null, CompCode = compCode, ClinicId = clinicId }) with
+        {
+            Parameters = new InvoiceEntryParameters { ClaimNo = claimNo, DoReview = doReview },
+            Lines = Array.Empty<InvoiceLineDraft>(),
+        };
+        var fakes = Arrange(draft);
+        fakes.Lookups.DoctorClinic = DoctorClinicOf;
+
+        var response = await fakes.CreateService().Validate(DoctorValidation(draft), Operator);
+
+        Assert.Equal(new[] { WarningMessage(DocIdItem, "You Must Select Doctor", "DR-11") }, response.Messages);
+        Assert.Equal(VisitLineChoice.None, response.VisitLine);
         Assert.False(Called(fakes.Lookups.Calls, nameof(ILookupQueries.GetDoctorClinic)));
     }
 

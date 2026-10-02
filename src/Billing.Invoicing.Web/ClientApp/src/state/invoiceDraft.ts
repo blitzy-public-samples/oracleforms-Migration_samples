@@ -39,10 +39,11 @@ export interface InvoiceDraftState {
   saved: { invNo: number; view: InvoiceViewResponse | null; createResponse: CreateInvoiceResponse | null } | null;
   readOnly: boolean;
   connectivityDown: boolean;
-  idempotencyConflict: { text: string; oracleErrorNumber: number | null } | null;
+  /** Idempotency conflict of a create, with `repeat` as for `formError`. */
+  idempotencyConflict: { text: string; oracleErrorNumber: number | null; repeat: number } | null;
   discountPrompt: { target: 'FINALDISC_PERC' | 'FINALDISC'; text: string } | null;
-  /** Form-level error and the source whose answer raised it: the request source, or `CLIENT:<clientId>:<TARGET>` for a line. */
-  formError: { text: string; oracleErrorNumber: number | null; package: string | null; kind: string | null; source: string } | null;
+  /** Form-level error and the source whose answer raised it: the request source, or `CLIENT:<clientId>:<TARGET>` for a line; `repeat` counts the operator requests in a row that raised it, 0 for an automatic one. */
+  formError: { text: string; oracleErrorNumber: number | null; package: string | null; kind: string | null; source: string; repeat: number } | null;
   /** Field errors by error key, each with the source whose answer raised it, named as for `formError`. */
   fieldErrors: Record<string, { text: string; oracleErrorNumber: number | null; kind: string | null; source: string }>;
   entryErrors: Record<string, string>;
@@ -52,10 +53,12 @@ export interface InvoiceDraftState {
   claimPreload: ClaimPreload | null;
   /** Number of operator field edits so far, never reset (D-145). */
   editCount: number;
-  /** Edit count of each field's last operator edit, keyed by header member, or `<clientId>:<member>` on a line. */
+  /** Edit count of each field's last operator edit, keyed by header member, or `<clientId>:<member>` on a line; a patient change records `claimNo` at its edit count (D-186). */
   editedAt: Record<string, number>;
   /** Number of successful API outcomes applied; a lookup list that failed to load is re-requested when it changes. */
   successCount: number;
+  /** Number of patient changes so far, never reset (D-186). */
+  patientContextCount: number;
 }
 
 /** Trimmed patient number, sub-company and class of a claim preload. */
@@ -79,6 +82,8 @@ export interface RequestOrigin {
   patientNo?: string | null;
   /** Discount-limit choice the request carried; absent when not recorded. */
   discountLimitChoice?: DiscountLimitChoice | null;
+  /** Patient change count when the request was sent; absent when the request is not bound to it (D-186). */
+  patientContextCount?: number;
 }
 
 /** Header and line a line validation was sent with. */
@@ -99,7 +104,7 @@ export interface PlacedMessage {
   refs: MessageRef[];
 }
 
-/** Actions the screens dispatch after their API calls and operator edits; `origin` names the request a response belongs to; `judged` the inputs a line verdict was sent with; `editsSince` the edit count when the request was queued, so fields edited after it keep the operator's value. */
+/** Actions the screens dispatch after their API calls and operator edits; `origin` names the request a response belongs to; `judged` the inputs a line verdict was sent with; `editsSince` the edit count when the request was queued, so fields edited after it keep the operator's value; `automatic` marks a failure of a request no operator action started. */
 export type InvoiceDraftAction =
   | { type: 'draftLoaded'; response: NewDraftResponse }
   | { type: 'headerFieldChanged'; field: keyof InvoiceHeaderDraft; value: InvoiceHeaderDraft[keyof InvoiceHeaderDraft] }
@@ -120,7 +125,7 @@ export type InvoiceDraftAction =
   | { type: 'saved'; response: CreateInvoiceResponse; origin: RequestOrigin }
   | { type: 'invoiceLoaded'; invNo: number; response: InvoiceViewResponse; origin?: RequestOrigin }
   | { type: 'moreDetailsLoaded'; response: MoreDetailsResponse }
-  | { type: 'errorReceived'; source: string; lineClientId?: string | null; error: ApiError; origin?: RequestOrigin; judged?: JudgedLine }
+  | { type: 'errorReceived'; source: string; lineClientId?: string | null; error: ApiError; origin?: RequestOrigin; judged?: JudgedLine; automatic?: boolean }
   | { type: 'connectivityLost' }
   | { type: 'connectivityRestored' }
   | { type: 'formErrorCleared' }
@@ -154,6 +159,7 @@ export const initialInvoiceDraftState: InvoiceDraftState = {
   editCount: 0,
   editedAt: {},
   successCount: 0,
+  patientContextCount: 0,
 };
 
 /** Operator decimal entry: empty, the trimmed text as entered, or the reason it is rejected. */
@@ -166,15 +172,15 @@ export const ENTRY_NOT_A_NUMBER = 'Enter a valid number.';
 export const ENTRY_TOO_PRECISE = 'Enter a number of at most 28 significant digits and 28 decimal places.';
 
 type AdjustedTarget =
-  | { scope: 'header'; field: keyof InvoiceHeaderDraft }
+  | { scope: 'header'; field: keyof InvoiceHeaderDraft; follows?: keyof InvoiceHeaderDraft }
   | { scope: 'line'; field: keyof InvoiceLineDraft }
-  | { scope: 'display'; key: string };
+  | { scope: 'display'; key: string; follows?: keyof InvoiceHeaderDraft };
 
-/** Destination of each server-adjusted value: a header field, a line field or a display key. */
+/** Destination of each server-adjusted value: a header field, a line field or a display key, and the header field (`follows`) whose later edit also skips it. */
 export const ADJUSTED_KEY_MAP: Readonly<Record<AdjustedKey, AdjustedTarget>> = {
   AMOUNT_1: { scope: 'header', field: 'amount1' },
   AMOUNT_2: { scope: 'header', field: 'amount2' },
-  CLAIM_NO: { scope: 'header', field: 'claimNo' },
+  CLAIM_NO: { scope: 'header', field: 'claimNo', follows: 'docId' },
   ADD_TO_LIST: { scope: 'header', field: 'addToList' },
   SUB_PAYTYPE: { scope: 'header', field: 'subPayType' },
   PAYTYPE: { scope: 'header', field: 'payType' },
@@ -183,11 +189,14 @@ export const ADJUSTED_KEY_MAP: Readonly<Record<AdjustedKey, AdjustedTarget>> = {
   DISC_T: { scope: 'header', field: 'discT' },
   DOCIDX: { scope: 'header', field: 'docId' },
   CLINICID: { scope: 'header', field: 'clinicId' },
-  CLINICNAME: { scope: 'display', key: 'CLINICNAME' },
-  DOC_NAME: { scope: 'display', key: 'DOC_NAME' },
+  CLINICNAME: { scope: 'display', key: 'CLINICNAME', follows: 'clinicId' },
+  DOC_NAME: { scope: 'display', key: 'DOC_NAME', follows: 'docId' },
   LDISCT: { scope: 'line', field: 'discountType' },
   REUND: { scope: 'display', key: 'REUND' },
 };
+
+/** Adjusted keys whose header field is set to null, the package's auto mode, instead of the adjusted value (D-148). */
+const AUTO_DEFAULTED_KEYS: ReadonlySet<AdjustedKey> = new Set<AdjustedKey>(['AMOUNT_1']);
 
 /** Validation targets whose message source holds a Save verdict. */
 const VALIDATE_TARGETS: Readonly<Record<ValidateTarget, true>> = {
@@ -241,6 +250,9 @@ const LINE_ITEMS: ReadonlySet<string> = new Set([
   'PAYRATE',
 ]);
 
+/** Field of the messages that judge the draft's set of lines. */
+const LINE_FIELD = 'LINE';
+
 /** T_INV item names whose mapped Oracle error InvoiceHeaderForm or PaymentPanel renders beside the field (D-173). */
 const RENDERED_HEADER_ITEMS: ReadonlySet<string> = new Set([
   'PATIENTNO',
@@ -286,7 +298,7 @@ const DETAILS_REQUIRED_RULE = 'DR-02';
 const RECORD_RULE = 'DR-01';
 
 /** Sources whose answers carry a complete header record verdict. */
-const RECORD_VERDICT_TARGETS: ReadonlySet<string> = new Set(['SUB_PAYTYPE', 'RECORD', 'CREATE']);
+const RECORD_VERDICT_TARGETS: ReadonlySet<string> = new Set(['RECORD', 'CREATE']);
 
 /** Header members a whole-line verdict is judged under: the patient and the payer. */
 const LINE_VERDICT_HEADER_MEMBERS: readonly (keyof InvoiceHeaderDraft)[] = ['patientNo', 'payType', 'compCode', 'subCompCode', 'classCode'];
@@ -422,7 +434,7 @@ function withEdit(state: InvoiceDraftState, key: string | null): InvoiceDraftSta
   return { ...state, editCount, editedAt: key === null ? state.editedAt : { ...state.editedAt, [key]: editCount } };
 }
 
-/** Merges server-adjusted values into the draft header, the given line and the display values, skipping fields `edited` names. */
+/** Merges server-adjusted values into the draft header, the given line and the display values, skipping fields `edited` names and values whose `follows` field it names; an adjusted `AMOUNT_1` sets Amount 1 to null (auto). */
 function applyAdjusted(
   draft: DraftDto,
   display: Record<string, string | null>,
@@ -444,8 +456,9 @@ function applyAdjusted(
     const target = ADJUSTED_KEY_MAP[key];
     switch (target.scope) {
       case 'header':
-        if (!edited(target.field)) {
-          header = withField(header, target.field, value as InvoiceHeaderDraft[keyof InvoiceHeaderDraft]);
+        if (!edited(target.field) && (target.follows === undefined || !edited(target.follows))) {
+          const entered = AUTO_DEFAULTED_KEYS.has(key) ? null : value;
+          header = withField(header, target.field, entered as InvoiceHeaderDraft[keyof InvoiceHeaderDraft]);
         }
         break;
       case 'line':
@@ -455,7 +468,9 @@ function applyAdjusted(
         }
         break;
       case 'display':
-        nextDisplay = { ...nextDisplay, [target.key]: value == null ? null : String(value) };
+        if (target.follows === undefined || !edited(target.follows)) {
+          nextDisplay = { ...nextDisplay, [target.key]: value == null ? null : String(value) };
+        }
         break;
     }
   }
@@ -784,10 +799,10 @@ function withoutPreview(state: InvoiceDraftState): InvoiceDraftState {
   };
 }
 
-/** Applies only the draft-wide effects of a failure whose line has left the draft: lost connectivity and missing operator context. */
-function applyDetachedError(state: InvoiceDraftState, source: string, error: ApiError): InvoiceDraftState {
+/** Applies only the draft-wide effects of a failure whose line has left the draft: lost connectivity and missing operator context; `automatic` as for `applyError`. */
+function applyDetachedError(state: InvoiceDraftState, source: string, error: ApiError, automatic = false): InvoiceDraftState {
   const draftWide = error.status === 503 || error.type === 'oracle-unavailable' || error.type === 'operator-context-missing';
-  return draftWide ? applyError(state, source, error) : state;
+  return draftWide ? applyError(state, source, error, null, automatic) : state;
 }
 
 /** Patient number without surrounding blanks; null and undefined are empty. */
@@ -888,8 +903,26 @@ function withoutAnsweredErrors(state: InvoiceDraftState, source: string): Invoic
   return withoutErrors(state, (error) => (isStaleKind(error.kind) ? source === 'CREATE' : error.source === source));
 }
 
-/** Applies an API failure for `source` to messages, open items, errors or the connectivity flag, a non-outage failure first dropping the errors it supersedes; `lineClientId` names the line of a `LINE:<i>:<TARGET>` source. */
-function applyError(current: InvoiceDraftState, source: string, error: ApiError, lineClientId: string | null = null): InvoiceDraftState {
+/** Times in a row operator requests raised an outcome: 0 when `automatic`, else one more than an operator-raised `previous` with the same source, text and Oracle number, else 1. */
+function repeatOf(
+  previous: { text: string; oracleErrorNumber: number | null; source?: string; repeat: number } | null,
+  next: { text: string; oracleErrorNumber: number | null; source?: string },
+  automatic: boolean,
+): number {
+  if (automatic) {
+    return 0;
+  }
+  return previous !== null &&
+    previous.repeat >= 1 &&
+    previous.source === next.source &&
+    previous.text === next.text &&
+    previous.oracleErrorNumber === next.oracleErrorNumber
+    ? previous.repeat + 1
+    : 1;
+}
+
+/** Applies an API failure for `source` to messages, open items, errors or the connectivity flag, a non-outage failure first dropping the errors it supersedes; `lineClientId` names the line of a `LINE:<i>:<TARGET>` source; `automatic` marks a failure of a request no operator action started. */
+function applyError(current: InvoiceDraftState, source: string, error: ApiError, lineClientId: string | null = null, automatic = false): InvoiceDraftState {
   const message = error.message ?? '';
   const oracleErrorNumber = error.oracleErrorNumber ?? null;
   const pkg = error.package ?? null;
@@ -901,6 +934,11 @@ function applyError(current: InvoiceDraftState, source: string, error: ApiError,
 
   const sourceId = errorSource(source, lineClientId);
   const state = withoutAnsweredErrors(current, sourceId);
+  /** `entry` as the arriving form error, with its repeat count over the form error shown before this answer. */
+  const arrived = (entry: Omit<NonNullable<InvoiceDraftState['formError']>, 'repeat'>): NonNullable<InvoiceDraftState['formError']> => ({
+    ...entry,
+    repeat: repeatOf(current.formError, entry, automatic),
+  });
 
   // A success body the client rejected leaves a verdict source with one Blocking form-level message until its next result (D-119).
   if (error.type === 'invalid-response' && isVerdictSource(source)) {
@@ -925,7 +963,8 @@ function applyError(current: InvoiceDraftState, source: string, error: ApiError,
 
   if (error.type === 'oracle-business-error') {
     if (kind === 'IdempotencyConflict') {
-      return { ...state, idempotencyConflict: { text: message, oracleErrorNumber } };
+      const conflict = { text: message, oracleErrorNumber };
+      return { ...state, idempotencyConflict: { ...conflict, repeat: repeatOf(current.idempotencyConflict, conflict, automatic) } };
     }
     const fieldErrors = withoutSourceFieldError(state, source, lineClientId);
     if (error.field != null && error.field !== '') {
@@ -935,26 +974,27 @@ function applyError(current: InvoiceDraftState, source: string, error: ApiError,
         // A non-line item no component renders takes the form-level slot (D-173).
         return RENDERED_HEADER_ITEMS.has(field)
           ? { ...state, fieldErrors: { ...fieldErrors, [field]: entry } }
-          : { ...state, fieldErrors, formError: { text: entry.text, oracleErrorNumber, package: pkg, kind, source: sourceId } };
+          : { ...state, fieldErrors, formError: arrived({ text: entry.text, oracleErrorNumber, package: pkg, kind, source: sourceId }) };
       }
       const line = LINE_KEY.exec(source);
       const clientId = line !== null && line[2] === field ? lineClientId : null;
       if (clientId === null) {
-        return { ...state, fieldErrors, formError: { text: entry.text, oracleErrorNumber, package: pkg, kind, source: sourceId } };
+        return { ...state, fieldErrors, formError: arrived({ text: entry.text, oracleErrorNumber, package: pkg, kind, source: sourceId }) };
       }
       return { ...state, fieldErrors: { ...fieldErrors, [errorKey(field, clientId)]: entry } };
     }
-    return { ...state, fieldErrors, formError: { text: message, oracleErrorNumber, package: pkg, kind, source: sourceId } };
+    return { ...state, fieldErrors, formError: arrived({ text: message, oracleErrorNumber, package: pkg, kind, source: sourceId }) };
   }
 
   if (error.type === 'operator-context-missing') {
     const missing = error.missing ?? [];
     return {
       ...state,
-      formError:
+      formError: arrived(
         missing.length > 0
           ? { text: 'Operator context missing: ' + missing.join(', '), oracleErrorNumber: null, package: null, kind: null, source: sourceId }
           : { text: message, oracleErrorNumber, package: pkg, kind: null, source: sourceId },
+      ),
     };
   }
 
@@ -977,10 +1017,10 @@ function applyError(current: InvoiceDraftState, source: string, error: ApiError,
   }
 
   if (error.type === 'oracle-error' || error.status === 500) {
-    return { ...state, formError: { text: message, oracleErrorNumber, package: pkg, kind: null, source: sourceId } };
+    return { ...state, formError: arrived({ text: message, oracleErrorNumber, package: pkg, kind: null, source: sourceId }) };
   }
 
-  return { ...state, formError: { text: message, oracleErrorNumber: null, package: null, kind: null, source: sourceId } };
+  return { ...state, formError: arrived({ text: message, oracleErrorNumber: null, package: null, kind: null, source: sourceId }) };
 }
 
 /** Compile-time exhaustiveness guard for the reducer switch. */
@@ -1035,6 +1075,7 @@ function reduceInvoiceDraft(state: InvoiceDraftState, action: InvoiceDraftAction
         openItems: replaceSource({}, 'NEW', action.response.openItems),
         claimPreload: claimPreloadOf(loaded),
         editCount: state.editCount,
+        patientContextCount: state.patientContextCount,
       };
     }
 
@@ -1100,10 +1141,12 @@ function reduceInvoiceDraft(state: InvoiceDraftState, action: InvoiceDraftAction
       }
       const kept = (clientId: string) => clientId !== removedClientId;
       const shifted = state.currentLineIndex > action.index ? state.currentLineIndex - 1 : state.currentLineIndex;
-      // A removal also drops the Blocking line-item messages of non-line sources and the errors the removed line's answers raised (D-174).
+      // A removal also drops the Blocking line-item messages of non-line sources, the Blocking LINE messages of every source and the errors the removed line's answers raised (D-174).
       const messages = withoutMessages(
         shiftLineKeys(state.messages, action.index),
-        (source, message) => !LINE_KEY.test(source) && message.severity === 'Blocking' && LINE_ITEMS.has(messageField(message) ?? ''),
+        (source, message) =>
+          message.severity === 'Blocking' &&
+          (messageField(message) === LINE_FIELD || (!LINE_KEY.test(source) && LINE_ITEMS.has(messageField(message) ?? ''))),
       );
       const released =
         removedClientId == null || removedClientId === ''
@@ -1356,17 +1399,35 @@ function reduceInvoiceDraft(state: InvoiceDraftState, action: InvoiceDraftAction
         return state;
       }
       const errorsKept = withoutErrors(state, (error) => error.source === 'COVERAGE' || error.source === 'PATIENTNO');
-      return {
+      // Also drops a claim number other than the entry parameter's, the stored preview, the lines' previewed prices and the validated refund, and records the claim number as edited at the current edit count (D-186).
+      const header = state.draft.header;
+      const entryClaimNo = state.draft.parameters?.claimNo || null;
+      const display: Record<string, string | null> = { ...state.display, COMP_NAME: null, SUB_COMP_NAME: null, CLASS_NAME: null };
+      delete display.REUND;
+      return withoutPreview({
         ...state,
-        draft: { ...state.draft, header: { ...state.draft.header, payType: null, compCode: null, subCompCode: null, classCode: null } },
-        display: { ...state.display, COMP_NAME: null, SUB_COMP_NAME: null, CLASS_NAME: null },
+        draft: {
+          ...state.draft,
+          header: {
+            ...header,
+            payType: null,
+            compCode: null,
+            subCompCode: null,
+            classCode: null,
+            claimNo: header.claimNo === entryClaimNo ? header.claimNo : null,
+          },
+          lines: state.draft.lines.map((line) => ({ ...line, price: null })),
+        },
+        display,
         coverage: null,
         coveragePatientNo: null,
         messages: replaceSource(replaceSource(state.messages, 'COVERAGE', null), 'PATIENTNO', null),
         openItems: replaceSource(replaceSource(state.openItems, 'COVERAGE', null), 'PATIENTNO', null),
         formError: errorsKept.formError,
         fieldErrors: errorsKept.fieldErrors,
-      };
+        editedAt: { ...state.editedAt, claimNo: state.editCount },
+        patientContextCount: state.patientContextCount + 1,
+      });
     }
 
     case 'previewApplied': {
@@ -1472,7 +1533,8 @@ function reduceInvoiceDraft(state: InvoiceDraftState, action: InvoiceDraftAction
         saved: { invNo: response.invNo, view: null, createResponse: response },
         readOnly: true,
         entryErrors: {},
-        messages: replaceSource(state.messages, 'CREATE', response.messages),
+        // Replaces the CREATE messages and drops the IMPORT messages; IMPORT open items stay (D-192).
+        messages: replaceSource(replaceSource(state.messages, 'CREATE', response.messages), 'IMPORT', null),
         openItems: replaceSource(replaceSource(state.openItems, 'CREATE', response.openItems), 'SAVED', ['OI-56']),
         formError: errorsKept.formError,
         fieldErrors: errorsKept.fieldErrors,
@@ -1524,19 +1586,20 @@ function reduceInvoiceDraft(state: InvoiceDraftState, action: InvoiceDraftAction
     }
 
     case 'errorReceived': {
+      const automatic = action.automatic === true;
       const line = LINE_KEY.exec(action.source);
       if (line === null) {
-        return applyError(state, action.source, action.error);
+        return applyError(state, action.source, action.error, null, automatic);
       }
       const lineClientId = action.lineClientId ?? null;
       const lineIndex = lineClientId === null ? null : lineIndexOf(state.draft, lineClientId);
       if (lineIndex === null) {
-        return applyDetachedError(state, action.source, action.error);
+        return applyDetachedError(state, action.source, action.error, automatic);
       }
       const key = messageKey(line[2], lineIndex);
       const cleared =
         isLineVerdictFailure(action.error) && judgesCurrentLine(state, lineIndex, action.judged) ? withoutLineVerdicts(state, key) : state;
-      return applyError(cleared, key, action.error, lineClientId);
+      return applyError(cleared, key, action.error, lineClientId, automatic);
     }
 
     case 'connectivityLost':
@@ -1655,13 +1718,17 @@ export function requestOrigin(draft: DraftDto, withPatient = false): RequestOrig
     : { requestId: draft.requestId, discountLimitChoice };
 }
 
-/** True when a response for `origin` no longer belongs to the state's draft or, for a patient-bound origin, its patient. */
+/** True when a response for `origin` no longer belongs to the state's draft or, for a patient-bound origin, its patient, or was sent before the last patient change. */
 export function isSuperseded(state: InvoiceDraftState, origin: RequestOrigin | undefined): boolean {
   if (origin === undefined) {
     return false;
   }
   const draft = state.draft;
   if (draft === null || draft.requestId !== origin.requestId) {
+    return true;
+  }
+  // An origin stamped with the patient change count is superseded by any later patient change (D-186).
+  if (origin.patientContextCount !== undefined && origin.patientContextCount !== state.patientContextCount) {
     return true;
   }
   return origin.patientNo !== undefined && trimmedPatientNo(origin.patientNo) !== trimmedPatientNo(draft.header.patientNo);

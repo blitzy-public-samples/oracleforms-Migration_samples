@@ -20,6 +20,8 @@ public sealed class InvoiceWorkflowService
     private const int ApprovalPreference = 422;
     private const int DirectCompany = 1;
     private const int BundledOfferType = 0;
+    private const int ValueDiscountMode = 0;
+    private const int RateDiscountMode = 1;
     private const string PriceNotFixed = "N";
     private const string CashCompanyCode = "0";
     private const string ReviewedClaimFlag = "R";
@@ -250,10 +252,11 @@ public sealed class InvoiceWorkflowService
             "DOCIDX" => await ValidateDoctor(draft, operatorContext, cancellationToken),
             "CLINICID" => await ValidateClinic(draft, cancellationToken),
             "DEPT_WISE" or "CALL" => await ValidateErFlags(draft, cancellationToken),
-            "FINALDISC_PERC" or "FINALDISC" => await ValidateFinalDiscount(draft, operatorContext, cancellationToken),
+            "FINALDISC_PERC" or "FINALDISC" => await ValidateFinalDiscount(draft, target, operatorContext, cancellationToken),
             "AMOUNT_1" => await ValidateFirstAmount(draft, operatorContext, cancellationToken),
             "AMOUNT_2" => ValidateSecondAmount(draft),
-            "SUB_PAYTYPE" or "RECORD" => await ValidateRecord(draft, cancellationToken),
+            "SUB_PAYTYPE" => new ValidateDraftResponse(),
+            "RECORD" => await ValidateRecord(draft, cancellationToken),
             "LINE" or "SERVICEID" or "QTY" or "LDISCT" or "APPROV_REF_NO" or "PRICE" or "DISC" or "MY_DISC" =>
                 await ValidateLine(draft, request.LineIndex, operatorContext, cancellationToken),
             _ => RejectedInput(TargetField, UnknownTargetText),
@@ -1473,7 +1476,9 @@ public sealed class InvoiceWorkflowService
             findings.Adjust(ClaimNoItem, ClaimNumberRule.Build(header, parameters));
         }
 
-        var visitLine = VisitLineRule.Choose(parameters.DoReview, parameters.ClaimNo, header.CompCode, header.ClinicId);
+        var visitLine = header.DocId is null
+            ? VisitLineChoice.None
+            : VisitLineRule.Choose(parameters.DoReview, parameters.ClaimNo, header.CompCode, header.ClinicId);
 
         var profiles = ProfileSet.Empty(draft.Lines.Count);
         if (ServiceIds(draft.Lines).Length > 0)
@@ -1531,9 +1536,24 @@ public sealed class InvoiceWorkflowService
 
     private async Task<ValidateDraftResponse> ValidateFinalDiscount(
         DraftDto draft,
+        string target,
         OperatorContext operatorContext,
         CancellationToken cancellationToken)
     {
+        // FINALDISC_PERC is checked in rate mode only, FINALDISC in value mode only; an empty FINALDISC only clears the percent.
+        var rateTarget = string.Equals(target, FinalDiscPercItem, StringComparison.Ordinal);
+        if ((draft.Header.DiscT ?? ValueDiscountMode) != (rateTarget ? RateDiscountMode : ValueDiscountMode))
+        {
+            return new ValidateDraftResponse();
+        }
+
+        if (!rateTarget && (draft.Header.FinalDisc ?? 0m) == 0m)
+        {
+            var cleared = new Findings();
+            cleared.Adjust(FinalDiscPercItem, 0m);
+            return cleared.ToValidateResponse();
+        }
+
         var profileReads = new ProfileReads(_lookups, _invoices, draft.Parameters.VisitUnique);
         var context = await ReadServerContext(draft, patientCompanyFirst: false, cancellationToken);
         var header = context.Header;

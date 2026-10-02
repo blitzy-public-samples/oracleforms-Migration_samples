@@ -198,7 +198,7 @@ function loadLookup(
               title: 'Lookup failed',
               message: reason instanceof Error ? reason.message : String(reason),
             });
-      dispatch({ type: 'errorReceived', source, error });
+      dispatch({ type: 'errorReceived', source, error, automatic: true });
     },
   );
   return () => {

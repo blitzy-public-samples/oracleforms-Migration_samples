@@ -21,6 +21,7 @@ import type {
   DraftDto,
   ImportResponse,
   ImportResultRow,
+  InvoiceHeaderDraft,
   InvoiceLineDraft,
   MessageDto,
   ValidateTarget,
@@ -116,7 +117,7 @@ const SAVED_ACTION_LABELS: Record<SavedAction, string> = {
 /** Custom property on the root element holding the block size the outcome strip covers at the top of the viewport. */
 const STRIP_BLOCK_SIZE = '--outcome-strip-block-size';
 
-/** Custom property on the outcome strip holding the sticky offset below the connectivity banner. */
+/** Custom property on the outcome strip holding its sticky offset below a connectivity banner covering the viewport's top edge, else 0px. */
 const STRIP_OFFSET = '--outcome-strip-offset';
 
 type MessageRef = { source: string; index: number };
@@ -128,6 +129,8 @@ type ImportSummary = { requestId: string; label: string; result: ImportResultRow
 
 /** Validation targets followed by a preview. */
 const PREVIEW_AFTER = new Set<ValidateTarget>([
+  // A changed patient re-previews after its validation (D-186).
+  'PATIENTNO',
   'SERVICEID',
   'QTY',
   'PRICE',
@@ -247,6 +250,17 @@ function hasPatient(draft: DraftDto): boolean {
   return patientNo != null && patientNo.trim() !== '';
 }
 
+/** Key of the patient, pay type, doctor, clinic and company a visit line is imported for. */
+function visitLineKey(header: InvoiceHeaderDraft): string {
+  return JSON.stringify([
+    header.patientNo ?? null,
+    header.payType ?? null,
+    header.docId ?? null,
+    header.clinicId ?? null,
+    header.compCode ?? null,
+  ]);
+}
+
 /** Messages of a Save or import press and the draft on screen when they arrived. */
 type AttemptVerdict = { messages: MessageDto[]; draft: InvoiceDraftState['draft'] };
 
@@ -305,32 +319,18 @@ function oraText(oracleErrorNumber: number): string {
   return `ORA-${String(Math.abs(oracleErrorNumber)).padStart(5, '0')}`;
 }
 
-/** Text identity of a form error or idempotency conflict. */
-function outcomeKey(outcome: { text: string; oracleErrorNumber: number | null }): string {
-  return `${outcome.text}\u0000${outcome.oracleErrorNumber ?? ''}`;
-}
-
-/** Times in a row an outcome with the same text arrived as a new object: 0 while none is shown, 1 for the first. */
-function useRepeatCount<T extends object>(value: T | null, key: (value: T) => string): number {
-  const last = useRef<{ value: T; key: string; count: number } | null>(null);
-  if (value === null) {
-    last.current = null;
-    return 0;
-  }
-  const previous = last.current;
-  if (previous !== null && previous.value === value) {
-    return previous.count;
-  }
-  const text = key(value);
-  const count = previous !== null && previous.key === text ? previous.count + 1 : 1;
-  last.current = { value, key: text, count };
-  return count;
-}
-
 /** True when focus is on no usable control: none, the body, a disabled control or a removed element. */
 function focusLost(): boolean {
   const active = document.activeElement;
   return active === null || active === document.body || !active.isConnected || active.matches(':disabled');
+}
+
+/** First enabled control in `root` marked invalid, preferring one that is not read-only, or undefined when none. */
+function firstInvalidControl(root: HTMLElement | null): HTMLElement | undefined {
+  const controls = Array.from(root?.querySelectorAll<HTMLElement>('[aria-invalid="true"]') ?? []).filter((control) =>
+    control.matches(FOCUSABLE),
+  );
+  return controls.find((control) => !control.matches('[readonly]')) ?? controls[0];
 }
 
 /** Note naming how many times in a row an outcome arrived, such as `(repeated 2 times)`. */
@@ -544,12 +544,14 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
   const savedStatusRef = useRef<HTMLDivElement>(null);
   const conflictRef = useRef<HTMLDivElement>(null);
   const outcomeRef = useRef<HTMLDivElement>(null);
+  const saveButtonRef = useRef<HTMLButtonElement>(null);
+  const printButtonRef = useRef<HTMLButtonElement>(null);
   /** Arrival number of the action outcome the operator dismissed, or null. */
   const [dismissedOutcome, setDismissedOutcome] = useState<number | null>(null);
   const focusedCreate = useRef<object | null>(null);
   const focusHeaderOnLoad = useRef(false);
-  const conflictCount = useRepeatCount(state.idempotencyConflict, outcomeKey);
-  const formErrorCount = useRepeatCount(state.formError, outcomeKey);
+  const conflictCount = state.idempotencyConflict?.repeat ?? 0;
+  const formErrorCount = state.formError?.repeat ?? 0;
 
   // Request id of the loaded draft whose preset doctor is validated once its patient is validated.
   const presetDoctor = useRef<string | null>(null);
@@ -558,8 +560,13 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
   // Step kinds built for a preset doctor, and the queued steps made from them.
   const presetKinds = useRef(new WeakSet<StepKind>());
   const presetSteps = useRef(new WeakSet<Step>());
+  // Step kinds and queued steps no operator action asked for: preset doctor steps and the steps they queue.
+  const automaticKinds = useRef(new WeakSet<StepKind>());
+  const automaticSteps = useRef(new WeakSet<Step>());
   // Most recently queued DOCIDX validation step.
   const latestDoctorStep = useRef<Step | null>(null);
+  // Lines each visit-line import added, keyed by the patient, pay type, doctor, clinic and company of the draft it was sent with.
+  const visitLines = useRef(new Map<string, { clientId: string; serviceId: string | null }[]>());
   const draftRequestId = state.draft?.requestId ?? null;
 
   /** Queues steps stamped with edit count `editsSince`; a DOCIDX step that is not a preset step cancels the pending preset run and drops its queued, not yet running steps. */
@@ -568,6 +575,9 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
       const step: Step = { ...kind, editsSince };
       if (presetKinds.current.has(kind)) {
         presetSteps.current.add(step);
+      }
+      if (automaticKinds.current.has(kind)) {
+        automaticSteps.current.add(step);
       }
       return step;
     });
@@ -591,7 +601,7 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
     setQueue((current) => [...current.filter((step) => !dropped(step)), ...steps]);
   }, []);
 
-  /** The DOCIDX then CLINICID validation steps of a preset doctor. */
+  /** The DOCIDX then CLINICID validation steps of a preset doctor, marked automatic. */
   function presetDoctorSteps(): StepKind[] {
     const kinds: StepKind[] = [
       { kind: 'validate', target: 'DOCIDX' },
@@ -600,17 +610,33 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
     for (const kind of kinds) {
       presetKinds.current.add(kind);
     }
+    return automaticWhen(true, ...kinds);
+  }
+
+  /** `kinds`, marked as automatic steps when `automatic` is set. */
+  function automaticWhen(automatic: boolean, ...kinds: StepKind[]): StepKind[] {
+    if (automatic) {
+      for (const kind of kinds) {
+        automaticKinds.current.add(kind);
+      }
+    }
     return kinds;
   }
 
-  /** Queues one record check stamped with edit count `editsSince`, unless one is already waiting. */
-  const enqueueRecordCheck = useCallback((editsSince: number) => {
+  /** Queues one record check stamped with edit count `editsSince`, automatic when `automatic` is set, unless one is already waiting; an operator request makes a waiting one an operator step. */
+  const enqueueRecordCheck = useCallback((editsSince: number, automatic: boolean) => {
     for (const step of outstanding.current) {
       if (step !== running.current && step.kind === 'validate' && step.target === 'RECORD') {
+        if (!automatic) {
+          automaticSteps.current.delete(step);
+        }
         return;
       }
     }
     const step: Step = { kind: 'validate', target: 'RECORD', editsSince };
+    if (automatic) {
+      automaticSteps.current.add(step);
+    }
     outstanding.current.add(step);
     setQueue((current) => [...current, step]);
   }, []);
@@ -735,7 +761,7 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
     [dispatch],
   );
 
-  /** Routes a failed call to the reducer and starts the recovery a stale-data error asks for, unless `origin` is superseded; `lineClientId` and `judged` name the line of a line source and the inputs it was sent with; `editsSince` is the failed call's edit count, which the recovery inherits. */
+  /** Routes a failed call to the reducer and starts the recovery a stale-data error asks for, unless `origin` is superseded; `lineClientId` and `judged` name the line of a line source and the inputs it was sent with; `editsSince` is the failed call's edit count, which the recovery inherits; `automatic` marks a failed automatic step, whose recovery is automatic too. */
   function handleError(
     error: unknown,
     source: string,
@@ -743,6 +769,7 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
     lineClientId?: string | null,
     judged?: JudgedLine,
     editsSince?: number,
+    automatic = false,
   ): void {
     if (!(error instanceof ApiError)) {
       throw error;
@@ -751,7 +778,7 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
       dispatch({ type: 'validationFailed', target: source, lineIndex: null, error, origin, editsSince });
       return;
     }
-    dispatch({ type: 'errorReceived', source, lineClientId, error, origin, judged });
+    dispatch({ type: 'errorReceived', source, lineClientId, error, origin, judged, automatic });
     if (error.type !== 'oracle-business-error' || (origin !== undefined && isSuperseded(latest.current, origin))) {
       return;
     }
@@ -761,9 +788,9 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
       if (draft !== null) {
         dispatch({ type: 'linesReplaced', lines: draft.lines.filter((line) => line.patServReqRowId == null), origin });
       }
-      enqueue(stamp, { kind: 'reimportRequests' });
+      enqueue(stamp, ...automaticWhen(automatic, { kind: 'reimportRequests' }));
     } else if (error.kind === 'DefinitionStale') {
-      enqueue(stamp, { kind: 'preview' });
+      enqueue(stamp, ...automaticWhen(automatic, { kind: 'preview' }));
     }
   }
 
@@ -772,22 +799,23 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
     setImportSummary(response.result != null ? { requestId, label, result: response.result } : null);
   }
 
-  /** Runs one queued step against the latest state. */
+  /** Runs one queued step against the latest state, as automatic when it is an automatic step. */
   async function runStep(step: Step): Promise<void> {
+    const automatic = automaticSteps.current.has(step);
     switch (step.kind) {
       case 'preview':
-        return runPreview(step.editsSince);
+        return runPreview(step.editsSince, automatic);
       case 'validate':
-        return validate(step.target, step.lineIndex ?? null, step.editsSince);
+        return validate(step.target, step.lineIndex ?? null, step.editsSince, automatic);
       case 'visitLine':
-        return importVisit(step.editsSince);
+        return importVisit(step.editsSince, automatic);
       case 'reimportRequests':
-        return importRequestLines(true, step.editsSince);
+        return importRequestLines(true, step.editsSince, automatic);
     }
   }
 
-  /** Reads patient coverage for a step queued at edit count `editsSince`; resolves false on an Oracle outage and stores no coverage for blank or failed reads. */
-  async function readCoverage(draft: DraftDto, origin: RequestOrigin, editsSince: number): Promise<boolean> {
+  /** Reads patient coverage for a step queued at edit count `editsSince`, automatic when `automatic` is set; resolves false on an Oracle outage and stores no coverage for blank or failed reads. */
+  async function readCoverage(draft: DraftDto, origin: RequestOrigin, editsSince: number, automatic: boolean): Promise<boolean> {
     const patientNo = draft.header.patientNo;
     if (patientNo == null || patientNo.trim() === '') {
       dispatch({ type: 'coverageApplied', response: null, origin, editsSince });
@@ -799,13 +827,13 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
       return true;
     } catch (error) {
       dispatch({ type: 'coverageApplied', response: null, origin, editsSince });
-      handleError(error, 'COVERAGE', origin, undefined, undefined, editsSince);
+      handleError(error, 'COVERAGE', origin, undefined, undefined, editsSince, automatic);
       return !(error instanceof ApiError && (error.status === 503 || error.type === 'oracle-unavailable'));
     }
   }
 
-  /** Validates a target queued at edit count `editsSince`, reading coverage first for PATIENTNO, and queues its visit-line or preview follow-up. */
-  async function validate(target: ValidateTarget, lineIndex: number | null, editsSince: number): Promise<void> {
+  /** Validates a target queued at edit count `editsSince`, reading coverage first for PATIENTNO, and queues its visit-line or preview follow-up, automatic when `automatic` is set. */
+  async function validate(target: ValidateTarget, lineIndex: number | null, editsSince: number, automatic: boolean): Promise<void> {
     const current = latest.current;
     const draft = current.draft;
     if (draft === null || isLocked(current) || (lineIndex !== null && lineIndex >= draft.lines.length)) {
@@ -819,7 +847,7 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
     const judged = sentLine === undefined ? undefined : { header: draft.header, line: sentLine };
     const origin = requestOrigin(draft, target === 'PATIENTNO');
     if (target === 'PATIENTNO') {
-      const reachable = await readCoverage(draft, origin, editsSince);
+      const reachable = await readCoverage(draft, origin, editsSince, automatic);
       if (!reachable || isSuperseded(latest.current, origin)) {
         return;
       }
@@ -856,11 +884,11 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
         followUps.push({ kind: 'preview' });
       }
       if (followUps.length > 0) {
-        enqueue(editsSince, ...followUps);
+        enqueue(editsSince, ...automaticWhen(automatic, ...followUps));
       }
       // While a record-check message is held, a header answer is followed by the record check.
       if (recheck) {
-        enqueueRecordCheck(editsSince);
+        enqueueRecordCheck(editsSince, automatic);
       }
     } catch (error) {
       if (isFieldValidation(error)) {
@@ -868,11 +896,11 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
         dispatch({ type: 'validationFailed', target, lineIndex, lineClientId, error, origin, judged, editsSince });
         // While a record-check message is held, a header answer is followed by the record check.
         if (recheck && !isSuperseded(latest.current, origin)) {
-          enqueueRecordCheck(editsSince);
+          enqueueRecordCheck(editsSince, automatic);
         }
         return;
       }
-      handleError(error, messageKey(target, lineIndex), origin, lineClientId, judged, editsSince);
+      handleError(error, messageKey(target, lineIndex), origin, lineClientId, judged, editsSince, automatic);
     }
   }
 
@@ -887,8 +915,8 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
     enqueue(current.editCount, { kind: 'validate', target: 'PATIENTNO' });
   }
 
-  /** POST /api/invoices/preview for an editable draft with lines, queued at edit count `editsSince`; an editable draft without lines has its preview cleared. */
-  async function runPreview(editsSince: number): Promise<void> {
+  /** POST /api/invoices/preview for an editable draft with lines, queued at edit count `editsSince`, automatic when `automatic` is set; an editable draft without lines has its preview cleared. */
+  async function runPreview(editsSince: number, automatic: boolean): Promise<void> {
     const current = latest.current;
     const draft = current.draft;
     if (draft === null || isLocked(current)) {
@@ -898,12 +926,13 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
       dispatch({ type: 'previewCleared' });
       return;
     }
-    const origin = requestOrigin(draft);
+    // The preview and its failure are bound to the patient change count at send time (D-186).
+    const origin: RequestOrigin = { ...requestOrigin(draft), patientContextCount: current.patientContextCount };
     try {
       const response = await previewInvoice(draft);
       dispatch({ type: 'previewApplied', response, sent: draft.lines, origin });
     } catch (error) {
-      handleError(error, 'PREVIEW', origin, undefined, undefined, editsSince);
+      handleError(error, 'PREVIEW', origin, undefined, undefined, editsSince, automatic);
     }
   }
 
@@ -915,6 +944,19 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
     },
     [dispatch, enqueue],
   );
+
+  /** When focus was lost, focuses `left` while it is invalid, else the first invalid control of the form, else `left`. */
+  function focusRefusedSave(left: HTMLElement | null): void {
+    if (!focusLost()) {
+      return;
+    }
+    const leftUsable = left !== null && left.isConnected && left.matches(FOCUSABLE);
+    const target =
+      leftUsable && left.getAttribute('aria-invalid') === 'true'
+        ? left
+        : (firstInvalidControl(formRef.current) ?? (leftUsable ? left : null));
+    target?.focus();
+  }
 
   /** Saves the draft once the focused entry and the queued steps have settled (at once while another create is in flight), reloads it read-only and, for Save & Print, requests the invoice document, while the draft is still current. */
   async function save(print: boolean): Promise<void> {
@@ -931,10 +973,8 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
       const settled = latest.current;
       if (settled.draft === null || isSuperseded(settled, requestOrigin(draft)) || !saveAllowed(settled, verdicts.current)) {
         adjustBusy(button, -1);
-        const active = document.activeElement;
-        if (left !== null && left.isConnected && (active === null || active === document.body)) {
-          left.focus();
-        }
+        await whenCommitted();
+        focusRefusedSave(left);
         return;
       }
       draft = settled.draft;
@@ -981,8 +1021,8 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
     }
   }
 
-  /** Imports the visit's selected service requests, then recalculates when lines were added or `linesChanged` is set; `editsSince` defaults to the edit count at the press. */
-  async function importRequestLines(linesChanged = false, editsSince = latest.current.editCount): Promise<void> {
+  /** Imports the visit's selected service requests, then recalculates when lines were added or `linesChanged` is set; `editsSince` defaults to the edit count at the press; `automatic` marks an automatic step. */
+  async function importRequestLines(linesChanged = false, editsSince = latest.current.editCount, automatic = false): Promise<void> {
     const current = latest.current;
     const draft = current.draft;
     if (draft === null || isLocked(current)) {
@@ -998,14 +1038,14 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
       }
       rememberImport('Import Request', draft.requestId, response);
       if (linesChanged || (response.lines ?? []).length > 0) {
-        enqueue(editsSince, { kind: 'preview' });
+        enqueue(editsSince, ...automaticWhen(automatic, { kind: 'preview' }));
       }
     } catch (error) {
       if (isFieldValidation(error)) {
         dispatch({ type: 'validationFailed', target: IMPORT_SOURCE, lineIndex: null, error, origin, editsSince });
         return;
       }
-      handleError(error, IMPORT_SOURCE, origin, undefined, undefined, editsSince);
+      handleError(error, IMPORT_SOURCE, origin, undefined, undefined, editsSince, automatic);
     }
   }
 
@@ -1100,11 +1140,19 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
     }
   }
 
-  /** Adds the automatic consultation, review or fixed-service visit line for a step queued at edit count `editsSince`. */
-  async function importVisit(editsSince: number): Promise<void> {
+  /** Adds the automatic consultation, review or fixed-service visit line for a step queued at edit count `editsSince`, unless the draft still holds a line imported for its patient, pay type, doctor, clinic and company (D-188); `automatic` marks an automatic step. */
+  async function importVisit(editsSince: number, automatic: boolean): Promise<void> {
     const current = latest.current;
     const draft = current.draft;
     if (draft === null || isLocked(current)) {
+      return;
+    }
+    const key = visitLineKey(draft.header);
+    const recorded = visitLines.current.get(key);
+    if (
+      recorded !== undefined &&
+      draft.lines.some((line) => recorded.some((entry) => entry.clientId === line.clientId && entry.serviceId === line.serviceId))
+    ) {
       return;
     }
     const origin = requestOrigin(draft, true);
@@ -1116,11 +1164,19 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
         return;
       }
       rememberImport('Visit line', draft.requestId, response);
+      const added = (response.lines ?? []).flatMap((line) =>
+        line.clientId != null && line.clientId !== '' ? [{ clientId: line.clientId, serviceId: line.serviceId }] : [],
+      );
+      if (added.length > 0) {
+        const sent = new Set(draft.lines.map((line) => line.clientId));
+        const kept = (visitLines.current.get(key) ?? []).filter((entry) => sent.has(entry.clientId));
+        visitLines.current.set(key, [...kept, ...added]);
+      }
       if ((response.lines ?? []).length > 0) {
-        enqueue(editsSince, { kind: 'preview' });
+        enqueue(editsSince, ...automaticWhen(automatic, { kind: 'preview' }));
       }
     } catch (error) {
-      handleError(error, IMPORT_SOURCE, origin, undefined, undefined, editsSince);
+      handleError(error, IMPORT_SOURCE, origin, undefined, undefined, editsSince, automatic);
     }
   }
 
@@ -1231,12 +1287,12 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
     createMessage !== null &&
     createMessage.trim() !== '' &&
     !Object.values(state.messages).some((list) => list.some((message) => message.text === createMessage));
-  // The import result shows only while the screen shows its draft or the invoice saved from it.
+  // The import result shows only while the screen shows the unsaved draft it was imported into.
   const shownImport =
     importSummary !== null &&
     draft !== null &&
     importSummary.requestId === draft.requestId &&
-    (state.saved === null || state.saved.createResponse != null)
+    state.saved === null
       ? importSummary
       : null;
   const openItemIds = [
@@ -1259,7 +1315,7 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
     }
   }, [outcomeSeq]);
 
-  // Offsets the outcome strip below a sticky or fixed connectivity banner and publishes the block size both cover.
+  // Offsets the outcome strip below a sticky or fixed connectivity banner that covers the viewport's top edge, else 0, and publishes the block size both cover.
   useLayoutEffect(() => {
     const root = document.documentElement;
     const strip = stripRef.current;
@@ -1270,7 +1326,8 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
     const banner = document.querySelector<HTMLElement>('.connectivity-banner');
     const measure = (): void => {
       const position = banner !== null && banner.isConnected ? getComputedStyle(banner).position : '';
-      const offset = banner !== null && (position === 'sticky' || position === 'fixed') ? banner.getBoundingClientRect().height : 0;
+      const bannerRect = banner !== null && (position === 'sticky' || position === 'fixed') ? banner.getBoundingClientRect() : null;
+      const offset = bannerRect !== null && bannerRect.top <= 0 && bannerRect.bottom > 0 ? bannerRect.bottom : 0;
       strip.style.setProperty(STRIP_OFFSET, `${offset}px`);
       const height = strip.getBoundingClientRect().height;
       if (height > 0) {
@@ -1323,6 +1380,26 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
       savedStatusRef.current?.focus({ preventScroll: true });
     }
   }, [loadedInvNo]);
+
+  // When Save or Save & Print loses focus by being disabled, moves focus as for a refused Save once the render has committed.
+  useEffect(() => {
+    const buttons = [saveButtonRef.current, printButtonRef.current].filter(
+      (button): button is HTMLButtonElement => button !== null,
+    );
+    const onFocusOut = (event: FocusEvent): void => {
+      if (event.relatedTarget === null && event.currentTarget instanceof HTMLButtonElement && event.currentTarget.disabled) {
+        void whenCommitted().then(() => focusRefusedSave(null));
+      }
+    };
+    for (const button of buttons) {
+      button.addEventListener('focusout', onFocusOut);
+    }
+    return () => {
+      for (const button of buttons) {
+        button.removeEventListener('focusout', onFocusOut);
+      }
+    };
+  }, []);
 
   // After New Invoice, focuses the first enabled header control, preferring one the operator can edit.
   useEffect(() => {
@@ -1461,7 +1538,7 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
 
           {state.formError !== null && (
             <div
-              key={`form-error-${formErrorCount}`}
+              key={`form-error-${state.formError.source}-${formErrorCount}`}
               ref={formErrorRef}
               className={formErrorCount > 1 ? 'form-error outcome-flash' : 'form-error'}
               role="alert"
@@ -1524,8 +1601,9 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
         </div>
       )}
 
+      {/* Named keyboard-scrollable import result; the outcome strip announces it. */}
       {shownImport !== null && (
-        <div className="msg" role="status">
+        <div className="msg import-result" role="region" aria-label="Import result" tabIndex={0}>
           {importSummaryText(shownImport)}
         </div>
       )}
@@ -1550,10 +1628,16 @@ export default function InvoiceScreen({ state, dispatch, onShowMore, initialLoad
         <button type="button" disabled={savedInvNo === null} onClick={() => void runSavedAction('barcode-sms')}>
           Send barcode
         </button>
-        <button type="button" disabled={!saveEnabled} aria-busy={printing || undefined} onClick={() => void save(true)}>
+        <button
+          ref={printButtonRef}
+          type="button"
+          disabled={!saveEnabled}
+          aria-busy={printing || undefined}
+          onClick={() => void save(true)}
+        >
           <BusyLabel busy={printing} idle="Save & Print" active="Saving…" />
         </button>
-        <button type="submit" disabled={!saveEnabled} aria-busy={saving || undefined}>
+        <button ref={saveButtonRef} type="submit" disabled={!saveEnabled} aria-busy={saving || undefined}>
           <BusyLabel busy={saving} idle="Save" active="Saving…" />
         </button>
         {paymentStatus !== null && paymentStatus !== '' && <span className="payment-status">{paymentStatus}</span>}
